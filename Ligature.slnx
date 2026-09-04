@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/Platform/">
+    <Project Path="src/Platform/Ligature.Platform.Application/Ligature.Platform.Application.csproj" />
+    <Project Path="src/Platform/Ligature.Platform.Domain/Ligature.Platform.Domain.csproj" />
+    <Project Path="src/Platform/Ligature.Platform.Persistence/Ligature.Platform.Persistence.csproj" />
+  </Folder>
+  <Folder Name="/src/Shared/" />
+  <Folder Name="/src/Shared/Ligature.SharedKernel/">
+    <Project Path="src/Shared/Ligature.SharedKernel/Ligature.Sharedkernel.csproj" />
+  </Folder>
+  <Folder Name="/tests/" />
+  <Folder Name="/tests/Platform/">
+    <Project Path="tests/Platform/Ligature.Platform.Application.Tests/Ligature.Platform.Application.Tests.csproj" />
+  </Folder>
+</Solution>
