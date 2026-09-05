@@ -1,4 +1,3 @@
-using Ligature.SharedKernel.Abstractions;
 using Ligature.SharedKernel.Exceptions;
 
 namespace Ligature.Platform.Domain.Users;

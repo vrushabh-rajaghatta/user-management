@@ -1,5 +1,4 @@
 using Ligature.Platform.Application.Abstractions;
-using Ligature.Platform.Domain.Provenance;
 using Ligature.Platform.Domain.Users;
 using Ligature.SharedKernel.Abstractions;
 using Ligature.SharedKernel.Exceptions;
@@ -68,24 +67,24 @@ public sealed class CreateUserCommandHandler
         var userId = UserId.New();
         var identityId = UserIdentityId.New();
 
-        var created = new CreationStamp(
-            now,
-            _executionContext.UserId);
-
         var user = User.CreateHuman(
             userId,
             command.FirstName,
             command.LastName,
             command.DisplayName,
             command.Email,
-            created);
+            now,
+            _executionContext.UserId
+            );
 
         var identity = UserIdentity.CreateLocal(
             identityId,
             userId,
             ActorType.Human,
             command.InitialUsername,
-            created);
+            now,
+            _executionContext.UserId
+            );
 
         var result =
             await _unitOfWork.ExecuteInTransactionAsync(

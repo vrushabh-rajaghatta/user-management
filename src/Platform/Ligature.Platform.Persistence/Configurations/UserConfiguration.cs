@@ -75,22 +75,21 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
             .HasColumnType("varchar")
             .IsRequired();
 
-        builder.ComplexProperty(
-            x => x.Created,
-            created =>
-            {
-                created.Property(x => x.At)
-                    .HasColumnName("created_at")
-                    .HasColumnType("timestamp with time zone")
-                    .IsRequired();
+        builder.Property(x => x.CreatedAt)
+    .HasColumnName("created_at")
+    .HasColumnType("timestamp with time zone")
+    .IsRequired();
 
-                created.Property(x => x.By)
-                    .HasConversion(
-                        new StronglyTypedIdValueConverter<UserId>())
-                    .HasColumnName("created_by")
-                    .HasColumnType("uuid")
-                    .IsRequired();
-            });
+        builder.Property(x => x.CreatedBy)
+            .HasColumnName("created_by")
+            .HasConversion<StronglyTypedIdValueConverter<UserId>>()
+            .HasColumnType("uuid")
+            .IsRequired();
+
+        builder.HasOne<User>()
+            .WithMany()
+            .HasForeignKey(x => x.CreatedBy)
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.ComplexProperty(
             x => x.Deactivation,

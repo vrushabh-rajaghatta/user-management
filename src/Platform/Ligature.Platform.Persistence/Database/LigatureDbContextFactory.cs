@@ -10,8 +10,7 @@ public sealed class LigatureDbContextFactory
     {
         var optionsBuilder = new DbContextOptionsBuilder<LigatureDbContext>();
 
-        optionsBuilder.UseNpgsql(
-            "Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres");
+        optionsBuilder.UseNpgsql("Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres");
 
         return new LigatureDbContext(optionsBuilder.Options);
     }

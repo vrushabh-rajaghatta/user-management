@@ -1,4 +1,3 @@
-using Ligature.Platform.Domain.Provenance;
 using Ligature.SharedKernel.Abstractions;
 using Ligature.SharedKernel.Exceptions;
 
@@ -19,7 +18,8 @@ public sealed class UserIdentity : AggregateRoot<UserIdentityId>
         string subjectId,
         string? username,
         UserStatus status,
-        CreationStamp created,
+        DateTimeOffset createdAt,
+UserId createdBy,
         DeactivationStamp? deactivation)
         : base(id)
     {
@@ -30,7 +30,8 @@ public sealed class UserIdentity : AggregateRoot<UserIdentityId>
         SubjectId = subjectId;
         Username = username;
         Status = status;
-        Created = created;
+        CreatedAt = createdAt;
+        CreatedBy = createdBy;
         Deactivation = deactivation;
     }
 
@@ -48,7 +49,8 @@ public sealed class UserIdentity : AggregateRoot<UserIdentityId>
 
     public UserStatus Status { get; private set; }
 
-    public CreationStamp Created { get; }
+    public DateTimeOffset CreatedAt { get; }
+    public UserId CreatedBy { get; }
 
     public DeactivationStamp? Deactivation { get; private set; }
 
@@ -57,7 +59,8 @@ public sealed class UserIdentity : AggregateRoot<UserIdentityId>
         UserId userId,
         ActorType actorType,
         string username,
-        CreationStamp created)
+        DateTimeOffset createdAt,
+        UserId createdBy)
     {
         if (actorType == ActorType.System)
             throw new DomainException(
@@ -67,7 +70,7 @@ public sealed class UserIdentity : AggregateRoot<UserIdentityId>
             throw new DomainException(
                 "Username cannot be empty.");
 
-        ArgumentNullException.ThrowIfNull(created);
+        // ArgumentNullException.ThrowIfNull(created);
 
         return new UserIdentity(
             id,
@@ -78,7 +81,8 @@ public sealed class UserIdentity : AggregateRoot<UserIdentityId>
             id.Value.ToString(),
             username,
             UserStatus.Active,
-            created,
+            createdAt,
+            createdBy,
             null);
     }
 
@@ -89,7 +93,8 @@ public sealed class UserIdentity : AggregateRoot<UserIdentityId>
      IdentityProvider identityProvider,
      string subjectId,
      string? username,
-     CreationStamp created)
+     DateTimeOffset createdAt,
+        UserId createdBy)
     {
         if (actorType == ActorType.System)
             throw new DomainException(
@@ -105,7 +110,7 @@ public sealed class UserIdentity : AggregateRoot<UserIdentityId>
             throw new DomainException(
                 "Subject ID cannot be empty.");
 
-        ArgumentNullException.ThrowIfNull(created);
+        // ArgumentNullException.ThrowIfNull(created);
 
         return new UserIdentity(
             id,
@@ -116,7 +121,8 @@ public sealed class UserIdentity : AggregateRoot<UserIdentityId>
             subjectId,
             username,
             UserStatus.Active,
-            created,
+            createdAt,
+            createdBy,
             null);
     }
 

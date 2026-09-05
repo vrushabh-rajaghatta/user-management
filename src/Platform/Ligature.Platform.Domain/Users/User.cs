@@ -1,4 +1,3 @@
-using Ligature.Platform.Domain.Provenance;
 using Ligature.SharedKernel.Abstractions;
 using Ligature.SharedKernel.Exceptions;
 
@@ -16,7 +15,8 @@ public sealed class User : AggregateRoot<UserId>
         string displayName,
         EmailAddress? email,
         UserStatus status,
-        CreationStamp created,
+        DateTimeOffset createdAt,
+        UserId createdBy,
         DeactivationStamp? deactivation)
         : base(id)
     {
@@ -26,7 +26,8 @@ public sealed class User : AggregateRoot<UserId>
         DisplayName = displayName;
         Email = email;
         Status = status;
-        Created = created;
+        CreatedAt = createdAt;
+        CreatedBy = createdBy;
         Deactivation = deactivation;
     }
 
@@ -42,7 +43,8 @@ public sealed class User : AggregateRoot<UserId>
 
     public UserStatus Status { get; private set; }
 
-    public CreationStamp Created { get; }
+    public DateTimeOffset CreatedAt { get; }
+    public UserId CreatedBy { get; }
 
     public DeactivationStamp? Deactivation { get; private set; }
 
@@ -52,7 +54,8 @@ public sealed class User : AggregateRoot<UserId>
         string lastName,
         string displayName,
         string email,
-        CreationStamp created)
+        DateTimeOffset createdAt,
+        UserId createdBy)
     {
         if (string.IsNullOrWhiteSpace(firstName))
             throw new DomainException("First name cannot be empty.");
@@ -60,7 +63,7 @@ public sealed class User : AggregateRoot<UserId>
         if (string.IsNullOrWhiteSpace(lastName))
             throw new DomainException("Last name cannot be empty.");
 
-        ArgumentNullException.ThrowIfNull(created);
+        // ArgumentNullException.ThrowIfNull(created);
 
         return new User(
             id,
@@ -70,7 +73,8 @@ public sealed class User : AggregateRoot<UserId>
             displayName,
             EmailAddress.Create(email),
             UserStatus.Active,
-            created,
+            createdAt,
+            createdBy,
             null);
     }
 

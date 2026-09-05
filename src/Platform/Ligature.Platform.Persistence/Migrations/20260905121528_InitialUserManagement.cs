@@ -23,10 +23,10 @@ namespace Ligature.Platform.Persistence.Migrations
                     display_name = table.Column<string>(type: "varchar", nullable: false),
                     email = table.Column<string>(type: "varchar", nullable: true),
                     status = table.Column<string>(type: "varchar", nullable: false),
-                    updated_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
-                    updated_by = table.Column<Guid>(type: "uuid", nullable: false),
                     created_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     created_by = table.Column<Guid>(type: "uuid", nullable: false),
+                    updated_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    updated_by = table.Column<Guid>(type: "uuid", nullable: false),
                     deactivated_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
                     deactivated_by = table.Column<Guid>(type: "uuid", nullable: true)
                 },
@@ -39,6 +39,12 @@ namespace Ligature.Platform.Persistence.Migrations
                     table.CheckConstraint("ck_app_user_human_names", "\"actor_type\" <> 'Human' OR (\"first_name\" IS NOT NULL AND \"last_name\" IS NOT NULL)");
                     table.CheckConstraint("ck_app_user_status", "\"status\" IN ('Active', 'Inactive')");
                     table.CheckConstraint("ck_app_user_system_not_deactivated", "\"actor_type\" <> 'System' OR \"deactivated_at\" IS NULL");
+                    table.ForeignKey(
+                        name: "FK_app_user_app_user_created_by",
+                        column: x => x.created_by,
+                        principalTable: "app_user",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Restrict);
                 });
 
             migrationBuilder.CreateTable(
@@ -149,6 +155,12 @@ namespace Ligature.Platform.Persistence.Migrations
                 {
                     table.PrimaryKey("PK_user_identity", x => x.id);
                     table.UniqueConstraint("AK_user_identity_id_identity_type", x => new { x.id, x.identity_type });
+                    table.ForeignKey(
+                        name: "FK_user_identity_app_user_created_by",
+                        column: x => x.created_by,
+                        principalTable: "app_user",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Restrict);
                     table.ForeignKey(
                         name: "FK_user_identity_app_user_user_id_actor_type",
                         columns: x => new { x.user_id, x.actor_type },
@@ -378,6 +390,11 @@ namespace Ligature.Platform.Persistence.Migrations
                 });
 
             migrationBuilder.CreateIndex(
+                name: "IX_app_user_created_by",
+                table: "app_user",
+                column: "created_by");
+
+            migrationBuilder.CreateIndex(
                 name: "ux_app_user_id_actor_type",
                 table: "app_user",
                 columns: new[] { "id", "actor_type" },
@@ -461,6 +478,11 @@ namespace Ligature.Platform.Persistence.Migrations
                 table: "security_policy",
                 column: "policy_version",
                 unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_user_identity_created_by",
+                table: "user_identity",
+                column: "created_by");
 
             migrationBuilder.CreateIndex(
                 name: "IX_user_identity_identity_provider_subject_id",

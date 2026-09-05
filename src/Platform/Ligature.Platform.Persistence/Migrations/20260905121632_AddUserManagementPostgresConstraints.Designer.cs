@@ -14,8 +14,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ligature.Platform.Persistence.Migrations
 {
     [DbContext(typeof(LigatureDbContext))]
-    [Migration("20260904125256_InitialUserManagement")]
-    partial class InitialUserManagement
+    [Migration("20260905121632_AddUserManagementPostgresConstraints")]
+    partial class AddUserManagementPostgresConstraints
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -357,6 +357,14 @@ namespace Ligature.Platform.Persistence.Migrations
                         .HasColumnType("varchar")
                         .HasColumnName("actor_type");
 
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
                     b.Property<string>("DisplayName")
                         .IsRequired()
                         .HasColumnType("varchar")
@@ -387,19 +395,6 @@ namespace Ligature.Platform.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("updated_by");
 
-                    b.ComplexProperty(typeof(Dictionary<string, object>), "Created", "Ligature.Platform.Domain.Users.User.Created#CreationStamp", b1 =>
-                        {
-                            b1.IsRequired();
-
-                            b1.Property<DateTimeOffset>("At")
-                                .HasColumnType("timestamp with time zone")
-                                .HasColumnName("created_at");
-
-                            b1.Property<Guid>("By")
-                                .HasColumnType("uuid")
-                                .HasColumnName("created_by");
-                        });
-
                     b.ComplexProperty(typeof(Dictionary<string, object>), "Deactivation", "Ligature.Platform.Domain.Users.User.Deactivation#DeactivationStamp", b1 =>
                         {
                             b1.Property<DateTimeOffset>("At")
@@ -412,6 +407,8 @@ namespace Ligature.Platform.Persistence.Migrations
                         });
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CreatedBy");
 
                     b.HasIndex("Id", "ActorType")
                         .IsUnique()
@@ -442,6 +439,14 @@ namespace Ligature.Platform.Persistence.Migrations
                         .HasColumnType("varchar")
                         .HasColumnName("actor_type");
 
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
                     b.Property<string>("IdentityProvider")
                         .IsRequired()
                         .HasColumnType("varchar")
@@ -470,19 +475,6 @@ namespace Ligature.Platform.Persistence.Migrations
                         .HasColumnType("varchar")
                         .HasColumnName("username");
 
-                    b.ComplexProperty(typeof(Dictionary<string, object>), "Created", "Ligature.Platform.Domain.Users.UserIdentity.Created#CreationStamp", b1 =>
-                        {
-                            b1.IsRequired();
-
-                            b1.Property<DateTimeOffset>("At")
-                                .HasColumnType("timestamp with time zone")
-                                .HasColumnName("created_at");
-
-                            b1.Property<Guid>("By")
-                                .HasColumnType("uuid")
-                                .HasColumnName("created_by");
-                        });
-
                     b.ComplexProperty(typeof(Dictionary<string, object>), "Deactivation", "Ligature.Platform.Domain.Users.UserIdentity.Deactivation#DeactivationStamp", b1 =>
                         {
                             b1.Property<DateTimeOffset>("At")
@@ -495,6 +487,8 @@ namespace Ligature.Platform.Persistence.Migrations
                         });
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CreatedBy");
 
                     b.HasIndex("IdentityProvider", "SubjectId")
                         .IsUnique();
@@ -791,8 +785,23 @@ namespace Ligature.Platform.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Ligature.Platform.Domain.Users.User", b =>
+                {
+                    b.HasOne("Ligature.Platform.Domain.Users.User", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Ligature.Platform.Domain.Users.UserIdentity", b =>
                 {
+                    b.HasOne("Ligature.Platform.Domain.Users.User", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("Ligature.Platform.Domain.Users.User", null)
                         .WithMany()
                         .HasForeignKey("UserId", "ActorType")
