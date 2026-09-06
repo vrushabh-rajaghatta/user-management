@@ -11,11 +11,11 @@ namespace Ligature.Platform.Persistence.Provisioning;
 /// entire operation is a no-op, so a partially provisioned database is never
 /// mistaken for a successfully provisioned one.
 /// </summary>
-public sealed class SystemActorProvisioner
+public sealed class PlatformProvisioner
 {
     private readonly LigatureDbContext _dbContext;
 
-    public SystemActorProvisioner(LigatureDbContext dbContext)
+    public PlatformProvisioner(LigatureDbContext dbContext)
     {
         ArgumentNullException.ThrowIfNull(dbContext);
 
@@ -69,6 +69,21 @@ public sealed class SystemActorProvisioner
         entry.Property<DateTimeOffset>("UpdatedAt").CurrentValue = executionTimestamp;
         entry.Property<UserId>("UpdatedBy").CurrentValue = User.SystemUserId;
 
+        foreach (var seed in GetPermissionSeeds())
+        {
+            _dbContext.Add(
+                Permission.Create(
+                    PermissionId.New(),
+                    seed.Code,
+                    seed.Name,
+                    seed.Description,
+                    seed.Resource,
+                    seed.Action,
+                    seed.RequiresHumanActor,
+                    executionTimestamp,
+                    User.SystemUserId));
+        }
+
         // security_policy declares no UpdatedAt/UpdatedBy shadow properties,
         // so nothing to stamp here.
         _dbContext.Add(CreateInitialSecurityPolicy(executionTimestamp));
@@ -111,6 +126,172 @@ public sealed class SystemActorProvisioner
             executionTimestamp,
             User.SystemUserId);
     }
+
+    private static IReadOnlyList<PermissionSeed> GetPermissionSeeds()
+    {
+        return
+        [
+            new(
+                "user.create",
+                "Create User",
+                "User",
+                "Create",
+                true,
+                "Create a new human user account and issue its activation token."),
+
+            new(
+                "user.read",
+                "View Users",
+                "User",
+                "Read",
+                false,
+                "View user accounts and their current lifecycle status."),
+
+            new(
+                "user.update",
+                "Update User Profile",
+                "User",
+                "Update",
+                false,
+                "Change a user's first name, last name or display name."),
+
+            new(
+                "user.deactivate",
+                "Deactivate User",
+                "User",
+                "Deactivate",
+                true,
+                "Deactivate a user, revoking their sessions and role assignments."),
+
+            new(
+                "user.reactivate",
+                "Reactivate User",
+                "User",
+                "Reactivate",
+                true,
+                "Return a deactivated user to active status. Grants no previous access."),
+
+            new(
+                "user.resetpassword",
+                "Reset User Password",
+                "User",
+                "ResetPassword",
+                false,
+                "Issue a password reset token to a user's registered email address."),
+
+            new(
+                "user.unlock",
+                "Unlock User Account",
+                "User",
+                "Unlock",
+                false,
+                "Clear a lockout arising from consecutive failed sign-in attempts."),
+
+            new(
+                "identity.read",
+                "View Identities",
+                "Identity",
+                "Read",
+                false,
+                "View the authentication identities attached to a user."),
+
+            new(
+                "identity.manage",
+                "Manage Identities",
+                "Identity",
+                "Manage",
+                true,
+                "Attach, deactivate or reactivate a user's authentication identities."),
+
+            new(
+                "session.read",
+                "View Sessions",
+                "Session",
+                "Read",
+                false,
+                "View active and historical sign-in sessions."),
+
+            new(
+                "session.revoke",
+                "Revoke Sessions",
+                "Session",
+                "Revoke",
+                false,
+                "Terminate another user's active sessions."),
+
+            new(
+                "role.read",
+                "View Roles",
+                "Role",
+                "Read",
+                false,
+                "View role definitions and the permissions they confer."),
+
+            new(
+                "role.manage",
+                "Manage Role Definitions",
+                "Role",
+                "Manage",
+                false,
+                "Create and amend role definitions and their permission grants."),
+
+            new(
+                "role.grant",
+                "Grant Role",
+                "Role",
+                "Grant",
+                true,
+                "Assign a role to a user over a given scope and period."),
+
+            new(
+                "role.revoke",
+                "Revoke Role",
+                "Role",
+                "Revoke",
+                true,
+                "End a user's role assignment before its effective period expires."),
+
+            new(
+                "securitypolicy.read",
+                "View Security Policy",
+                "SecurityPolicy",
+                "Read",
+                false,
+                "View the effective security policy and its version history."),
+
+            new(
+                "securitypolicy.change",
+                "Change Security Policy",
+                "SecurityPolicy",
+                "Change",
+                true,
+                "Create a new security policy version for the tenant."),
+
+            new(
+                "accessreview.read",
+                "Run Access Review",
+                "AccessReview",
+                "Read",
+                false,
+                "Produce access review reports of who holds which roles."),
+
+            new(
+                "agent.manage",
+                "Administer Agents",
+                "Agent",
+                "Manage",
+                true,
+                "Administer software agents and their accountable ownership.")
+        ];
+    }
+
+    private sealed record PermissionSeed(
+        string Code,
+        string Name,
+        string Resource,
+        string Action,
+        bool RequiresHumanActor,
+        string Description);
 
     private static void ValidateStructure(User existing)
     {
