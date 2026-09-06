@@ -78,6 +78,27 @@ public sealed class User : AggregateRoot<UserId>
             null);
     }
 
+    public const string SystemDisplayName = "System";
+
+    public static UserId SystemUserId { get; } =
+        new(Guid.Parse("00000000-0000-0000-0000-000000000001"));
+
+    public static User CreateSystem(
+        DateTimeOffset createdAt)
+    {
+        return new User(
+            SystemUserId,
+            ActorType.System,
+            null,
+            null,
+            SystemDisplayName,
+            null,
+            UserStatus.Active,
+            createdAt,
+            SystemUserId,
+            null);
+    }
+
     public bool ChangeEmail(EmailAddress newEmail)
     {
         ArgumentNullException.ThrowIfNull(newEmail);
