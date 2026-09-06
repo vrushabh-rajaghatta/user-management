@@ -69,17 +69,61 @@ public sealed class PlatformProvisioner
         entry.Property<DateTimeOffset>("UpdatedAt").CurrentValue = executionTimestamp;
         entry.Property<UserId>("UpdatedBy").CurrentValue = User.SystemUserId;
 
+        var permissionsByCode = new Dictionary<string, PermissionId>(
+            StringComparer.Ordinal);
+
         foreach (var seed in GetPermissionSeeds())
         {
+            var permission = Permission.Create(
+                PermissionId.New(),
+                seed.Code,
+                seed.Name,
+                seed.Description,
+                seed.Resource,
+                seed.Action,
+                seed.RequiresHumanActor,
+                executionTimestamp,
+                User.SystemUserId);
+
+            _dbContext.Add(permission);
+
+            permissionsByCode.Add(seed.Code, permission.Id);
+        }
+
+        var rolesByCode = new Dictionary<string, RoleId>(
+            StringComparer.Ordinal);
+
+        foreach (var seed in GetRoleSeeds())
+        {
+            // Role.Create takes name before code, and sets IsActive itself.
+            var role = Role.Create(
+                RoleId.New(),
+                name: seed.Name,
+                code: seed.Code,
+                seed.Description,
+                isSystemRole: true,
+                executionTimestamp,
+                User.SystemUserId);
+
+            var roleEntry = _dbContext.Add(role);
+
+            // role declares the same NOT NULL UpdatedAt/UpdatedBy shadow
+            // properties as app_user, so they must be stamped here too.
+            roleEntry.Property<DateTimeOffset>("UpdatedAt").CurrentValue = executionTimestamp;
+            roleEntry.Property<UserId>("UpdatedBy").CurrentValue = User.SystemUserId;
+
+            rolesByCode.Add(seed.Code, role.Id);
+        }
+
+        // Codes resolve against the entities created above: nothing is in the
+        // database until the single SaveChangesAsync below.
+        foreach (var seed in GetRolePermissionSeeds())
+        {
             _dbContext.Add(
-                Permission.Create(
-                    PermissionId.New(),
-                    seed.Code,
-                    seed.Name,
-                    seed.Description,
-                    seed.Resource,
-                    seed.Action,
-                    seed.RequiresHumanActor,
+                RolePermission.Create(
+                    RolePermissionId.New(),
+                    rolesByCode[seed.RoleCode],
+                    permissionsByCode[seed.PermissionCode],
                     executionTimestamp,
                     User.SystemUserId));
         }
@@ -176,7 +220,7 @@ public sealed class PlatformProvisioner
                 "Reset User Password",
                 "User",
                 "ResetPassword",
-                false,
+                true,
                 "Issue a password reset token to a user's registered email address."),
 
             new(
@@ -184,7 +228,7 @@ public sealed class PlatformProvisioner
                 "Unlock User Account",
                 "User",
                 "Unlock",
-                false,
+                true,
                 "Clear a lockout arising from consecutive failed sign-in attempts."),
 
             new(
@@ -200,7 +244,7 @@ public sealed class PlatformProvisioner
                 "Manage Identities",
                 "Identity",
                 "Manage",
-                true,
+                false,
                 "Attach, deactivate or reactivate a user's authentication identities."),
 
             new(
@@ -232,7 +276,7 @@ public sealed class PlatformProvisioner
                 "Manage Role Definitions",
                 "Role",
                 "Manage",
-                false,
+                true,
                 "Create and amend role definitions and their permission grants."),
 
             new(
@@ -292,6 +336,71 @@ public sealed class PlatformProvisioner
         string Action,
         bool RequiresHumanActor,
         string Description);
+
+    private static IReadOnlyList<RoleSeed> GetRoleSeeds()
+    {
+        return
+        [
+            new(
+                "user-administrator",
+                "User Administrator",
+                "Manages the account lifecycle: creating, updating, deactivating and reactivating users, administering their authentication identities, and resolving lockouts."),
+
+            new(
+                "security-administrator",
+                "Security Administrator",
+                "Defines what roles mean and who holds them, and maintains the tenant's security policy."),
+
+            new(
+                "access-reviewer",
+                "Access Reviewer",
+                "Read-only visibility across users, roles, identities, sessions and policy, for periodic access review.")
+        ];
+    }
+
+    private sealed record RoleSeed(
+        string Code,
+        string Name,
+        string Description);
+
+    private static IReadOnlyList<RolePermissionSeed> GetRolePermissionSeeds()
+    {
+        return
+        [
+            // user-administrator
+            new("user-administrator", "user.create"),
+            new("user-administrator", "user.read"),
+            new("user-administrator", "user.update"),
+            new("user-administrator", "user.deactivate"),
+            new("user-administrator", "user.reactivate"),
+            new("user-administrator", "user.resetpassword"),
+            new("user-administrator", "user.unlock"),
+            new("user-administrator", "identity.read"),
+            new("user-administrator", "identity.manage"),
+            new("user-administrator", "session.read"),
+            new("user-administrator", "session.revoke"),
+
+            // security-administrator
+            new("security-administrator", "role.read"),
+            new("security-administrator", "role.manage"),
+            new("security-administrator", "role.grant"),
+            new("security-administrator", "role.revoke"),
+            new("security-administrator", "securitypolicy.read"),
+            new("security-administrator", "securitypolicy.change"),
+
+            // access-reviewer
+            new("access-reviewer", "accessreview.read"),
+            new("access-reviewer", "user.read"),
+            new("access-reviewer", "role.read"),
+            new("access-reviewer", "identity.read"),
+            new("access-reviewer", "session.read"),
+            new("access-reviewer", "securitypolicy.read")
+        ];
+    }
+
+    private sealed record RolePermissionSeed(
+        string RoleCode,
+        string PermissionCode);
 
     private static void ValidateStructure(User existing)
     {
