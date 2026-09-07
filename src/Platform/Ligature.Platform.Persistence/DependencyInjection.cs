@@ -1,5 +1,6 @@
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Persistence.Database;
+using Ligature.Platform.Persistence.Repositories;
 using Ligature.Platform.Persistence.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,6 +34,8 @@ public static class DependencyInjection
         });
 
         services.AddScoped<IUnitOfWork, UnitOfWork>();
+
+        services.AddScoped<IUserRepository, UserRepository>();
 
         return services;
     }
