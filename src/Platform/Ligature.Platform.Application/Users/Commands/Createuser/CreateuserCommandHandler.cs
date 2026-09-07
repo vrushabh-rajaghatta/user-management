@@ -96,8 +96,12 @@ public sealed class CreateUserCommandHandler
                                 now,
                                 ct);
 
+                    // The id is minted first because the delivered token
+                    // embeds it: CRD-C1 consumes by primary key.
+                    var tokenId = UserTokenId.New();
+
                     var tokenMaterial =
-                        _userTokenService.Generate();
+                        _userTokenService.Generate(tokenId);
 
                     // TODO:
                     // Pass tokenMaterial.PlainText to the post-commit
@@ -106,7 +110,7 @@ public sealed class CreateUserCommandHandler
 
                     var activationToken =
                         UserToken.Create(
-                            UserTokenId.New(),
+                            tokenId,
                             identityId,
                             TokenType.Activation,
                             tokenMaterial.Hash,

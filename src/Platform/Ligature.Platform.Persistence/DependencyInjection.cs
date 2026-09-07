@@ -17,6 +17,9 @@ public static class DependencyInjection
 
         services.AddScoped<IClock, SystemClock>();
 
+        // Stateless, and RandomNumberGenerator is thread-safe.
+        services.AddSingleton<IUserTokenService, UserTokenService>();
+
         // Resolved explicitly rather than by convention: IExecutionContext is
         // absent during provisioning, and GetService returning null is the
         // signal the interceptor reads. A GetRequiredService here would make
@@ -38,6 +41,8 @@ public static class DependencyInjection
         services.AddScoped<IUserRepository, UserRepository>();
 
         services.AddScoped<IUserIdentityRepository, UserIdentityRepository>();
+
+        services.AddScoped<IUserTokenRepository, UserTokenRepository>();
 
         return services;
     }
