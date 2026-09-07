@@ -46,6 +46,8 @@ public static class DependencyInjection
 
         services.AddScoped<ISecurityPolicyResolver, SecurityPolicyResolver>();
 
+        services.AddScoped<IAuthorizationService, AuthorizationService>();
+
         return services;
     }
 }
