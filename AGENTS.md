@@ -1,0 +1,429 @@
+# Ligature — Coding Agent Instructions
+
+## 1. Purpose
+
+Ligature is being developed as a modular regulatory application.
+
+This file defines how coding agents must work in this repository.
+
+The architecture contract is maintained in `docs/architecture.md`.
+The requirement catalogue is maintained in `docs/requirements.md`.
+
+Read the relevant sections of both before implementing a story.
+
+**Current scope:** all work to date is in the Platform module, and within it
+User Management (ownership defined in `docs/architecture.md` §5). No business
+domain (Regulatory, Clinical) has been started. Do not assume infrastructure
+beyond what §3 describes exists.
+
+---
+
+## 2. Owner-Driven Development
+
+The coding agent is an implementation partner, not the owner of product or architectural decisions.
+
+For every story or significant change, follow this sequence:
+
+```text
+Analyse → Explain → Clarify → Plan → Owner approval
+→ Create branch → Implement → Test / Validate → Commit → Pull Request
+→ Owner approval → Merge
+```
+
+Do not skip these stages.
+
+### Important
+
+Do not start coding immediately after receiving a story.
+
+First understand the requirement and determine whether sufficient information exists to implement it correctly.
+
+If an important requirement is ambiguous or missing, ask the owner.
+
+Do not invent requirements simply to avoid asking questions.
+
+### Trivial changes are exempt
+
+The full sequence applies to stories and to any change that touches behaviour,
+data, schema, security, or architecture. It does **not** apply to genuinely
+trivial changes **the owner has asked for**: a typo in a comment or document, a
+documentation-only correction, a formatting fix, a rename that no other code
+observes. Make those directly, describe what you did, and keep them out of story
+branches unless they are part of the story.
+
+The exemption is about ceremony, not scope. It does **not** authorise
+opportunistic clean-up of known unrelated issues while doing something else.
+In particular, the `Behavious` → `Behaviors` and `Createuser` → `CreateUser`
+folder names and the `Ligature.Sharedkernel.csproj` casing are known items:
+address them only when the owner requests it or they are explicitly within an
+approved story's scope.
+
+If in doubt whether a change is trivial, it is not.
+
+---
+
+## 3. Working in this Repository
+
+.NET 10 (`net10.0`, SDK 10.0.400), nullable and implicit usings enabled,
+EF Core 10 + Npgsql on PostgreSQL, xUnit. The solution file is `Ligature.slnx`
+— the XML solution format, not `.sln`. There is **no host application yet**:
+the solution is class libraries and test projects only.
+
+```bash
+dotnet build Ligature.slnx
+dotnet test  Ligature.slnx
+```
+
+The Platform layers have corresponding test projects; SharedKernel currently has
+no separate test project (a source project is not required to have one):
+
+| Project | Kind |
+| --- | --- |
+| `tests/Platform/Ligature.Platform.Domain.Tests` | unit |
+| `tests/Platform/Ligature.Platform.Application.Tests` | unit |
+| `tests/Platform/Ligature.Platform.Persistence.Tests` | integration against PostgreSQL (except `UserTokenServiceTests`, which is pure) |
+
+### Database connection
+
+Persistence tests and the EF design-time factory read `LIGATURE_CONNECTION`.
+When it is unset, both fall back to:
+
+```text
+Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres
+```
+
+### Persistence tests and PostgreSQL availability
+
+**Expected behaviour:** persistence/integration test infrastructure must make
+database unavailability visible — either fail clearly when PostgreSQL is
+required but unreachable, or explicitly skip the test with a visible reason. It
+must never silently convert database unavailability into a passing test.
+
+**Current gap (known; recorded in `docs/requirements.md` Known Gaps):** the
+persistence test classes whose connection helpers catch
+`NpgsqlException`/`SocketException` currently return `null` and let the test
+body return early, so **xUnit reports them as passed having asserted nothing.**
+Until that is fixed, the command exiting 0 is not evidence, and the procedure
+below is the workaround.
+
+Validate like this, in order:
+
+1. **Confirm PostgreSQL is reachable first**, at the host/port in the
+   connection string. On macOS: `nc -z localhost 5432` (exit 0 = reachable).
+   If this fails, stop: the persistence suite cannot validate anything.
+2. **Confirm the schema and seed data are present.** Schema comes from
+   `dotnet ef database update` (below). Seed data (system roles, permissions,
+   initial security policy, bootstrap administrator) comes from
+   `PlatformProvisioner.ProvisionAsync` — there is currently no entry point
+   that runs it, so a fresh database must be provisioned out of band (see
+   Known Gaps in `docs/requirements.md`). A reachable but unprovisioned
+   database fails `CatalogueDriftTests` with an explicit message; that is the
+   one loud signal the suite gives.
+3. Run `dotnet test tests/Platform/Ligature.Platform.Persistence.Tests`.
+4. In the report, say which of the above held. "Persistence tests passed" is
+   only a true statement if step 1 succeeded. Otherwise write
+   "persistence tests not validated — PostgreSQL unreachable."
+
+### EF Core migrations
+
+`LigatureDbContextFactory` (in `Ligature.Platform.Persistence/Database`) is the
+`IDesignTimeDbContextFactory`, so `dotnet ef` works with `--project` alone.
+There is no `--startup-project`; do not go looking for one.
+
+```bash
+dotnet ef migrations add <Name> --project src/Platform/Ligature.Platform.Persistence
+dotnet ef database update        --project src/Platform/Ligature.Platform.Persistence
+```
+
+Do not introduce a separate design-time configuration mechanism.
+
+### Repository hygiene
+
+There is no CI pipeline, no `global.json`, no `.editorconfig` and no
+`Directory.Build.props`. A clean build emits `CS8618`/`CS8620` warnings on
+EF-materialised aggregates and nullable ID converters; do not add new
+categories of warning.
+
+---
+
+## 4. Story Analysis
+
+Before implementation, identify:
+
+- The business intent.
+- Expected behaviour.
+- Business rules.
+- Affected module(s).
+- Existing code and patterns that are relevant.
+- Dependencies on other modules.
+- Domain changes.
+- Application changes.
+- Persistence/database changes.
+- API/presentation changes, where applicable.
+- Testing requirements.
+- Migration requirements.
+- Architectural implications.
+
+Also identify what the story explicitly does **not** require when that prevents scope creep.
+
+If the story conflicts with `docs/architecture.md`, surface the conflict before coding.
+
+---
+
+## 5. Explain the Story
+
+Before proposing implementation, provide the owner with a concise summary of:
+
+- What the story means.
+- What will change.
+- What will not change.
+- Important business rules.
+- Relevant architectural considerations.
+- Assumptions, if any.
+
+The owner should be able to confirm that the agent has understood the story correctly.
+
+---
+
+## 6. Clarification
+
+Ask questions whenever the information required for a correct implementation is missing.
+
+When multiple reasonable interpretations exist:
+
+1. State the ambiguity.
+2. Present the relevant alternatives.
+3. Explain the consequences.
+4. Recommend an option when appropriate.
+5. Wait for the owner's decision.
+
+Do not silently choose an interpretation that materially affects behaviour, architecture, data, security, or compliance.
+
+---
+
+## 7. Implementation Plan
+
+Before coding, provide a concrete implementation plan.
+
+The plan should identify, where applicable:
+
+1. Projects/modules affected.
+2. Files expected to change.
+3. Domain changes.
+4. Application/handler changes.
+5. Persistence changes.
+6. Database migrations.
+7. API/presentation changes.
+8. Tests to add or modify.
+9. Validation/build/test steps.
+
+The plan must follow the architecture and established repository patterns.
+
+---
+
+## 8. Owner Approval Before Coding
+
+Do not begin implementation until the owner explicitly approves the proposed plan.
+
+If the owner changes the requirements, update the analysis and plan before implementation.
+
+If implementation reveals that the approved plan is materially incorrect or insufficient, stop and explain the issue before making a significant architectural change.
+
+The agent may recommend architectural changes, but must not silently make them.
+
+---
+
+## 9. Git Branches
+
+Every new story must be implemented on a dedicated branch.
+
+Naming:
+
+```text
+feature/<story-id>-<short-description>
+fix/<story-id>-<short-description>
+```
+
+**This is a new convention.** Existing branches (`PRV-C1`, `usr-c1`,
+`command-dispatch`, `authorization-service`, …) predate it and are not a
+description of what to do. Do not rename them.
+
+Do not mix unrelated work into a story branch.
+
+Do not create a new branch for every tiny follow-up commit on the same story.
+
+---
+
+## 10. Implementation
+
+After approval:
+
+- Follow the approved plan.
+- Follow `docs/architecture.md`, including its **Established Patterns** section.
+- Keep the change focused on the story.
+- Do not perform unrelated refactoring.
+- Do not introduce new architectural patterns without discussion.
+- Do not duplicate functionality already provided by another module.
+- Preserve module boundaries.
+- Add or update tests as part of the implementation.
+
+**Check deliberate deferrals before "fixing" something.** When you encounter
+what looks like a missing constraint, index, validation rule or capability,
+first check the *Known Gaps and Deliberate Deferrals* section of
+`docs/requirements.md`. Some omissions are intentional and scheduled — the
+missing `user_token` unique index (UT4) is deferred to CRD-C2 — and implementing
+one inside an unrelated story is a defect, not a favour. If it is listed, leave
+it and cite the entry; if it is not listed and looks wrong, raise it with the
+owner rather than fixing it silently. This is a safeguard, not a prerequisite:
+current User Management work does not wait on the catalogue.
+
+Prefer the simplest implementation that satisfies the requirement and preserves the architecture.
+
+---
+
+## 11. Validation
+
+Before declaring a story complete:
+
+- Build the solution.
+- Run the unit test projects.
+- Run the persistence test project **and validate it as §3 describes**.
+- Verify migrations when applicable.
+- Review the final Git diff.
+- Check for accidental or unrelated changes.
+
+A green build alone is not sufficient evidence of correctness. Report what was
+actually verified, and name anything that was not.
+
+---
+
+## 12. Commits
+
+Use focused, meaningful commits.
+
+Commit messages explain the actual change and lead with the story/requirement ID:
+
+```text
+<story-id>: <description>
+```
+
+For example:
+
+```text
+PRV-C2: enforce non-overlapping user role assignments
+```
+
+Avoid: `fix`, `changes`, `stuff`, `updates`, `wip`.
+
+Do not create meaningless commits solely to record progress.
+
+**This is a new convention.** Existing history uses plain imperative subjects
+without an ID prefix.
+
+**Do not add AI co-author attribution** (`Co-Authored-By` trailers or similar)
+to commits in this repository. The owner reviews and approves every merge; the
+Git author is the accountable party.
+
+---
+
+## 13. Pull Requests
+
+Create a pull request for each story.
+
+The PR description should explain:
+
+- What was implemented.
+- Why it was implemented this way.
+- Important design decisions.
+- Database/migration changes.
+- Tests performed.
+- Validation results — including whether the persistence suite ran against PostgreSQL.
+- Known limitations.
+- Follow-up work, if any.
+
+Reference the applicable requirement/story IDs.
+
+---
+
+## 14. Owner Review and Merge
+
+The owner must explicitly approve the PR before merging.
+
+The coding agent must not merge its own work without explicit owner authorization.
+
+When review feedback is received:
+
+1. Understand the feedback.
+2. Ask for clarification if necessary.
+3. Make the requested changes.
+4. Re-run relevant validation.
+5. Update the PR.
+
+Do not dismiss review feedback silently.
+
+---
+
+## 15. Architecture
+
+Architecture rules — module boundaries, the module-to-project mapping,
+dependency direction, database ownership, and the established coding
+patterns — live in **`docs/architecture.md`** and are not restated here.
+**On architectural questions, `docs/architecture.md` is authoritative.** On
+operational workflow — how to analyse, plan, branch, validate, commit and
+review — this file is authoritative.
+
+The short version: Ligature is a modular monolith. A conceptual module does not
+automatically get its own .NET project. Follow the patterns already in the
+code before introducing new ones.
+
+---
+
+## 16. Requirement Traceability
+
+Requirements are identified by stable IDs (see `docs/requirements.md` for the
+families in use).
+
+When working on a requirement:
+
+- Reference its ID in the branch name where practical.
+- Reference it in commit messages.
+- Reference it in the PR.
+- Cite it in the XML doc of code that implements it, as existing code does.
+
+**The catalogue is being back-filled.** IDs that already appear in committed
+code are provisionally valid even though `docs/requirements.md` does not yet
+define them. Do not block on their absence, and do not invent new IDs: if a
+story needs an ID that is neither in the catalogue nor in the code, ask the
+owner.
+
+---
+
+## 17. Architectural Escalation
+
+Stop and ask the owner before making a change that:
+
+- Creates a new architectural dependency.
+- Changes module ownership.
+- Introduces a new cross-cutting infrastructure pattern.
+- Introduces an event bus.
+- Introduces microservices.
+- Changes tenant/database isolation.
+- Changes security or authorization architecture.
+- Changes established persistence patterns.
+- Requires substantial restructuring of existing modules.
+
+The agent should recommend solutions, not make these decisions unilaterally.
+
+---
+
+## 18. General Principle
+
+Prefer:
+
+> Simple implementation + strong boundaries + explicit decisions.
+
+Avoid:
+
+> Premature abstraction + unnecessary infrastructure + architectural decisions hidden inside feature work.
+
+When uncertain, make the uncertainty visible to the owner.
