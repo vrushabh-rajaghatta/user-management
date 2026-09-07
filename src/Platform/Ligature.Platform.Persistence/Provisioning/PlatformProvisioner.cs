@@ -133,18 +133,22 @@ public sealed class PlatformProvisioner
         return created;
     }
 
+    /// <summary>
+    /// Seeded FROM the baseline rather than duplicating its eight values, so a
+    /// new tenant starts exactly at the standard it will subsequently be
+    /// evaluated against.
+    ///
+    /// Exposed for the drift test. An already-provisioned database cannot
+    /// detect this drifting, because its policy row was written before any such
+    /// change — so the linkage has to be asserted on the code, not the data.
+    /// </summary>
+    internal static SecurityPolicySettings GetInitialSecurityPolicySeed()
+        => SecurityBaseline.Current;
+
     private static SecurityPolicy CreateInitialSecurityPolicy(
         DateTimeOffset executionTimestamp)
     {
-        var settings = new SecurityPolicySettings(
-            PasswordMinLength: 12,
-            PasswordHistoryDepth: 10,
-            LockoutDuration: TimeSpan.FromMinutes(15),
-            MaxFailedLoginAttempts: 5,
-            ActivationTokenLifetime: TimeSpan.FromHours(72),
-            PasswordResetTokenLifetime: TimeSpan.FromHours(1),
-            SessionIdleTimeout: TimeSpan.FromMinutes(15),
-            SessionAbsoluteTimeout: TimeSpan.FromHours(12));
+        var settings = GetInitialSecurityPolicySeed();
 
         // Constructed explicitly rather than via DateTimeOffset.MinValue: the
         // baseline policy is effective from 0001-01-01T00:00:00Z by decision,
