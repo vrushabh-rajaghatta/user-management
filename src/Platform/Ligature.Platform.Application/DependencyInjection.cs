@@ -2,6 +2,7 @@ using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Behaviors;
 using Ligature.Platform.Application.Dispatching;
 using Ligature.Platform.Application.Execution;
+using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.SharedKernel.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -39,6 +40,23 @@ public static class DependencyInjection
         services.AddScoped(typeof(ICommandBehavior<,>),
             typeof(AuthorizationBehavior<,>));
 
+        AddCommandHandlers(services);
+
         return services;
+    }
+
+    /// <summary>
+    /// Registered one by one rather than by assembly scanning, deliberately.
+    /// "Which commands are wired in" is a question a reviewer should be able to
+    /// answer by reading this method, not by reasoning about what a reflection
+    /// predicate would have matched at startup. The list grows with the
+    /// catalogue; that cost is worth paying in a validated system.
+    /// </summary>
+    private static void AddCommandHandlers(IServiceCollection services)
+    {
+        // USR-C1
+        services.AddScoped<
+            ICommandHandler<CreateUserCommand, CreateUserResult>,
+            CreateUserCommandHandler>();
     }
 }

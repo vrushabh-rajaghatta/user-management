@@ -40,7 +40,7 @@ public sealed class UnitOfWork : IUnitOfWork
         {
             var enlisted = await operation(cancellationToken);
 
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            await SaveTranslatingAsync(cancellationToken);
 
             return enlisted;
         }
@@ -63,12 +63,39 @@ public sealed class UnitOfWork : IUnitOfWork
 
                 var result = await operation(ct);
 
-                await _dbContext.SaveChangesAsync(ct);
+                await SaveTranslatingAsync(ct);
 
                 await transaction.CommitAsync(ct);
 
                 return result;
             },
             cancellationToken);
+    }
+
+    /// <summary>
+    /// Translation happens here rather than on the DbContext so that only the
+    /// command path is affected. Provisioning saves directly, and PRV-C1's
+    /// failure mode — "partial seed leaves DB unusable" — is an operational
+    /// fault, not a rule a user broke; presenting it as a business-rule
+    /// violation would send someone looking in the wrong place.
+    ///
+    /// The throw is unconditional either way, so the commit below is never
+    /// reached and the transaction rolls back on dispose exactly as before.
+    /// Translation changes which exception surfaces, never whether one does.
+    /// </summary>
+    private async Task SaveTranslatingAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception)
+            when (PostgresExceptionTranslator.Translate(exception) is not null)
+        {
+            // Evaluated twice rather than caught-and-rethrown so the filter
+            // decides before the stack unwinds: an unmapped violation is not
+            // caught here at all, and propagates with its original stack.
+            throw PostgresExceptionTranslator.Translate(exception)!;
+        }
     }
 }
