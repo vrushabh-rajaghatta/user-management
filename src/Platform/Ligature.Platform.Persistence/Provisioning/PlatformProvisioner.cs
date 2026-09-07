@@ -63,11 +63,10 @@ public sealed class PlatformProvisioner
 
         var created = User.CreateSystem(executionTimestamp);
 
-        var entry = _dbContext.Add(created);
-
-        // No interceptor stamps these yet, and both columns are NOT NULL.
-        entry.Property<DateTimeOffset>("UpdatedAt").CurrentValue = executionTimestamp;
-        entry.Property<UserId>("UpdatedBy").CurrentValue = User.SystemUserId;
+        // UpdatedAt/UpdatedBy are stamped by ProvenanceStampingInterceptor,
+        // which attributes them to the System actor when no execution context
+        // exists — which is exactly the provisioning case.
+        _dbContext.Add(created);
 
         var permissionsByCode = new Dictionary<string, PermissionId>(
             StringComparer.Ordinal);
@@ -105,12 +104,7 @@ public sealed class PlatformProvisioner
                 executionTimestamp,
                 User.SystemUserId);
 
-            var roleEntry = _dbContext.Add(role);
-
-            // role declares the same NOT NULL UpdatedAt/UpdatedBy shadow
-            // properties as app_user, so they must be stamped here too.
-            roleEntry.Property<DateTimeOffset>("UpdatedAt").CurrentValue = executionTimestamp;
-            roleEntry.Property<UserId>("UpdatedBy").CurrentValue = User.SystemUserId;
+            _dbContext.Add(role);
 
             rolesByCode.Add(seed.Code, role.Id);
         }

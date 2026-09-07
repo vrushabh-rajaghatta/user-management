@@ -105,12 +105,8 @@ public sealed class BootstrapAdministratorProvisioner
             executionTimestamp,
             User.SystemUserId);
 
-        var userEntry = _dbContext.Add(administrator);
-
-        // app_user is the only table PRV-C3 writes that carries these NOT NULL
-        // shadow properties, so it is the only one stamped here.
-        userEntry.Property<DateTimeOffset>("UpdatedAt").CurrentValue = executionTimestamp;
-        userEntry.Property<UserId>("UpdatedBy").CurrentValue = User.SystemUserId;
+        // UpdatedAt/UpdatedBy are stamped by ProvenanceStampingInterceptor.
+        _dbContext.Add(administrator);
 
         _dbContext.Add(
             UserIdentity.CreateLocal(
