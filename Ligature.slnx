@@ -12,5 +12,6 @@
   <Folder Name="/tests/" />
   <Folder Name="/tests/Platform/">
     <Project Path="tests/Platform/Ligature.Platform.Application.Tests/Ligature.Platform.Application.Tests.csproj" />
+    <Project Path="tests/Platform/Ligature.Platform.Persistence.Tests/Ligature.Platform.Persistence.Tests.csproj" />
   </Folder>
 </Solution>

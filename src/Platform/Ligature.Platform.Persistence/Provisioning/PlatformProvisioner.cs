@@ -171,7 +171,7 @@ public sealed class PlatformProvisioner
             User.SystemUserId);
     }
 
-    private static IReadOnlyList<PermissionSeed> GetPermissionSeeds()
+    internal static IReadOnlyList<PermissionSeed> GetPermissionSeeds()
     {
         return
         [
@@ -329,7 +329,7 @@ public sealed class PlatformProvisioner
         ];
     }
 
-    private sealed record PermissionSeed(
+    internal sealed record PermissionSeed(
         string Code,
         string Name,
         string Resource,
@@ -337,7 +337,7 @@ public sealed class PlatformProvisioner
         bool RequiresHumanActor,
         string Description);
 
-    private static IReadOnlyList<RoleSeed> GetRoleSeeds()
+    internal static IReadOnlyList<RoleSeed> GetRoleSeeds()
     {
         return
         [
@@ -358,12 +358,12 @@ public sealed class PlatformProvisioner
         ];
     }
 
-    private sealed record RoleSeed(
+    internal sealed record RoleSeed(
         string Code,
         string Name,
         string Description);
 
-    private static IReadOnlyList<RolePermissionSeed> GetRolePermissionSeeds()
+    internal static IReadOnlyList<RolePermissionSeed> GetRolePermissionSeeds()
     {
         return
         [
@@ -398,7 +398,7 @@ public sealed class PlatformProvisioner
         ];
     }
 
-    private sealed record RolePermissionSeed(
+    internal sealed record RolePermissionSeed(
         string RoleCode,
         string PermissionCode);
 

@@ -1,6 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Ligature.Platform.Persistence.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Ligature.Platform.Domain\Ligature.Platform.Domain.csproj" />
     <ProjectReference Include="..\Ligature.Platform.Application\Ligature.Platform.Application.csproj" />
   </ItemGroup>
