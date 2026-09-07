@@ -91,7 +91,11 @@ public sealed class BootstrapAdministratorProvisioner
         var settings = await _securityPolicyResolver
             .GetEffectiveSettingsAsync(executionTimestamp, cancellationToken);
 
-        var tokenMaterial = _userTokenService.Generate();
+        // The id is minted first because the delivered token embeds it:
+        // CRD-C1 consumes by primary key.
+        var tokenId = UserTokenId.New();
+
+        var tokenMaterial = _userTokenService.Generate(tokenId);
 
         var userId = UserId.New();
         var identityId = UserIdentityId.New();
@@ -124,7 +128,7 @@ public sealed class BootstrapAdministratorProvisioner
         // or every approval they make afterwards is contestable.
         _dbContext.Add(
             UserToken.Create(
-                UserTokenId.New(),
+                tokenId,
                 identityId,
                 TokenType.Activation,
                 tokenMaterial.Hash,
