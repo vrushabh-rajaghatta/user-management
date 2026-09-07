@@ -39,6 +39,8 @@ public static class DependencyInjection
 
         services.AddScoped<IUserIdentityRepository, UserIdentityRepository>();
 
+        services.AddScoped<IUserTokenRepository, UserTokenRepository>();
+
         return services;
     }
 }
