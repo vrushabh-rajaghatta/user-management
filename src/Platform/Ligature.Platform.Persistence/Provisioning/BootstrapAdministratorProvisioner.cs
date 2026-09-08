@@ -27,6 +27,13 @@ public sealed record BootstrapAdministratorResult(
 /// requires a caller holding user.create and no such caller exists yet.
 /// Idempotency key is "any Human actor exists", which is deliberately distinct
 /// from PRV-C1's System-actor sentinel.
+///
+/// Delivery of the activation token is a REQUIRED parameter, with no overload
+/// omitting it. That is deliberate: the plaintext token is part of this
+/// operation's outcome, not a convenience the caller may discard. Because the
+/// sentinel prevents a second administrator from ever being created, an
+/// administrator committed without a durable token is an unrecoverable tenant —
+/// so the type system refuses to express it.
 /// </summary>
 public sealed class BootstrapAdministratorProvisioner
 {
@@ -52,6 +59,12 @@ public sealed class BootstrapAdministratorProvisioner
         _userTokenService = userTokenService;
     }
 
+    /// <param name="deliverActivationTokenAsync">
+    /// Makes the plaintext activation token DURABLE. Called after the rows are
+    /// written but BEFORE the transaction commits, and required rather than
+    /// optional: see the class summary for why there is no overload without it.
+    /// Throwing from here rolls the whole provisioning back.
+    /// </param>
     /// <returns>
     /// The created administrator, or <c>null</c> when a human actor already
     /// exists and nothing was written.
@@ -59,9 +72,12 @@ public sealed class BootstrapAdministratorProvisioner
     public async Task<BootstrapAdministratorResult?> ProvisionAsync(
         BootstrapAdministratorRequest request,
         DateTimeOffset executionTimestamp,
+        Func<BootstrapAdministratorResult, CancellationToken, Task>
+            deliverActivationTokenAsync,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(deliverActivationTokenAsync);
 
         await using var transaction = await _dbContext.Database
             .BeginTransactionAsync(cancellationToken);
@@ -157,15 +173,40 @@ public sealed class BootstrapAdministratorProvisioner
 
         // No Credential row is created here, by design.
 
+        // Before delivery, so a constraint violation — a duplicate username,
+        // most likely — surfaces here rather than after something has been
+        // written outside the database and would have to be cleaned up.
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        await transaction.CommitAsync(cancellationToken);
-
-        return new BootstrapAdministratorResult(
+        var result = new BootstrapAdministratorResult(
             userId,
             identityId,
             tokenMaterial.PlainText,
             expiresAt);
+
+        // WRITE-AHEAD DELIVERY, and the ordering is the invariant.
+        //
+        // The plaintext token exists exactly once, in memory, and is never
+        // persisted — only its hash reaches the database. Commit first and
+        // there is a window in which the administrator is durable while the
+        // only usable copy of their activation token is not: a crash there
+        // leaves an account nobody can ever activate, and the sentinel above
+        // means this operation will never run again to issue another. The
+        // tenant would be unrecoverable.
+        //
+        // Delivering first inverts the failure. A crash between here and the
+        // commit leaves a token file with no matching administrator — useless,
+        // but harmless and obvious, and the next run starts clean.
+        //
+        //     committed  =>  the token was already durable
+        //
+        // A throw here disposes the transaction uncommitted, so nothing was
+        // created and the operator can simply retry.
+        await deliverActivationTokenAsync(result, cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return result;
     }
 
     private async Task<Dictionary<string, RoleId>> LoadAdministratorRolesAsync(
