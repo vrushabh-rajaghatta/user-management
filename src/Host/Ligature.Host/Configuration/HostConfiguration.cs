@@ -12,4 +12,10 @@ public static class HostConfiguration
     /// read, so one environment serves all three.
     /// </summary>
     public const string ConnectionSetting = "LIGATURE_CONNECTION";
+
+    /// <summary>
+    /// Opts the OpenAPI document and the Scalar reference UI in
+    /// (docs/architecture.md section 18). Absent means off.
+    /// </summary>
+    public const string ApiDocumentationSetting = "LIGATURE_API_DOCUMENTATION";
 }
