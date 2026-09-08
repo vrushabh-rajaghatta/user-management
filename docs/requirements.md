@@ -17,7 +17,8 @@ The catalogue does not yet define the requirements that existing code implements
 IDs currently referenced in code and not yet defined here:
 
 ```text
-Commands:     AUT-C1 AUT-C2 AUT-C5 AUT-C7  CRD-C1 CRD-C2  IDN-C3  PRV-C1 PRV-C3  USR-C1 USR-C4
+Commands:     AUT-C1 AUT-C2 AUT-C5 AUT-C7  CRD-C1 CRD-C2  IDN-C3  PRV-C1 PRV-C3
+              SES-C1  USR-C1 USR-C4
 Rules:        AU3 AU8 AU11  UI5 UI7 UI8  UT4 UT5 UT7  UR3 UR5 UR7 UR8 UR9 UR10 UR12
               RP2 RP6  SP1 SP2 SP3 SP4  G1 G4
 ```
@@ -26,7 +27,9 @@ Rules:        AU3 AU8 AU11  UI5 UI7 UI8  UT4 UT5 UT7  UR3 UR5 UR7 UR8 UR9 UR10 U
 
 Two families are in use.
 
-**Command / capability IDs** — `<AREA>-C<n>`, e.g. `USR-C1`, `PRV-C3`. Areas observed so far: `PRV` (provisioning), `USR` (user), `CRD` (credential / token lifecycle), `AUT` (role assignment and authorization), `IDN` (identity). Define an area here before using a new one.
+**Command / capability IDs** — `<AREA>-C<n>`, e.g. `USR-C1`, `PRV-C3`. Areas observed so far: `PRV` (provisioning), `USR` (user), `CRD` (credential / token lifecycle), `AUT` (role assignment and authorization), `IDN` (identity), `SES` (session / authentication). Define an area here before using a new one.
+
+`CRD` and `SES` are deliberately distinct: `CRD` owns credential and token lifecycle, `SES` owns sessions and authentication.
 
 **Rule / constraint IDs** — `<TABLE><n>`, e.g. `AU3`, `UI7`. The prefix names the table the rule governs:
 
@@ -108,6 +111,31 @@ Things the code knowingly does not do yet. An agent that encounters one of these
 
 **State:** the connection helpers return `null` and test bodies return early, so xUnit reports the tests as passed. See `AGENTS.md` §3 for how to validate a run.
 **Intended fix:** make the skip explicit (throw or `Assert.Skip`) so a run without a database cannot report green. Not yet scheduled.
+
+## Access token issuance is unspecified — §17 escalation
+
+**State:** SES-C1 creates the authoritative `user_session` row and returns its
+`SessionId`. It does **not** issue an access token, because the frozen model
+does not say what one is.
+
+The source material gives three properties only — short-lived, carries the
+`SessionId`, and "session state is authoritative; the token is a carrier"
+(catalogue SES-C1 step 8; specification section 11). It does not settle
+JWT versus opaque token, signing algorithm, key management, claims, issuer or
+audience, token lifetime, transport, validation mechanism, or which component
+owns issuance.
+
+Its only consumer — pipeline behaviour 1, "resolves the caller from the access
+token" — does not exist either, and neither does a host application to issue a
+token to.
+
+**Consequence:** choosing a token scheme would change the security and
+authorization architecture, which `AGENTS.md` section 17 reserves to the owner.
+Do not pick one inside a feature story.
+
+**Deferred to:** its own design decision, most naturally alongside the first
+host application.
+**Where recorded:** `SignInCommandHandler` class doc.
 
 ## Database-per-tenant not implemented
 
