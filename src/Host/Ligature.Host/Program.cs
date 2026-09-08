@@ -67,6 +67,7 @@ app.UseMiddleware<CallerMiddleware>();
 
 app.MapAuthEndpoints();
 app.MapAccountEndpoints();
+app.MapUserEndpoints();
 
 if (apiDocumentationEnabled)
 {
