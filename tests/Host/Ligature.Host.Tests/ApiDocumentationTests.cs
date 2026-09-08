@@ -170,6 +170,87 @@ public sealed class ApiDocumentationTests
     /// The host builder may present the startup failure wrapped, and which
     /// wrapper is used is not part of the contract. The message is.
     /// </summary>
+    /// <summary>
+    /// The document must describe the API's authentication, not just its
+    /// routes. Without a declared scheme a reader — a client generator, or the
+    /// Scalar reference UI — has no way to know that a carrier is expected, and
+    /// Scalar has no field to put one in, so every request it sends is
+    /// anonymous and every authenticated endpoint answers 401.
+    /// </summary>
+    [Fact]
+    public async Task The_document_declares_the_bearer_scheme()
+    {
+        var document = await DocumentAsync();
+
+        var scheme = document.RootElement
+            .GetProperty("components")
+            .GetProperty("securitySchemes")
+            .GetProperty("bearer");
+
+        Assert.Equal("http", scheme.GetProperty("type").GetString());
+        Assert.Equal("bearer", scheme.GetProperty("scheme").GetString());
+
+        // The description carries the two facts a caller cannot infer from the
+        // scheme type: the carrier has no independent expiry, and an absent
+        // header is not an error.
+        var description = scheme.GetProperty("description").GetString() ?? "";
+
+        Assert.Contains("no independent expiry", description, StringComparison.Ordinal);
+        Assert.Contains("not an error", description, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The authenticated operations require the scheme; the anonymous ones
+    /// declare nothing. That split is the documented half of section 17's rule
+    /// that an absent header is not a failure — a reader can see which
+    /// operations still run without one.
+    /// </summary>
+    [Fact]
+    public async Task Only_the_authenticated_operations_require_the_scheme()
+    {
+        var paths = (await DocumentAsync()).RootElement.GetProperty("paths");
+
+        foreach (var route in new[] { "/api/auth/sign-out", "/api/users" })
+        {
+            var requirements = paths.GetProperty(route).GetProperty("post")
+                .GetProperty("security");
+
+            var requirement = Assert.Single(requirements.EnumerateArray());
+
+            // REGRESSION GUARD. A requirement built without the host document
+            // serialises as an empty object: present, but naming no scheme.
+            // That is worse than omitting it — a reader sees "secured" and
+            // cannot tell by what, and Scalar cannot link it to the token
+            // field. Asserting the array is non-empty would not have caught it.
+            Assert.True(
+                requirement.TryGetProperty("bearer", out var scopes),
+                $"{route} declares a security requirement that names no scheme.");
+
+            // Scopes are meaningless for a bearer carrier that carries no
+            // claims; the array must be empty rather than invented.
+            Assert.Empty(scopes.EnumerateArray());
+        }
+
+        foreach (var route in new[] { "/api/auth/sign-in", "/api/account/activate" })
+        {
+            Assert.False(
+                paths.GetProperty(route).GetProperty("post")
+                    .TryGetProperty("security", out _),
+                $"{route} is anonymous and must declare no security requirement.");
+        }
+    }
+
+    private static async Task<JsonDocument> DocumentAsync()
+    {
+        await using var factory = new HostFactory("true");
+
+        var response = await factory.CreateClient().GetAsync(DocumentRoute);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+    }
+
     private static string Unwrap(Exception failure)
     {
         var messages = new List<string>();

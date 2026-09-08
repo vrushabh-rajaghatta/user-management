@@ -1,3 +1,4 @@
+using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 
@@ -42,7 +43,11 @@ public static class UserEndpoints
                 + "Notifications gap in docs/requirements.md.")
             .Produces(StatusCodes.Status201Created)
             .Produces(StatusCodes.Status400BadRequest)
-            .Produces(StatusCodes.Status401Unauthorized);
+            .Produces(StatusCodes.Status401Unauthorized)
+
+            // Documentation only. AuthorizationBehavior is what refuses a
+            // caller without 'user.create'; this marker refuses nothing.
+            .WithMetadata(new RequiresCarrier());
     }
 
     private static async Task<IResult> CreateAsync(
