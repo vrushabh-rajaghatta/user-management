@@ -16,11 +16,11 @@ namespace Ligature.Platform.Application.Users.Commands.SignIn;
 /// test would still pass. So the failure path returns a result and the
 /// transaction commits the counter.
 ///
-/// Step 8 — issue an access token — is deliberately absent. The frozen model
-/// says only "short-lived, carries SessionId, session state is authoritative",
-/// which settles neither the token's form nor who owns issuing it. Choosing
-/// would change the authorization architecture, so it is recorded as a
-/// section 17 escalation in docs/requirements.md and left to the host.
+/// Step 8 — issue an access token — is deliberately absent, and stays absent
+/// now that section 17 has settled what one is. The Host mints the carrier from
+/// the SessionId this returns; nothing about signing keys, headers or token
+/// format reaches this handler, which is what keeps sign-in usable outside
+/// HTTP.
 /// </summary>
 public sealed class SignInCommandHandler
     : ICommandHandler<SignInCommand, SignInResult>

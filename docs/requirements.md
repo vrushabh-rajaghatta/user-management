@@ -104,33 +104,26 @@ Things the code knowingly does not do yet. An agent that encounters one of these
 ## No provisioning entry point
 
 **State:** schema is applied by `dotnet ef database update`, but the seed data (`PlatformProvisioner.ProvisionAsync`: system roles, permissions, initial security policy, bootstrap administrator) has no CLI, host or test that runs it. A fresh database is provisioned out of band.
-**Consequence:** persistence tests need a database that was provisioned by hand; `CatalogueDriftTests` fails with an explicit message on an unprovisioned one.
-**Deferred to:** the first host application.
+**Consequence:** persistence tests need a database that was provisioned by hand; `CatalogueDriftTests` fails with an explicit message on an unprovisioned one. The Host suite is the same — it seeds the rows each test needs and deletes them afterwards.
+**Deferred to:** its own story. The host application now exists and deliberately does **not** provision: no startup provisioning, no CLI verb, and no `Ligature.Provisioning` project. Mixing a bootstrap mechanism into the first host slice would have coupled two unrelated decisions.
 
-## Access token issuance is unspecified — §17 escalation
+## Access token issuance — §17 escalation, RESOLVED
 
-**State:** SES-C1 creates the authoritative `user_session` row and returns its
-`SessionId`. It does **not** issue an access token, because the frozen model
-does not say what one is.
+**State:** resolved and implemented. `docs/architecture.md` §17 freezes the
+contract; `src/Host/Ligature.Host` issues and verifies the carrier and
+`CallerEstablisher` owns session validity and caller establishment.
 
-The source material gives three properties only — short-lived, carries the
-`SessionId`, and "session state is authoritative; the token is a carrier"
-(catalogue SES-C1 step 8; specification section 11). It does not settle
-JWT versus opaque token, signing algorithm, key management, claims, issuer or
-audience, token lifetime, transport, validation mechanism, or which component
-owns issuance.
+Kept here rather than deleted because the *reasoning* is the audit trail: the
+frozen model gave three properties only — short-lived, carries the `SessionId`,
+"session state is authoritative; the token is a carrier" — and settling the rest
+was an owner decision under `AGENTS.md` §17, not a feature story's to make.
 
-Its only consumer — pipeline behaviour 1, "resolves the caller from the access
-token" — does not exist either, and neither does a host application to issue a
-token to.
+**Still open, deliberately:** browser token storage, cookie transport, any
+standard token container, self-contained authorization claims, a token column on
+`user_session`, and asymmetric signing. §17 lists these as explicit
+non-decisions; reopening one is an architectural change, not an implementation
+detail.
 
-**Consequence:** choosing a token scheme would change the security and
-authorization architecture, which `AGENTS.md` section 17 reserves to the owner.
-Do not pick one inside a feature story.
-
-**Deferred to:** its own design decision, most naturally alongside the first
-host application.
-**Where recorded:** `SignInCommandHandler` class doc.
 
 ## Audit is not implemented
 

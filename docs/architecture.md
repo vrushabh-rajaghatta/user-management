@@ -12,7 +12,7 @@ This document defines the architectural direction and boundaries for the Ligatur
 
 All work to date is in the **Platform** module, specifically **User Management** (its ownership is defined in §5).
 
-Nothing else described in this document exists yet — no Audit, Notifications or Logging implementation, no business domain, no host application, no tenancy. Where a later section describes one of those, it is describing target state.
+Nothing else described in this document exists yet — no Audit, Notifications or Logging implementation, no business domain, no tenancy. Where a later section describes one of those, it is describing target state.
 
 ---
 
@@ -107,7 +107,9 @@ Ligature Host Application
 └── Ligature.Regulatory.Persistence.dll   (future)
 ```
 
-**The host application does not exist yet, and current work does not need it.** The class libraries are built, tested and exercised without it — `AGENTS.md` §3 describes how. Do not create the host as a side effect of another story.
+**The host application is `src/Host/Ligature.Host`.** It exposes activation, sign-in and sign-out over HTTP and implements §17. It is deliberately thin: HTTP binding, carrier issuance and verification, and composition. Everything that decides anything sits behind `ICommandDispatcher`.
+
+It is still true that the class libraries are built, tested and exercised **without** it — `AGENTS.md` §3 describes how — and that remains the rule. Do not grow the host as a side effect of another story, and do not move logic into it because HTTP made that convenient.
 
 ## Packaging boundaries are not deployment boundaries
 
@@ -313,9 +315,9 @@ Avoid: premature microservices, unnecessary abstractions, cross-module database 
 
 # 17. Access Token and Caller Establishment
 
-**Status:** Architectural decision. Resolves the `AGENTS.md` §17 escalation recorded in `docs/requirements.md` under *"Access token issuance is unspecified"*.
+**Status:** Architectural decision, **implemented** by `src/Host/Ligature.Host` and `CallerEstablisher`. Resolves the `AGENTS.md` §17 escalation recorded in `docs/requirements.md` under *"Access token issuance is unspecified"*.
 
-*Target state — not yet implemented. No Host application exists.*
+The enforcement tolerance and the activity-staleness threshold are both 60 seconds, and both live on `CallerEstablisher` as named constants.
 
 ## The constraint that settles most of this
 
