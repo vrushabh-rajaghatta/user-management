@@ -58,6 +58,11 @@ public static class DependencyInjection
         // SES-C1
         services.AddScoped<IUserSessionRepository, UserSessionRepository>();
 
+        // The User Management side of the section 17 ownership boundary. The
+        // Host extracts a SessionId and asks this; it does not decide session
+        // validity itself.
+        services.AddScoped<ICallerEstablisher, CallerEstablisher>();
+
         return services;
     }
 }

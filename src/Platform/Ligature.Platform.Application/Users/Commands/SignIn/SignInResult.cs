@@ -25,8 +25,10 @@ public sealed record SignInResult
     public bool Succeeded { get; }
 
     /// <summary>
-    /// The authoritative session. No access token: what one should be is
-    /// unspecified and is a section 17 escalation (docs/requirements.md).
+    /// The authoritative session, and deliberately not an access token. The
+    /// Host mints a carrier from this (docs/architecture.md section 17); the
+    /// session row remains the single source of truth for lifetime, and this
+    /// result stays meaningful to callers that are not HTTP.
     /// </summary>
     public UserSessionId? SessionId { get; }
 

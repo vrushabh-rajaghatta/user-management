@@ -229,6 +229,13 @@ public sealed class CommandHandlerRegistrationTests
             Domain.Users.UserSessionId sessionId,
             CancellationToken cancellationToken)
             => Task.FromResult<Domain.Users.UserSession?>(null);
+
+        public Task RecordActivityAsync(
+            Domain.Users.UserSessionId sessionId,
+            DateTimeOffset now,
+            TimeSpan staleness,
+            CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 
     private sealed class StubClock : IClock

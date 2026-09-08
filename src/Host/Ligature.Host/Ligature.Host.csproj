@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Ligature.Host.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Platform\Ligature.Platform.Application\Ligature.Platform.Application.csproj" />
+    <ProjectReference Include="..\..\Platform\Ligature.Platform.Persistence\Ligature.Platform.Persistence.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

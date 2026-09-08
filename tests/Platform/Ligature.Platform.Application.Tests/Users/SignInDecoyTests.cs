@@ -122,6 +122,13 @@ public sealed class SignInDecoyTests
         public Task<UserSession?> FindAsync(
             UserSessionId sessionId, CancellationToken cancellationToken)
             => Task.FromResult<UserSession?>(null);
+
+        public Task RecordActivityAsync(
+            UserSessionId sessionId,
+            DateTimeOffset now,
+            TimeSpan staleness,
+            CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 
     private sealed class BaselinePolicyResolver : ISecurityPolicyResolver

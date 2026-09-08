@@ -66,8 +66,8 @@ If in doubt whether a change is trivial, it is not.
 
 .NET 10 (`net10.0`, SDK 10.0.400), nullable and implicit usings enabled,
 EF Core 10 + Npgsql on PostgreSQL, xUnit. The solution file is `Ligature.slnx`
-— the XML solution format, not `.sln`. There is **no host application yet**:
-the solution is class libraries and test projects only.
+— the XML solution format, not `.sln`. The host application is
+`src/Host/Ligature.Host`; everything else is class libraries and test projects.
 
 ```bash
 dotnet build Ligature.slnx
@@ -82,6 +82,7 @@ no separate test project (a source project is not required to have one):
 | `tests/Platform/Ligature.Platform.Domain.Tests` | unit |
 | `tests/Platform/Ligature.Platform.Application.Tests` | unit |
 | `tests/Platform/Ligature.Platform.Persistence.Tests` | integration against PostgreSQL (except `UserTokenServiceTests`, which is pure) |
+| `tests/Host/Ligature.Host.Tests` | HTTP end-to-end against PostgreSQL (except `AccessCarrierTests` and `SigningKeyRingTests`, which are pure) |
 
 ### Database connection
 
@@ -91,6 +92,27 @@ When it is unset, both fall back to:
 ```text
 Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres
 ```
+
+### Running the host
+
+The host reads its configuration from the environment and **has no defaults**.
+It refuses to start without a connection string, and refuses to start without a
+signing key — see `docs/architecture.md` §17 for why a generated or default key
+is not an option.
+
+```bash
+export LIGATURE_CONNECTION="Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres"
+export LIGATURE_SIGNING_KEY_CURRENT=v1
+export LIGATURE_SIGNING_KEY_V1=$(openssl rand -base64 32)
+dotnet run --project src/Host/Ligature.Host
+```
+
+`LIGATURE_SIGNING_KEY_<ID>` configures the key named `<id>`; the accepted set is
+whatever is configured, and `LIGATURE_SIGNING_KEY_CURRENT` names the one that
+signs. There is no `appsettings.json` carrying secrets, deliberately.
+
+The host suite supplies its own configuration, so none of this is needed to run
+`dotnet test`.
 
 ### Persistence tests and PostgreSQL availability
 
@@ -319,6 +341,30 @@ Do not create meaningless commits solely to record progress.
 
 **This is a new convention.** Existing history uses plain imperative subjects
 without an ID prefix.
+
+### Work with no requirement ID
+
+Not every change implements a requirement. Documentation, governance, and
+architectural or infrastructure work that implements a decision in
+`docs/architecture.md` rather than a catalogue entry has no story ID, and one
+must not be invented for it (§16).
+
+Such commits lead with a meaningful category prefix instead:
+
+```text
+docs: <description>
+Host: <description>
+```
+
+The rule is that a subject leads with a meaningful identifier — a story ID
+where one exists, a category where none does. This is not a licence for `fix`,
+`changes` or `wip`.
+
+Branches for such work drop the ID segment: `feature/host-application`.
+
+Cite the driving decision in the body and in the PR — for example,
+"Implements `docs/architecture.md` §17" — so the work stays traceable to
+something frozen, which is what the ID would otherwise have provided.
 
 **Do not add AI co-author attribution** (`Co-Authored-By` trailers or similar)
 to commits in this repository. The owner reviews and approves every merge; the
