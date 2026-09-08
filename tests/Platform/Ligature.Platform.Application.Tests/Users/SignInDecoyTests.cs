@@ -85,6 +85,10 @@ public sealed class SignInDecoyTests
         public Task<UserIdentity?> FindLocalByUsernameAsync(
             string username, CancellationToken cancellationToken)
             => Task.FromResult<UserIdentity?>(null);
+
+        public Task<UserIdentity?> FindAsync(
+            UserIdentityId userIdentityId, CancellationToken cancellationToken)
+            => Task.FromResult<UserIdentity?>(null);
     }
 
     private sealed class EmptyUserRepository : IUserRepository
@@ -114,6 +118,10 @@ public sealed class SignInDecoyTests
     {
         public Task AddAsync(UserSession session, CancellationToken cancellationToken)
             => Task.CompletedTask;
+
+        public Task<UserSession?> FindAsync(
+            UserSessionId sessionId, CancellationToken cancellationToken)
+            => Task.FromResult<UserSession?>(null);
     }
 
     private sealed class BaselinePolicyResolver : ISecurityPolicyResolver

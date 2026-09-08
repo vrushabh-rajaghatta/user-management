@@ -27,4 +27,11 @@ public interface IUserIdentityRepository
     Task<UserIdentity?> FindLocalByUsernameAsync(
         string username,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads an identity by id, or null (SES-C2).
+    /// </summary>
+    Task<UserIdentity?> FindAsync(
+        UserIdentityId userIdentityId,
+        CancellationToken cancellationToken);
 }

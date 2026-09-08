@@ -1,6 +1,7 @@
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Persistence.Database;
+using Microsoft.EntityFrameworkCore;
 
 namespace Ligature.Platform.Persistence.Repositories;
 
@@ -28,5 +29,17 @@ public sealed class UserSessionRepository : IUserSessionRepository
         _dbContext.Add(session);
 
         return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public async Task<UserSession?> FindAsync(
+        UserSessionId sessionId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sessionId);
+
+        // Tracked: SES-C2 revokes through this instance.
+        return await _dbContext.Set<UserSession>()
+            .FirstOrDefaultAsync(x => x.Id == sessionId, cancellationToken);
     }
 }

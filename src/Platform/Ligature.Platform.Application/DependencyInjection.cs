@@ -5,6 +5,7 @@ using Ligature.Platform.Application.Execution;
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.SignIn;
+using Ligature.Platform.Application.Users.Commands.SignOut;
 using Ligature.SharedKernel.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -70,5 +71,10 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<SignInCommand, SignInResult>,
             SignInCommandHandler>();
+
+        // SES-C2
+        services.AddScoped<
+            ICommandHandler<SignOutCommand, SignOutResult>,
+            SignOutCommandHandler>();
     }
 }

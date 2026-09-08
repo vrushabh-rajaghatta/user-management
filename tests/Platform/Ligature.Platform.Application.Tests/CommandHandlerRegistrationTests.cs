@@ -143,6 +143,11 @@ public sealed class CommandHandlerRegistrationTests
         public Task<Domain.Users.UserIdentity?> FindLocalByUsernameAsync(
             string username, CancellationToken cancellationToken)
             => Task.FromResult<Domain.Users.UserIdentity?>(null);
+
+        public Task<Domain.Users.UserIdentity?> FindAsync(
+            Domain.Users.UserIdentityId userIdentityId,
+            CancellationToken cancellationToken)
+            => Task.FromResult<Domain.Users.UserIdentity?>(null);
     }
 
     private sealed class StubUserTokenRepository : IUserTokenRepository
@@ -219,6 +224,11 @@ public sealed class CommandHandlerRegistrationTests
         public Task AddAsync(
             Domain.Users.UserSession session, CancellationToken cancellationToken)
             => Task.CompletedTask;
+
+        public Task<Domain.Users.UserSession?> FindAsync(
+            Domain.Users.UserSessionId sessionId,
+            CancellationToken cancellationToken)
+            => Task.FromResult<Domain.Users.UserSession?>(null);
     }
 
     private sealed class StubClock : IClock
