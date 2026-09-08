@@ -45,11 +45,46 @@ public sealed class UserTokenService : IUserTokenService
         // survive a URL without escaping.
         var secret = Base64Url.EncodeToString(secretBytes);
 
-        var hash = Convert.ToHexStringLower(
-            SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
+        var hash = Hash(secret);
 
         return new TokenMaterial(
             PlainText: $"{tokenId.Value}{Separator}{secret}",
             Hash: hash);
+    }
+
+    /// <inheritdoc />
+    public string Hash(string secret)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(secret);
+
+        return Convert.ToHexStringLower(
+            SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
+    }
+
+    /// <inheritdoc />
+    public PresentedToken? Parse(string plainText)
+    {
+        if (string.IsNullOrEmpty(plainText))
+            return null;
+
+        // The secret is Base64Url, whose alphabet excludes '.', so the FIRST
+        // separator is unambiguously the boundary.
+        var separator = plainText.IndexOf(Separator);
+
+        if (separator <= 0 || separator == plainText.Length - 1)
+            return null;
+
+        // TryParseExact with "D", not TryParse. Generate emits exactly one
+        // representation — the dashed form — and Parse is its inverse, so it
+        // accepts exactly that. TryParse would also admit the braced and
+        // dashless forms, which this system never issues; accepting them would
+        // make the token grammar accidental rather than deliberate, and invite
+        // later code to treat the representations as interchangeable.
+        if (!Guid.TryParseExact(plainText[..separator], "D", out var id))
+            return null;
+
+        return new PresentedToken(
+            new UserTokenId(id),
+            plainText[(separator + 1)..]);
     }
 }

@@ -14,7 +14,35 @@ public interface IUserTokenService
     /// (ValueGeneratedNever), so this needs no database round-trip.
     /// </param>
     TokenMaterial Generate(UserTokenId tokenId);
+
+    /// <summary>
+    /// The verifier for a secret, in the same form Generate stores (CRD-C1).
+    ///
+    /// Consumption needs to turn a presented secret back into the value held in
+    /// user_token.token_hash. That belongs here rather than in a separate
+    /// abstraction because this type already owns the token's hash format —
+    /// splitting them would let the two drift and make every outstanding token
+    /// unconsumable.
+    /// </summary>
+    string Hash(string secret);
+
+    /// <summary>
+    /// Splits a delivered token back into its id and secret, or null when it is
+    /// not in the expected form (CRD-C1).
+    ///
+    /// Parsing lives beside Generate because Generate composed the string.
+    /// Splitting it anywhere else would put the wire format in two places, and
+    /// a delimiter that disagrees with itself makes every outstanding token
+    /// unconsumable.
+    /// </summary>
+    PresentedToken? Parse(string plainText);
 }
+
+/// <param name="TokenId">Identifies the row; transport, not a secret.</param>
+/// <param name="Secret">The credential material, to be hashed and compared.</param>
+public sealed record PresentedToken(
+    UserTokenId TokenId,
+    string Secret);
 
 /// <summary>
 /// The two halves of a token, deliberately separated.

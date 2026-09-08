@@ -101,15 +101,14 @@ public sealed class CreateUserCommandHandler
             _executionContext.UserId
             );
 
-        // Transaction scope is handler-owned for this implementation phase.
+        // Transaction scope is handler-owned, per docs/architecture.md
+        // section 11: the handler wraps its whole operation and IUnitOfWork
+        // saves, translates known constraint violations and commits.
         //
-        // The catalogue assigns it to the pipeline (behaviour 6), and that will
-        // be reconsidered when audit emission arrives — behaviour 7 requires
-        // audit events to be written INSIDE the command's transaction, which a
-        // pipeline behaviour cannot do while the handler opens and closes the
-        // transaction internally. Moving it now, purely to support a capability
-        // that does not exist yet, would be speculative. Recorded here so
-        // today's arrangement is not mistaken for the final architecture.
+        // Audit does not change this. When the Audit capability arrives it will
+        // write through IAuditWriter INSIDE this same handler-owned
+        // transaction, so the ordering guarantee of invariant 16 costs nothing
+        // architecturally.
         var result =
             await _unitOfWork.ExecuteInTransactionAsync(
                 async ct =>
@@ -154,17 +153,21 @@ public sealed class CreateUserCommandHandler
                         ct);
 
                     // TODO — USR-C1 step 8. Emit UserCreated, IdentityCreated
-                    // and TokenIssued, each carrying the CALLER's ActorSnapshot
-                    // (the administrator, not the created user), inside this
-                    // transaction: "if the business write committed, the audit
-                    // write committed" (behaviour 7, inv. 16). Deferred with
-                    // the Audit capability. Note that a full snapshot needs
-                    // Username, IdentityProvider, SubjectId and AuthorizingRole,
-                    // none of which IExecutionContext carries today.
+                    // and TokenIssued through IAuditWriter
+                    // (docs/architecture.md section 6), each carrying the
+                    // CALLER's ActorSnapshot — the administrator, not the
+                    // created user — inside this transaction: "if the business
+                    // write committed, the audit write committed" (inv. 16).
+                    // Deferred with the Audit capability. Note that a full
+                    // snapshot needs Username, IdentityProvider, SubjectId and
+                    // AuthorizingRole, none of which IExecutionContext carries
+                    // today.
 
                     // TODO — USR-C1 step 9. Enqueue the activation
-                    // notification. Deferred with the Notification capability.
-                    // Whatever delivers it must reckon with UT7: an outbox row
+                    // notification. Deferred to the Notifications capability,
+                    // which owns delivery — User Management does not own email
+                    // infrastructure (docs/architecture.md section 8).
+                    // Whatever delivers it must reckon with UT7: a queued row
                     // carrying the activation link necessarily carries the
                     // plaintext token, which is the exact disclosure that
                     // storing only a hash exists to prevent.

@@ -16,11 +16,19 @@ public sealed class AuthenticationBehavior<TCommand, TResult>
         _executionContext = executionContext;
     }
 
+    /// <summary>
+    /// Fails closed: a command is authenticated unless it declares otherwise
+    /// (CRD-C1). See <see cref="IAnonymousCommand{TResult}"/> for why the
+    /// marker means "anonymous" rather than "authenticated".
+    /// </summary>
     public Task<TResult> Handle(
         TCommand command,
         CancellationToken cancellationToken,
         Func<CancellationToken, Task<TResult>> next)
     {
+        if (command is IAnonymousCommand<TResult>)
+            return next(cancellationToken);
+
         if (!_executionContext.IsAuthenticated)
         {
             throw new AuthenticationFailedException(

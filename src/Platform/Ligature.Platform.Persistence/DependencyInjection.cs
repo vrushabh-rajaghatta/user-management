@@ -48,6 +48,13 @@ public static class DependencyInjection
 
         services.AddScoped<IAuthorizationService, AuthorizationService>();
 
+        // CRD-C1
+        services.AddSingleton<IPasswordHasher, PasswordHasher>();
+
+        services.AddScoped<ICredentialRepository, CredentialRepository>();
+
+        services.AddScoped<IPasswordHistoryRepository, PasswordHistoryRepository>();
+
         return services;
     }
 }

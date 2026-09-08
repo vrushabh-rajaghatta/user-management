@@ -100,6 +100,9 @@ public sealed class CommandHandlerRegistrationTests
         services.AddScoped<IUserTokenService, StubUserTokenService>();
         services.AddScoped<IAuthorizationService, StubAuthorizationService>();
         services.AddScoped<IClock, StubClock>();
+        services.AddScoped<IPasswordHasher, StubPasswordHasher>();
+        services.AddScoped<ICredentialRepository, StubCredentialRepository>();
+        services.AddScoped<IPasswordHistoryRepository, StubPasswordHistoryRepository>();
 
         return services.BuildServiceProvider(validateScopes: true);
     }
@@ -138,6 +141,11 @@ public sealed class CommandHandlerRegistrationTests
         public Task AddAsync(
             Domain.Users.UserToken token, CancellationToken cancellationToken)
             => Task.CompletedTask;
+
+        public Task<Domain.Users.UserIdentityId?> TryConsumeAsync(
+            Domain.Users.UserTokenId tokenId, string tokenHash,
+            DateTimeOffset now, CancellationToken cancellationToken)
+            => Task.FromResult<Domain.Users.UserIdentityId?>(null);
     }
 
     private sealed class StubSecurityPolicyResolver : ISecurityPolicyResolver
@@ -151,6 +159,10 @@ public sealed class CommandHandlerRegistrationTests
     {
         public TokenMaterial Generate(Domain.Users.UserTokenId tokenId)
             => new($"{tokenId.Value}.secret", "hash");
+
+        public string Hash(string secret) => "hash";
+
+        public PresentedToken? Parse(string plainText) => null;
     }
 
     private sealed class StubAuthorizationService : IAuthorizationService
@@ -158,6 +170,26 @@ public sealed class CommandHandlerRegistrationTests
         public Task<bool> IsAllowedAsync(
             AuthorizationRequest request, CancellationToken cancellationToken)
             => Task.FromResult(true);
+    }
+
+    private sealed class StubPasswordHasher : IPasswordHasher
+    {
+        public PasswordHashMaterial Hash(string password)
+            => new("hash", "algorithm");
+    }
+
+    private sealed class StubCredentialRepository : ICredentialRepository
+    {
+        public Task AddAsync(
+            Domain.Users.Credential credential, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+    }
+
+    private sealed class StubPasswordHistoryRepository : IPasswordHistoryRepository
+    {
+        public Task AddAsync(
+            Domain.Users.PasswordHistory history, CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 
     private sealed class StubClock : IClock
