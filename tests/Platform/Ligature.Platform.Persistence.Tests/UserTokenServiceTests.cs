@@ -116,6 +116,79 @@ public sealed class UserTokenServiceTests
         Assert.Throws<ArgumentNullException>(() => _service.Generate(null!));
     }
 
+    // ------------------------------------------------------------- parsing
+
+    [Fact]
+    public void A_generated_token_parses_back_to_its_id_and_secret()
+    {
+        var tokenId = UserTokenId.New();
+        var material = _service.Generate(tokenId);
+
+        var parsed = _service.Parse(material.PlainText);
+
+        Assert.NotNull(parsed);
+        Assert.Equal(tokenId.Value, parsed!.TokenId.Value);
+
+        // The secret Parse yields must hash to the value that was stored, or
+        // no issued token could ever be consumed.
+        Assert.Equal(material.Hash, _service.Hash(parsed.Secret));
+    }
+
+    /// <summary>
+    /// Parse is the inverse of Generate, so it accepts exactly the one
+    /// representation Generate emits. Guid.TryParse would also admit the braced
+    /// and dashless forms; neither is ever issued, and accepting them would
+    /// make the token grammar accidental rather than deliberate.
+    /// </summary>
+    [Theory]
+    [InlineData("{0}")]      // braced      — "B" format
+    [InlineData("{1}")]      // no dashes   — "N" format
+    public void A_non_canonical_id_representation_is_rejected(string template)
+    {
+        var tokenId = UserTokenId.New();
+
+        var id = template
+            .Replace("{0}", $"{{{tokenId.Value}}}", StringComparison.Ordinal)
+            .Replace("{1}", tokenId.Value.ToString("N"), StringComparison.Ordinal);
+
+        // Sanity: the same secret with the canonical id does parse, so the
+        // rejection below is about the representation and nothing else.
+        Assert.NotNull(_service.Parse($"{tokenId.Value}.a-secret"));
+
+        Assert.Null(_service.Parse($"{id}.a-secret"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(".")]
+    [InlineData("no-separator")]
+    [InlineData(".leading-separator")]
+    [InlineData("trailing-separator.")]
+    [InlineData("not-a-guid.a-secret")]
+    public void A_malformed_token_is_rejected_without_throwing(string? plainText)
+    {
+        Assert.Null(_service.Parse(plainText!));
+    }
+
+    /// <summary>
+    /// The secret is hashed exactly as presented. Trimming or case-folding here
+    /// would silently change what gets compared against the stored hash.
+    /// </summary>
+    [Fact]
+    public void Parsing_does_not_normalise_the_secret()
+    {
+        var tokenId = UserTokenId.New();
+
+        foreach (var secret in new[] { "  spaced  ", "MiXeDcAsE", "sec.ret" })
+        {
+            var parsed = _service.Parse($"{tokenId.Value}.{secret}");
+
+            Assert.NotNull(parsed);
+            Assert.Equal(secret, parsed!.Secret, StringComparer.Ordinal);
+        }
+    }
+
     private static (string Id, string Secret) Split(string plainText)
     {
         var separator = plainText.IndexOf('.');

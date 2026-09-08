@@ -74,7 +74,13 @@ public sealed class UserTokenService : IUserTokenService
         if (separator <= 0 || separator == plainText.Length - 1)
             return null;
 
-        if (!Guid.TryParse(plainText[..separator], out var id))
+        // TryParseExact with "D", not TryParse. Generate emits exactly one
+        // representation — the dashed form — and Parse is its inverse, so it
+        // accepts exactly that. TryParse would also admit the braced and
+        // dashless forms, which this system never issues; accepting them would
+        // make the token grammar accidental rather than deliberate, and invite
+        // later code to treat the representations as interchangeable.
+        if (!Guid.TryParseExact(plainText[..separator], "D", out var id))
             return null;
 
         return new PresentedToken(
