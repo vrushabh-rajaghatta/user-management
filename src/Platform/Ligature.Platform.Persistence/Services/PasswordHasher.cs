@@ -69,4 +69,117 @@ public sealed class PasswordHasher : IPasswordHasher
                 + $"${Convert.ToBase64String(derived)}",
             AlgorithmMarker);
     }
+
+    /// <inheritdoc />
+    public PasswordVerificationResult Verify(
+        string password,
+        string storedHash,
+        string storedAlgorithm)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(password);
+        ArgumentException.ThrowIfNullOrEmpty(storedHash);
+        ArgumentException.ThrowIfNullOrEmpty(storedAlgorithm);
+
+        var stored = Decode(storedHash);
+
+        var candidate = Rfc2898DeriveBytes.Pbkdf2(
+            Encoding.UTF8.GetBytes(password),
+            stored.Salt,
+            stored.Iterations,
+            HashAlgorithmName.SHA256,
+            stored.DerivedKey.Length);
+
+        // Fixed-time: a length-dependent or early-exit comparison leaks how
+        // much of a guess was right, which is enough to reconstruct a hash byte
+        // by byte given enough attempts.
+        var isValid = CryptographicOperations.FixedTimeEquals(
+            candidate, stored.DerivedKey);
+
+        // Staleness is read from the algorithm column rather than inferred from
+        // the encoded parameters, because that column is what a future release
+        // bumps when the policy changes. Only meaningful on success — SES-C1
+        // re-hashes then, the one moment the plaintext is in hand.
+        var needsRehash = isValid
+            && !string.Equals(storedAlgorithm, AlgorithmMarker, StringComparison.Ordinal);
+
+        return new PasswordVerificationResult(isValid, needsRehash);
+    }
+
+    /// <inheritdoc />
+    public void VerifyDecoy(string password)
+    {
+        ArgumentNullException.ThrowIfNull(password);
+
+        var stored = Decode(DecoyHash.Value);
+
+        var candidate = Rfc2898DeriveBytes.Pbkdf2(
+            Encoding.UTF8.GetBytes(password),
+            stored.Salt,
+            stored.Iterations,
+            HashAlgorithmName.SHA256,
+            stored.DerivedKey.Length);
+
+        // Compared, not discarded outright, so the work is identical to a real
+        // verification and cannot be optimised away.
+        _ = CryptographicOperations.FixedTimeEquals(candidate, stored.DerivedKey);
+    }
+
+    /// <summary>
+    /// A real hash of a value nothing can present, derived once per process.
+    /// Lazy so the cost lands on first use rather than at startup, and random
+    /// so it is not a constant an attacker could recognise.
+    /// </summary>
+    private static readonly Lazy<string> DecoyHash =
+        new(() => new PasswordHasher()
+            .Hash(Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)))
+            .Hash);
+
+    /// <summary>
+    /// Reads a stored value back into its parameters.
+    ///
+    /// Everything here is a structural fault in our own data — not a wrong
+    /// password — so it throws. Reporting corruption as a failed sign-in would
+    /// leave a user locked out of an account whose stored credential we had
+    /// quietly broken, with nothing in the logs to say so.
+    /// </summary>
+    private static (int Iterations, byte[] Salt, byte[] DerivedKey) Decode(
+        string storedHash)
+    {
+        var parts = storedHash.Split('$');
+
+        if (parts.Length != 5 || parts[0].Length != 0)
+        {
+            throw new InvalidOperationException(
+                "The stored password hash is not in the expected format.");
+        }
+
+        if (!string.Equals(parts[1], SchemeId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"The stored password hash uses scheme '{parts[1]}', which this "
+                + $"release cannot verify. Expected '{SchemeId}'.");
+        }
+
+        if (!parts[2].StartsWith("i=", StringComparison.Ordinal)
+            || !int.TryParse(parts[2]["i=".Length..], out var iterations)
+            || iterations <= 0)
+        {
+            throw new InvalidOperationException(
+                "The stored password hash has an unreadable iteration count.");
+        }
+
+        try
+        {
+            return (
+                iterations,
+                Convert.FromBase64String(parts[3]),
+                Convert.FromBase64String(parts[4]));
+        }
+        catch (FormatException failure)
+        {
+            throw new InvalidOperationException(
+                "The stored password hash has an unreadable salt or key.",
+                failure);
+        }
+    }
 }

@@ -1,6 +1,7 @@
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Persistence.Database;
+using Microsoft.EntityFrameworkCore;
 
 namespace Ligature.Platform.Persistence.Repositories;
 
@@ -26,5 +27,20 @@ public sealed class CredentialRepository : ICredentialRepository
         _dbContext.Add(credential);
 
         return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public async Task<Credential?> FindByIdentityAsync(
+        UserIdentityId userIdentityId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(userIdentityId);
+
+        // Tracked deliberately: SES-C1 increments the attempt counter, locks,
+        // unlocks and rehashes through this instance, and UnitOfWork commits
+        // those writes with the rest of the operation.
+        return await _dbContext.Set<Credential>()
+            .FirstOrDefaultAsync(
+                x => x.UserIdentityId == userIdentityId, cancellationToken);
     }
 }

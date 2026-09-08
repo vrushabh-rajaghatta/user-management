@@ -67,4 +67,41 @@ public sealed class UserIdentityRepository : IUserIdentityRepository
 
         return Task.CompletedTask;
     }
+
+    /// <inheritdoc />
+    public async Task<UserIdentity?> FindLocalByUsernameAsync(
+        string username,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(username);
+
+        // Resolved in two steps, deliberately.
+        //
+        // The predicate has to run in PostgreSQL to use the same lower() as
+        // ux_user_identity_local_username — EF would fold the parameter in .NET
+        // under CurrentCulture, and that fold is not the database's, so a
+        // lookup could refuse a sign-in for a username the index considers
+        // taken. But FromSql cannot materialise this entity: UserIdentity owns
+        // a DeactivationStamp, and EF expects the owned type's property names
+        // ("Deactivation_At") rather than the column names a SELECT * returns.
+        //
+        // So the predicate returns a key, and the entity is loaded by that key
+        // — tracked, because the caller carries it into session creation and it
+        // must share a change tracker with the credential it writes.
+        var ids = await _dbContext.Database
+            .SqlQuery<Guid>($"""
+                SELECT id AS "Value" FROM user_identity
+                WHERE lower(username) = lower({username})
+                  AND identity_type = 'Local'
+                """)
+            .ToListAsync(cancellationToken);
+
+        if (ids.Count != 1)
+            return null;
+
+        var id = new UserIdentityId(ids[0]);
+
+        return await _dbContext.Set<UserIdentity>()
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    }
 }

@@ -110,6 +110,42 @@ public sealed class Credential : AggregateRoot<CredentialId>
         LockedUntil = null;
     }
 
+    /// <summary>
+    /// Replaces the stored representation of the SAME password, after a
+    /// successful sign-in found the algorithm stale (SES-C1 step 5).
+    ///
+    /// Deliberately narrow, and deliberately not ChangePassword. The password
+    /// did not change, so:
+    ///
+    /// PasswordChangedAt must not move — the frozen model says it "drives
+    /// expiry policy if introduced", and a rehash silently resetting a
+    /// password's age would hand every user an indefinite extension.
+    ///
+    /// The lockout counters must not be touched here. Clearing them is the
+    /// successful-sign-in transition (step 6), which the caller performs
+    /// explicitly; folding it into a rehash would make the reset depend on
+    /// whether the algorithm happened to be stale.
+    ///
+    /// No password_history row belongs to a rehash either. CR5 requires history
+    /// on every password SET or CHANGE; this is neither, and writing one would
+    /// record the same password twice and shorten the reuse window.
+    /// </summary>
+    public void RehashPassword(
+        string passwordHash,
+        string passwordAlgorithm)
+    {
+        if (string.IsNullOrWhiteSpace(passwordHash))
+            throw new DomainException(
+                "Password hash cannot be empty.");
+
+        if (string.IsNullOrWhiteSpace(passwordAlgorithm))
+            throw new DomainException(
+                "Password algorithm cannot be empty.");
+
+        PasswordHash = passwordHash;
+        PasswordAlgorithm = passwordAlgorithm;
+    }
+
     public void ClearMustChangePassword()
     {
         MustChangePassword = false;
