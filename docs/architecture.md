@@ -452,3 +452,47 @@ This section deliberately does **not** decide, and code must not assume:
 - **asymmetric signing** — revisit only when something outside the Host must verify
 
 Reopening any of these is an architectural change, not an implementation detail.
+
+---
+
+# 18. API Documentation
+
+**Status:** Architectural decision, **implemented** by `src/Host/Ligature.Host`. No requirement ID: this is infrastructure, not a catalogue entry (`AGENTS.md` §16).
+
+The host publishes an **OpenAPI document** and a **Scalar reference UI**, and publishes neither unless an operator asks for it.
+
+## What generates the document
+
+`Microsoft.AspNetCore.OpenApi`, the framework's own generator, which emits **OpenAPI 3.1.1**.
+
+Swashbuckle was not chosen. It is no longer what the `webapi` template installs, it is community-maintained rather than shipped with the framework, and adopting it would mean carrying a second description pipeline alongside the one already in the box. The endpoints are minimal APIs, which the built-in generator describes natively.
+
+## What renders it
+
+`Scalar.AspNetCore`, mapped at `/scalar`.
+
+Microsoft's documentation presents Swagger UI and Scalar as equal options and recommends neither. Scalar was chosen because it is one call with no options object, and because its stated purpose — readable API reference — is what this surface is for. Swagger UI's framing in the same documentation is ad-hoc endpoint testing, which is not the need here.
+
+**This is a presentation choice, not a contract.** Replacing Scalar with Swagger UI or ReDoc would change nothing else in this section.
+
+## The gate is explicit configuration, not the environment name
+
+`LIGATURE_API_DOCUMENTATION` must be `true`. **Absent means off**, and a value that is neither `true` nor `false` **stops the process** rather than being read as off.
+
+Microsoft's sample and the .NET templates gate the equivalent routes on `IHostEnvironment.IsDevelopment()`. **Ligature does not**, for the same reason §4's host registers no developer exception page in any environment: `ASPNETCORE_ENVIRONMENT` is ambient, inherited, and settable from outside the deployment, so a gate that reads it publishes on somebody else's mistake. Enumerating the surface of an authentication host is worth an affirmative act.
+
+The safe state is therefore the one reached by doing nothing, and the failure mode of a typo is a host that will not start rather than a host that quietly published.
+
+## What the document may say
+
+The descriptions are metadata, and they inherit §17's rule: **they must not enumerate the causes of a rejection.** Sign-in returns one 401 for unknown user, wrong password, locked and inactive alike, and activation returns one 400 for every bad token. A document that listed those separately would be the oracle the handlers exist to deny, so the summaries describe the single outcome.
+
+## Explicit non-decisions
+
+This section deliberately does **not** decide, and code must not assume:
+
+- **authentication on the documentation routes** — when enabled, `/openapi/v1.json` and `/scalar` are anonymous; the decision made here is whether they exist at all, not who may read them
+- **build-time document generation** (`Microsoft.Extensions.ApiDescription.Server`) — nothing consumes a checked-in document yet
+- **document linting in the build** — no CI pipeline exists to run it (`AGENTS.md` §3)
+- **generated clients** from the document
+- **API versioning**, or any meaning for the document name `v1` beyond the generator's default

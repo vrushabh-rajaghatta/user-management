@@ -31,8 +31,35 @@ public static class AuthEndpoints
     {
         ArgumentNullException.ThrowIfNull(routes);
 
-        routes.MapPost("/api/auth/sign-in", SignInAsync);
-        routes.MapPost("/api/auth/sign-out", SignOutAsync);
+        // The descriptions below exist for the OpenAPI document
+        // (docs/architecture.md section 18) and are metadata only. They must
+        // keep describing the single indistinguishable rejection rather than
+        // enumerating its causes: a document that listed "unknown user" and
+        // "wrong password" as separate outcomes would hand back precisely what
+        // the handlers withhold.
+        routes.MapPost("/api/auth/sign-in", SignInAsync)
+            .WithTags("Authentication")
+            .WithSummary("Sign in and obtain an access carrier.")
+            .WithDescription(
+                "Anonymous. On success returns a short-lived signed carrier "
+                + "for the server-side session. Every failure — unknown user, "
+                + "wrong password, locked, inactive — returns the same 401 "
+                + "with the same message, and the attempt is recorded either "
+                + "way.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized);
+
+        routes.MapPost("/api/auth/sign-out", SignOutAsync)
+            .WithTags("Authentication")
+            .WithSummary("End the session this request presented.")
+            .WithDescription(
+                "Requires a carrier. The session is ended by revocation, not "
+                + "deletion: the row survives with the actor, reason and "
+                + "instant that ended it. The response is empty whether or not "
+                + "this call was the one that revoked the session.")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status401Unauthorized);
     }
 
     /// <summary>

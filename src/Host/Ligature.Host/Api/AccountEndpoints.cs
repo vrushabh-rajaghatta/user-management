@@ -18,7 +18,19 @@ public static class AccountEndpoints
     {
         ArgumentNullException.ThrowIfNull(routes);
 
-        routes.MapPost("/api/account/activate", ActivateAsync);
+        // Metadata only, for the OpenAPI document (docs/architecture.md
+        // section 18). As with sign-in, the description must not enumerate why
+        // a token was refused — that is the oracle the single 400 prevents.
+        routes.MapPost("/api/account/activate", ActivateAsync)
+            .WithTags("Account")
+            .WithSummary("Activate an account and set its first password.")
+            .WithDescription(
+                "Anonymous: the emailed token is the authorisation, because "
+                + "holding it proves control of the mailbox. An invalid, "
+                + "expired, consumed or unparseable token all return the same "
+                + "400.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest);
     }
 
     private static async Task<IResult> ActivateAsync(

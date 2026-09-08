@@ -15,6 +15,18 @@ namespace Ligature.Host.Tests;
 /// </summary>
 internal sealed class HostFactory : WebApplicationFactory<Program>
 {
+    private readonly string? _apiDocumentation;
+
+    /// <summary>
+    /// The default leaves LIGATURE_API_DOCUMENTATION UNSET, which is what makes
+    /// the rest of the suite evidence that the documentation surface is absent
+    /// unless something asks for it. Tests that want it pass the raw setting
+    /// value — including a deliberately invalid one, since refusing to start on
+    /// a malformed value is part of the contract.
+    /// </summary>
+    internal HostFactory(string? apiDocumentation = null)
+        => _apiDocumentation = apiDocumentation;
+
     /// <summary>
     /// Thirty-two bytes exactly — the section 17 minimum — so the tests run
     /// against the smallest key the host will accept rather than a comfortable
@@ -49,5 +61,11 @@ internal sealed class HostFactory : WebApplicationFactory<Program>
 
         builder.UseSetting(
             SigningKeyRing.KeyPrefix + "V2", SecondaryKey);
+
+        if (_apiDocumentation is not null)
+        {
+            builder.UseSetting(
+                HostConfiguration.ApiDocumentationSetting, _apiDocumentation);
+        }
     }
 }
