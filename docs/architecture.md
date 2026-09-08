@@ -308,3 +308,145 @@ Ligature is:
 Prefer: clear ownership, explicit dependencies, simple implementations, reuse of established patterns, database-enforced invariants, traceable requirements, owner-approved architectural decisions.
 
 Avoid: premature microservices, unnecessary abstractions, cross-module database access, duplicate platform capabilities, hidden architectural decisions inside feature work.
+
+---
+
+# 17. Access Token and Caller Establishment
+
+**Status:** Architectural decision. Resolves the `AGENTS.md` §17 escalation recorded in `docs/requirements.md` under *"Access token issuance is unspecified"*.
+
+*Target state — not yet implemented. No Host application exists.*
+
+## The constraint that settles most of this
+
+Decision **D7** in the frozen specification already rules out the largest option:
+
+> *"Server-side sessions, or self-contained tokens alone? **Server-side sessions.** The requirement that the server terminates inactive sessions cannot be met honestly by a self-contained token, and browser-side enforcement is not a control."*
+
+And the functional walkthrough states the per-request obligation:
+
+> *"Every subsequent request verifies that the session has not been revoked, has not passed its absolute expiry, has not been idle beyond the configured timeout, and that both the user and the identity remain active. That final condition is what allows a deactivation to take effect immediately, rather than waiting for a token to lapse."*
+
+**Every authenticated request therefore consults the database.** A token carrying its own claims about identity, permissions or validity cannot satisfy that, because a deactivation would not take effect until the token lapsed.
+
+## What the token is
+
+The access token is a **short-lived signed carrier for the server-side SessionId. It has no independent expiry; its validity is determined by the authoritative server-side session validity predicate.**
+
+```text
+<key-id>.<base64url(SessionId)>.<base64url(HMAC-SHA256)>
+```
+
+The signature covers the canonical unsigned portion — the key identifier and payload, joined as they appear:
+
+```text
+<key-id>.<base64url(SessionId)>
+```
+
+The format is deliberately minimal rather than a standard container. A container designed to carry claims will eventually be given some, and they will appear to work. This format has nowhere to put one.
+
+### What it contains
+
+Exactly two things: the **key identifier** and the **SessionId**.
+
+It does **not** carry `UserId`, `IdentityId`, roles, permissions, an issued-at time, a token expiry, or a session expiry. The session row is the single source of truth for lifetime, and a second copy of that fact would eventually disagree with it — the same reasoning that rejects a `LogoutAt` column and a `PendingActivation` status.
+
+## Signing and keys
+
+**HMAC-SHA256.** The Host both issues and verifies, and no external party verifies, so symmetric signing is sufficient and adds no dependency.
+
+The signing key is **configuration**, and:
+
+- there is **no default, no hard-coded development key, and no automatically generated key**. Missing or invalid key configuration is a startup failure. A generated-per-restart key would silently sign every user out on deploy; a default key would be a vulnerability no test would catch
+- key material is **at least 32 bytes**, validated at startup
+- the Host holds one **current signing key** and a set of **accepted verification keys**
+
+The first token component is the **key identifier**, not a format version. It names which configured key verifies this carrier; the initial identifier is `v1`. Keeping these distinct means a future format change and a key rotation cannot be confused for one another.
+
+Rotation costs nothing structurally: because sessions are server-side, retiring a key invalidates outstanding carriers but destroys no session state.
+
+## Transport
+
+```text
+Authorization: Bearer <carrier>
+```
+
+## Ownership boundary
+
+| Owner | Responsibility |
+| --- | --- |
+| **Host / infrastructure** | HTTP authentication, bearer extraction, signature verification, carrier issuance |
+| **User Management** | Session lookup and validity, user and identity validity, establishing the caller |
+
+The Host must not decide independently whether a session is active or whether a user has been deactivated. It extracts a `SessionId` and asks the platform.
+
+### Issuance
+
+SES-C1 returns `Succeeded` and a `SessionId`. The Host mints the carrier from that. `SignInCommandHandler` knows nothing of tokens, signing keys or HTTP headers, which keeps sign-in usable outside HTTP.
+
+## Per-request caller establishment
+
+One platform operation, given a `SessionId`:
+
+```text
+load session
+  → not revoked
+  → within absolute expiry
+  → within idle window + enforcement tolerance
+  → user active
+  → identity active
+  → establish IExecutionContext
+  → record activity if required
+```
+
+Validity is evaluated **before** activity is recorded. Otherwise an already-idle session would resurrect itself simply by making one more request.
+
+## Session activity
+
+The `LastActivityAt` update is **authenticated-request infrastructure**. It is not a command, and no `RecordActivityCommand` exists — a command per API call would be absurd, and activity represents the authenticated *request*, not the successful completion of business work. A failed command is still legitimate activity.
+
+It is:
+
+- **throttled** — written only when the stored value is sufficiently stale
+- **monotonic** — `UserSession.RecordActivity` already rejects backwards movement in the domain, and persistence must additionally prevent a concurrent stale write from moving the value backwards
+- **independently persisted** — caller establishment and the activity write are one semantic operation but must not be assumed to share a database transaction
+
+### Enforcement tolerance: 60 seconds
+
+Closes open decision **A6**.
+
+This is an **enforcement and write-recognition tolerance**, not an extension of the configured timeout. With a 30-minute `SessionIdleTimeout`, the configured timeout remains 30 minutes; a request arriving shortly after may still be accepted because the stored activity value is throttled.
+
+US7 sets the direction: the effective idle timeout may exceed the configured value by the documented tolerance, but **must never fall short**. A genuinely active user is never signed out early.
+
+## Failure behaviour
+
+Every invalid state produces **one indistinguishable outcome** — no caller established:
+
+malformed carrier · invalid signature · unknown key identifier · unknown session · revoked session · expired session · idle session · inactive user · inactive identity.
+
+No distinction reaches the caller. Session identifiers are supplied by callers, so any observable difference between these states would let one be probed for the others.
+
+**An absent `Authorization` header is not an authentication failure.** The middleware simply establishes no caller, and the command pipeline decides:
+
+```text
+anonymous command   + no caller        → reaches the handler
+authenticated command + no caller      → AuthenticationBehavior rejects
+authenticated command + invalid carrier → no caller → AuthenticationBehavior rejects
+```
+
+Caller establishment **returns a result; it does not throw**. It is middleware, not a command, and an exception escaping to a client is how internal detail leaks.
+
+## Explicit non-decisions
+
+This section deliberately does **not** decide, and code must not assume:
+
+- **browser token storage** — a UI security decision, made when a UI exists
+- **cookie transport** — not required by anything today
+- **any standard token container**, or the terminology that comes with one
+- **self-contained authorization claims** of any kind
+- **a token or verifier column on `user_session`** — the frozen entity is unchanged
+- **a query dispatcher or query pipeline** — see §11
+- **asymmetric signing** — revisit only when something outside the Host must verify
+
+Reopening any of these is an architectural change, not an implementation detail.
