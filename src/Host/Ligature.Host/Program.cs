@@ -40,7 +40,11 @@ if (apiDocumentationEnabled)
 {
     // Only registered when it is going to be used. Off, the host carries no
     // document generator at all rather than one nothing maps.
-    builder.Services.AddOpenApi();
+    //
+    // The bearer scheme is declared here rather than left implicit: a document
+    // that describes an authenticated API without describing its
+    // authentication cannot be used to call it.
+    builder.Services.AddOpenApi(options => options.AddCarrierSecurity());
 }
 
 builder.Services.AddScoped<CurrentCarrier>();
@@ -67,6 +71,7 @@ app.UseMiddleware<CallerMiddleware>();
 
 app.MapAuthEndpoints();
 app.MapAccountEndpoints();
+app.MapUserEndpoints();
 
 if (apiDocumentationEnabled)
 {

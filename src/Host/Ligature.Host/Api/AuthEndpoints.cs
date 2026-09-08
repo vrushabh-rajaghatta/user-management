@@ -1,4 +1,5 @@
 using Ligature.Host.Authentication;
+using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
@@ -59,7 +60,11 @@ public static class AuthEndpoints
                 + "instant that ended it. The response is empty whether or not "
                 + "this call was the one that revoked the session.")
             .Produces(StatusCodes.Status204NoContent)
-            .Produces(StatusCodes.Status401Unauthorized);
+            .Produces(StatusCodes.Status401Unauthorized)
+
+            // Documentation only. The pipeline is what refuses an
+            // unauthenticated caller; this marker refuses nothing.
+            .WithMetadata(new RequiresCarrier());
     }
 
     /// <summary>

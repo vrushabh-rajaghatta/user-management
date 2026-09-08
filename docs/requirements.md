@@ -154,6 +154,33 @@ The catalogue requires audit events to be written INSIDE the command's transacti
 **Deferred to:** the Audit capability (`docs/architecture.md` §6).
 **Where recorded:** TODOs in `CreateUserCommandHandler`, `ActivateAccountCommandHandler`, `SignInCommandHandler`, `SignOutCommandHandler`.
 
+## Authorization failures are not distinguishable from validation failures
+
+**State:** `AuthorizationBehavior` raises `BusinessRuleViolationException` when a
+caller lacks the required permission — the same type a duplicate email raises.
+`ProblemMiddleware` therefore maps both to **400**, and the host cannot separate
+them without matching on the exception's message, which it must not do.
+
+**What 400 does and does not achieve.** It does not hide the distinction: the
+message reads "does not have permission", so a human or a client reading the
+body can tell the two apart. What it removes is the ability to branch on the
+distinction by STATUS — which pushes any client that needs to into exactly the
+string-matching the host is forbidden from doing. Asserted in
+`CreateUserEndpointTests.The_two_kinds_of_400_differ_only_in_their_message`.
+
+**Why it was left alone.** 403 would be the conventional status, but reaching it
+cleanly needs a fourth exception type, and "exactly three, no hierarchy" is a
+frozen decision. Reopening the exception taxonomy for one status code is a
+larger decision than the endpoint that exposed the problem, and expanding it
+silently inside a feature story would be worse than leaving the limitation
+visible.
+
+**Deferred to:** an architecture decision round on error classification, most
+naturally alongside Audit — which will want the same distinction for a different
+reason, since an authorization failure is a security event and a mistyped email
+is not.
+**Where recorded:** `UserEndpoints` class doc.
+
 ## Notifications are not implemented
 
 **State:** USR-C1 generates an activation token whose plaintext has no consumer. It is never persisted, returned or logged, so today the token simply cannot be delivered.
