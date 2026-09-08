@@ -83,6 +83,7 @@ no separate test project (a source project is not required to have one):
 | `tests/Platform/Ligature.Platform.Application.Tests` | unit |
 | `tests/Platform/Ligature.Platform.Persistence.Tests` | integration against PostgreSQL (except `UserTokenServiceTests`, which is pure) |
 | `tests/Host/Ligature.Host.Tests` | HTTP end-to-end against PostgreSQL (except `AccessCarrierTests` and `SigningKeyRingTests`, which are pure) |
+| `tests/Tools/Ligature.Provisioning.Tests` | CLI end-to-end against throwaway PostgreSQL databases (except `ProvisioningOptionsTests`, which is pure) |
 
 ### Database connection
 
@@ -114,6 +115,33 @@ signs. There is no `appsettings.json` carrying secrets, deliberately.
 The host suite supplies its own configuration, so none of this is needed to run
 `dotnet test`.
 
+### Provisioning a database
+
+Schema first, then seed data. They are separate steps on purpose: separately
+auditable, and eventually separately privileged (PE2).
+
+```bash
+export LIGATURE_CONNECTION="Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres"
+dotnet ef database update --project src/Platform/Ligature.Platform.Persistence
+dotnet run --project src/Tools/Ligature.Provisioning -- \
+    --first-name Ada --last-name Lovelace --display-name "Ada Lovelace" \
+    --email ada@example.test --username ada.lovelace \
+    --activation-token-out ./bootstrap.token
+```
+
+The tool seeds only, and refuses to run when migrations are pending. It is
+idempotent: a second run reports that provisioning is already complete, changes
+nothing, and does not touch the token file.
+
+`--activation-token-out` receives the bootstrap administrator's one-time
+activation token, written owner-only. **The token is never printed**, and it
+cannot be recovered if the file is lost — only its hash is stored, and the
+sentinel prevents a second administrator being issued. Deliver it, then delete
+the file.
+
+Provisioning is NOT part of the host application, and must not become part of
+it (`docs/architecture.md` §4).
+
 ### Persistence tests and PostgreSQL availability
 
 **Expected behaviour:** persistence/integration test infrastructure must make
@@ -134,13 +162,10 @@ Validate like this, in order:
    connection string. On macOS: `nc -z localhost 5432` (exit 0 = reachable).
    If this fails, stop: the persistence suite cannot validate anything.
 2. **Confirm the schema and seed data are present.** Schema comes from
-   `dotnet ef database update` (below). Seed data (system roles, permissions,
-   initial security policy, bootstrap administrator) comes from
-   `PlatformProvisioner.ProvisionAsync` — there is currently no entry point
-   that runs it, so a fresh database must be provisioned out of band (see
-   Known Gaps in `docs/requirements.md`). A reachable but unprovisioned
-   database fails `CatalogueDriftTests` with an explicit message; that is the
-   one loud signal the suite gives.
+   `dotnet ef database update` (below); seed data comes from
+   `src/Tools/Ligature.Provisioning` (see "Provisioning a database"). A
+   reachable but unprovisioned database fails `CatalogueDriftTests` with an
+   explicit message; that is the one loud signal the suite gives.
 3. Run `dotnet test tests/Platform/Ligature.Platform.Persistence.Tests`.
 4. In the report, say which of the above held. "Persistence tests passed" is
    only a true statement if step 1 succeeded. Otherwise write

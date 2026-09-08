@@ -101,11 +101,29 @@ Things the code knowingly does not do yet. An agent that encounters one of these
 **Deferred to:** AUT-C1 and AUT-C7, where their wording can be written against a real trigger.
 **Where recorded:** `PostgresExceptionTranslator.KnownViolations` doc.
 
-## No provisioning entry point
+## Provisioning entry point — RESOLVED
 
-**State:** schema is applied by `dotnet ef database update`, but the seed data (`PlatformProvisioner.ProvisionAsync`: system roles, permissions, initial security policy, bootstrap administrator) has no CLI, host or test that runs it. A fresh database is provisioned out of band.
-**Consequence:** persistence tests need a database that was provisioned by hand; `CatalogueDriftTests` fails with an explicit message on an unprovisioned one. The Host suite is the same — it seeds the rows each test needs and deletes them afterwards.
-**Deferred to:** its own story. The host application now exists and deliberately does **not** provision: no startup provisioning, no CLI verb, and no `Ligature.Provisioning` project. Mixing a bootstrap mechanism into the first host slice would have coupled two unrelated decisions.
+**State:** resolved. `src/Tools/Ligature.Provisioning` runs PRV-C1 and PRV-C3
+against a migrated database; `AGENTS.md` §3 documents it. Seeds only, refuses
+when migrations are pending, idempotent.
+
+**What this also fixed:** `ProvisionAsync` previously had **no call sites
+anywhere** — not in `src`, not in `tests`. `CatalogueDriftTests` compared the
+static seed lists against a hand-provisioned database, which proved the lists
+matched that database but never that this code could produce it. The
+first-provision paths of PRV-C1 and PRV-C3 now execute under test against
+throwaway databases.
+
+**The token-delivery invariant.** PRV-C3's plaintext activation token exists
+once and is never persisted, and its sentinel means a second administrator can
+never be issued. So delivery is a **required** callback invoked after
+`SaveChanges` and **before** `CommitAsync`: committed implies the token was
+already durable. A failed delivery rolls the whole thing back and leaves the
+tenant provisionable. Reverse that ordering and two tests fail.
+
+**Still deferred:** the PE2 privilege model — the tool uses the same connection
+string as everything else, so nothing yet enforces that seeding runs under a
+migration role while the application reads under another.
 
 ## Access token issuance — §17 escalation, RESOLVED
 
@@ -153,7 +171,7 @@ The catalogue requires audit events to be written INSIDE the command's transacti
 
 `CatalogueDriftTests` detects the divergence; nothing fixes it, and the only current remedy is hand-written SQL.
 
-**Blocked on:** the provisioning entry point below, and the privilege model below — PE2's premise is a migration role with INSERT and an application role with SELECT only, and no role separation exists.
+**Blocked on:** the privilege model below. PE2's premise is a migration role with INSERT and an application role with SELECT only, and no role separation exists. The provisioning entry point, its other blocker, is now resolved above.
 
 ## Enforcement layers G1, G4, PE2, PH3 and SP2 are not implemented
 

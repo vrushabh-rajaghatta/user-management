@@ -8,6 +8,9 @@
   <Folder Name="/src/Host/">
     <Project Path="src/Host/Ligature.Host/Ligature.Host.csproj" />
   </Folder>
+  <Folder Name="/src/Tools/">
+    <Project Path="src/Tools/Ligature.Provisioning/Ligature.Provisioning.csproj" />
+  </Folder>
   <Folder Name="/src/Shared/" />
   <Folder Name="/src/Shared/Ligature.SharedKernel/">
     <Project Path="src/Shared/Ligature.SharedKernel/Ligature.Sharedkernel.csproj" />
@@ -15,6 +18,9 @@
   <Folder Name="/tests/" />
   <Folder Name="/tests/Host/">
     <Project Path="tests/Host/Ligature.Host.Tests/Ligature.Host.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Tools/">
+    <Project Path="tests/Tools/Ligature.Provisioning.Tests/Ligature.Provisioning.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/Platform/">
     <Project Path="tests/Platform/Ligature.Platform.Application.Tests/Ligature.Platform.Application.Tests.csproj" />
