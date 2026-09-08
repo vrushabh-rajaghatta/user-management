@@ -54,9 +54,14 @@ branches unless they are part of the story.
 The exemption is about ceremony, not scope. It does **not** authorise
 opportunistic clean-up of known unrelated issues while doing something else.
 In particular, the `Behavious` → `Behaviors` and `Createuser` → `CreateUser`
-folder names and the `Ligature.Sharedkernel.csproj` casing are known items:
-address them only when the owner requests it or they are explicitly within an
-approved story's scope.
+folder names are known items: address them only when the owner requests it or
+they are explicitly within an approved story's scope.
+
+The `Ligature.Sharedkernel.csproj` casing was the third such item and is now
+**resolved**: the file is `Ligature.SharedKernel.csproj`, matching both its
+directory and the two `ProjectReference` paths that always spelled it that way.
+It was fixed because it blocked the Docker build — macOS hides the mismatch, a
+case-sensitive Linux filesystem does not — not as opportunistic clean-up.
 
 If in doubt whether a change is trivial, it is not.
 
@@ -141,6 +146,47 @@ the file.
 
 Provisioning is NOT part of the host application, and must not become part of
 it (`docs/architecture.md` §4).
+
+### Running in Docker
+
+A clean clone to a running system, in one command:
+
+```bash
+./up.sh
+```
+
+That starts PostgreSQL, applies migrations and starts the host, in that order,
+each step waiting for the previous one rather than sleeping. The host is on
+`http://localhost:8080`, the API reference on `/scalar`, and the container
+database is published on **55432** so it cannot collide with a PostgreSQL
+running natively on 5432 — which is the one the test suites use.
+
+`up.sh` exists for one reason: it generates a signing key into `.env` on first
+run. `docs/architecture.md` §17 forbids a default key, a committed development
+key and a key regenerated per restart, so the key cannot live in `compose.yaml`
+and the host cannot mint one. Once `.env` has a key, plain `docker compose up`
+works identically.
+
+Seeding is a separate command, as it is outside Docker:
+
+```bash
+./bootstrap.sh --first-name Ada --last-name Lovelace \
+    --display-name "Ada Lovelace" --email ada@example.test \
+    --username ada.lovelace
+```
+
+The activation token is written to `.secrets/bootstrap.token`, which is
+gitignored. Re-running reports that provisioning is already complete and leaves
+any existing token alone.
+
+`docker/Dockerfile` builds **three** images from one source tree: `host`,
+`migrator` and `provisioner`. They are separate because §4 and this section keep
+schema and seed data out of the host — a host image that migrated on startup
+would collapse a distinction the architecture depends on. The migrator runs an
+EF migration bundle, so no runtime image carries the SDK.
+
+**`dotnet test` does not use any of this.** The suites run against the developer's
+own PostgreSQL as described below, not against the container.
 
 ### Persistence tests and PostgreSQL availability
 

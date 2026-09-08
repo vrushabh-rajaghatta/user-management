@@ -1,0 +1,40 @@
+# The build context is sent to the daemon in full, so anything not needed to
+# COMPILE the solution is excluded — and anything secret is excluded twice over.
+
+# Local configuration and secrets. .env carries the signing key; it must never
+# reach a build context, let alone an image layer.
+.env
+.env.*
+.secrets/
+*.local.json
+appsettings.Development.json
+appsettings.Local.json
+secrets.json
+*.token
+
+# Build output. Host artefacts are the wrong RID for the image and would
+# otherwise be copied over the ones the build produces.
+**/bin/
+**/obj/
+artifacts/
+
+# Version control and tooling
+.git/
+.github/
+.vs/
+.vscode/
+.idea/
+
+# Test and coverage output
+**/TestResults/
+coverage*.json
+coverage*.xml
+coverage*.info
+
+# Docker's own files: changing compose.yaml must not invalidate build layers.
+compose.yaml
+docker/
+
+# OS junk
+.DS_Store
+Thumbs.db
