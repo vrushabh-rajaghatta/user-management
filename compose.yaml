@@ -1,0 +1,108 @@
+# The whole system, from a clean clone: database, schema, and the host.
+#
+#   ./up.sh
+#
+# Bootstrapping an administrator is deliberately NOT part of that. It mints a
+# one-time activation token, and AGENTS.md section 3 keeps seeding separate from
+# schema so the two stay separately auditable. It has its own profile below.
+
+# Every .NET service talks to `db` on the compose network, never localhost. The
+# published 55432 is for tools on the developer's machine, not for these.
+x-connection: &conn "Host=db;Port=5432;Database=ligature;Username=postgres;Password=postgres"
+
+name: ligature
+
+services:
+
+  # ------------------------------------------------------------- database
+
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ligature
+    ports:
+      # 55432, not 5432. A developer running PostgreSQL natively already owns
+      # 5432, and AGENTS.md section 3 points the test suite at it. Publishing
+      # the container on the same port would either fail to bind or silently
+      # shadow the database the tests use.
+      - "55432:5432"
+    volumes:
+      # /var/lib/postgresql, NOT /var/lib/postgresql/data. Postgres 18 changed
+      # the layout to major-version-specific subdirectories, and mounting the
+      # old path makes the container refuse to start. Most guides still show
+      # the pre-18 path.
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      # Nothing downstream may start on a container that is merely RUNNING.
+      # Postgres accepts connections only after initdb has finished, and the
+      # migrator would otherwise race it.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ligature"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  # ------------------------------------------------------------- schema
+
+  migrator:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: migrator
+    environment:
+      LIGATURE_CONNECTION: *conn
+    depends_on:
+      db:
+        condition: service_healthy
+    # Applies pending migrations and exits. Re-running is a no-op, so this is
+    # safe on every `up` rather than only the first.
+    restart: "no"
+
+  # --------------------------------------------------------------- host
+
+  host:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: host
+    environment:
+      LIGATURE_CONNECTION: *conn
+
+      # There is NO default and no committed key (docs/architecture.md §17).
+      # `:?` makes a missing key a clear Compose error rather than a container
+      # that starts and then refuses. ./up.sh generates one on first run.
+      LIGATURE_SIGNING_KEY_CURRENT: v1
+      LIGATURE_SIGNING_KEY_V1: ${LIGATURE_SIGNING_KEY_V1:?not set — run ./up.sh, which generates one into .env}
+
+      # This is a development environment, so the API reference is on
+      # (docs/architecture.md §18). It is off by default everywhere else.
+      LIGATURE_API_DOCUMENTATION: "true"
+    ports:
+      - "8080:8080"
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # -------------------------------------------------------- bootstrap
+
+  provisioner:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: provisioner
+    profiles: ["bootstrap"]
+    environment:
+      LIGATURE_CONNECTION: *conn
+    volumes:
+      # The activation token lands here, owner-only. Gitignored, and meant to be
+      # delivered and then deleted — it cannot be recovered if lost.
+      - ./.secrets:/secrets
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+
+volumes:
+  db-data:

@@ -36,6 +36,8 @@ packages/
 .nuget/
 
 ## Local config & secrets
+.secrets/
+*.token
 appsettings.Development.json
 appsettings.Local.json
 *.local.json
