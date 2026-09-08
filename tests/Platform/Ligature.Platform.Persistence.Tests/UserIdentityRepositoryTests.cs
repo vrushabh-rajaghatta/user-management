@@ -251,6 +251,106 @@ public sealed class UserIdentityRepositoryTests
         }
     }
 
+    // ------------------------------------------ SES-C1 sign-in lookup (UI7)
+
+    /// <summary>
+    /// Names the invariant the two-round-trip implementation of
+    /// FindLocalByUsernameAsync exists for: the match runs through PostgreSQL's
+    /// lower(), the same fold as ux_user_identity_local_username.
+    ///
+    /// EF would fold the parameter in .NET under CurrentCulture instead, and
+    /// that fold is not the database's — "IZMIR" lowercases to 'ızmır' under
+    /// tr-TR but 'izmir' under en_US.utf8. A sign-in would then be refused for
+    /// a username the index considers taken. A mutation catches the removal;
+    /// this states why it must not be removed.
+    ///
+    /// It also pins the second half of that implementation: a whole tracked
+    /// UserIdentity comes back, because SES-C1 carries it into session
+    /// creation. FromSql cannot produce one — the entity owns a
+    /// DeactivationStamp, and EF expects the owned type's property names rather
+    /// than the column names a SELECT * returns — which is why the id is
+    /// resolved in SQL and the entity loaded by key.
+    /// </summary>
+    [Fact]
+    public async Task A_sign_in_lookup_matches_case_insensitively_and_returns_the_entity()
+    {
+        await TestDatabase.EnsureReachableAsync();
+
+        await using var context = CreateContext();
+        var repository = new UserIdentityRepository(context);
+
+        var (user, identity) = NewLocalIdentity();
+
+        try
+        {
+            context.Add(user);
+            await repository.AddAsync(identity, CancellationToken.None);
+            await context.SaveChangesAsync(CancellationToken.None);
+            context.ChangeTracker.Clear();
+
+            var shouted = identity.Username!.ToUpperInvariant();
+
+            Assert.NotEqual(identity.Username, shouted, StringComparer.Ordinal);
+
+            var found = await repository.FindLocalByUsernameAsync(
+                shouted, CancellationToken.None);
+
+            Assert.NotNull(found);
+            Assert.Equal(identity.Id, found!.Id);
+
+            // A whole entity, not a projection: the caller needs UserId to
+            // check ownership and ActorType to enforce the humans-only rule.
+            Assert.Equal(identity.UserId, found.UserId);
+            Assert.Equal(ActorType.Human, found.ActorType);
+            Assert.Equal(IdentityType.Local, found.IdentityType);
+            Assert.Equal(UserStatus.Active, found.Status);
+        }
+        finally
+        {
+            await CleanUpAsync(user.Id);
+        }
+    }
+
+    /// <summary>
+    /// UI7 is Local-only, so an external identity carrying the same username is
+    /// not a sign-in candidate. Local authentication must not resolve through
+    /// an identity that authenticates elsewhere.
+    /// </summary>
+    [Fact]
+    public async Task A_sign_in_lookup_ignores_external_identities()
+    {
+        await TestDatabase.EnsureReachableAsync();
+
+        await using var context = CreateContext();
+        var repository = new UserIdentityRepository(context);
+
+        var discriminator = Guid.NewGuid().ToString("N");
+        var username = $"Ext-{discriminator[..12]}";
+        var user = NewHuman();
+
+        var external = UserIdentity.CreateExternal(
+            UserIdentityId.New(), user.Id, ActorType.Human,
+            IdentityProvider.Create("MicrosoftEntraID"),
+            subjectId: $"subject-{discriminator}", username: username,
+            Now, User.SystemUserId);
+
+        try
+        {
+            context.Add(user);
+            await repository.AddAsync(external, CancellationToken.None);
+            await context.SaveChangesAsync(CancellationToken.None);
+            context.ChangeTracker.Clear();
+
+            Assert.Null(
+                await repository.FindLocalByUsernameAsync(
+                    username, CancellationToken.None));
+        }
+        finally
+        {
+            await CleanUpAsync(user.Id);
+        }
+    }
+
     private static (User User, UserIdentity Identity) NewLocalIdentity()
     {
         var user = NewHuman();
