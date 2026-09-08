@@ -103,6 +103,7 @@ public sealed class CommandHandlerRegistrationTests
         services.AddScoped<IPasswordHasher, StubPasswordHasher>();
         services.AddScoped<ICredentialRepository, StubCredentialRepository>();
         services.AddScoped<IPasswordHistoryRepository, StubPasswordHistoryRepository>();
+        services.AddScoped<IUserSessionRepository, StubUserSessionRepository>();
 
         return services.BuildServiceProvider(validateScopes: true);
     }
@@ -123,6 +124,10 @@ public sealed class CommandHandlerRegistrationTests
 
         public Task AddAsync(Domain.Users.User user, CancellationToken cancellationToken)
             => Task.CompletedTask;
+
+        public Task<Domain.Users.User?> FindAsync(
+            Domain.Users.UserId userId, CancellationToken cancellationToken)
+            => Task.FromResult<Domain.Users.User?>(null);
     }
 
     private sealed class StubUserIdentityRepository : IUserIdentityRepository
@@ -134,6 +139,10 @@ public sealed class CommandHandlerRegistrationTests
         public Task AddAsync(
             Domain.Users.UserIdentity identity, CancellationToken cancellationToken)
             => Task.CompletedTask;
+
+        public Task<Domain.Users.UserIdentity?> FindLocalByUsernameAsync(
+            string username, CancellationToken cancellationToken)
+            => Task.FromResult<Domain.Users.UserIdentity?>(null);
     }
 
     private sealed class StubUserTokenRepository : IUserTokenRepository
@@ -176,6 +185,14 @@ public sealed class CommandHandlerRegistrationTests
     {
         public PasswordHashMaterial Hash(string password)
             => new("hash", "algorithm");
+
+        public PasswordVerificationResult Verify(
+            string password, string storedHash, string storedAlgorithm)
+            => new(false, false);
+
+        public void VerifyDecoy(string password)
+        {
+        }
     }
 
     private sealed class StubCredentialRepository : ICredentialRepository
@@ -183,12 +200,24 @@ public sealed class CommandHandlerRegistrationTests
         public Task AddAsync(
             Domain.Users.Credential credential, CancellationToken cancellationToken)
             => Task.CompletedTask;
+
+        public Task<Domain.Users.Credential?> FindByIdentityAsync(
+            Domain.Users.UserIdentityId userIdentityId,
+            CancellationToken cancellationToken)
+            => Task.FromResult<Domain.Users.Credential?>(null);
     }
 
     private sealed class StubPasswordHistoryRepository : IPasswordHistoryRepository
     {
         public Task AddAsync(
             Domain.Users.PasswordHistory history, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+    }
+
+    private sealed class StubUserSessionRepository : IUserSessionRepository
+    {
+        public Task AddAsync(
+            Domain.Users.UserSession session, CancellationToken cancellationToken)
             => Task.CompletedTask;
     }
 

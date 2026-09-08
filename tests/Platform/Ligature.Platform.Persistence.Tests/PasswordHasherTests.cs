@@ -133,6 +133,119 @@ public sealed class PasswordHasherTests
         Assert.Throws<ArgumentNullException>(() => _hasher.Hash(null!));
     }
 
+    // ------------------------------------------------------------ verifying
+
+    [Fact]
+    public void The_correct_password_verifies()
+    {
+        const string password = "the correct password";
+        var material = _hasher.Hash(password);
+
+        var result = _hasher.Verify(password, material.Hash, material.Algorithm);
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void A_wrong_password_does_not_verify()
+    {
+        var material = _hasher.Hash("the correct password");
+
+        var result = _hasher.Verify(
+            "the wrong password", material.Hash, material.Algorithm);
+
+        Assert.False(result.IsValid);
+        Assert.False(result.NeedsRehash);
+    }
+
+    [Fact]
+    public void A_current_algorithm_does_not_need_rehashing()
+    {
+        const string password = "still current";
+        var material = _hasher.Hash(password);
+
+        Assert.False(
+            _hasher.Verify(password, material.Hash, material.Algorithm)
+                .NeedsRehash);
+    }
+
+    /// <summary>
+    /// Staleness is read from the algorithm marker, which is what a release
+    /// bumps when the policy changes — not inferred from the encoded
+    /// parameters, which would make an old-but-equivalent hash look current.
+    /// </summary>
+    [Fact]
+    public void A_superseded_algorithm_needs_rehashing()
+    {
+        const string password = "hashed under an older release";
+        var material = _hasher.Hash(password);
+
+        var result = _hasher.Verify(
+            password, material.Hash, "pbkdf2-sha256-v0");
+
+        Assert.True(result.IsValid);
+        Assert.True(result.NeedsRehash);
+    }
+
+    /// <summary>
+    /// NeedsRehash is only meaningful on success: SES-C1 re-hashes on a
+    /// successful sign-in, the one moment the plaintext is in hand. Reporting
+    /// it for a failed attempt would invite a caller to act on it.
+    /// </summary>
+    [Fact]
+    public void A_failed_verification_never_reports_a_rehash()
+    {
+        var material = _hasher.Hash("the correct password");
+
+        Assert.False(
+            _hasher.Verify("wrong", material.Hash, "pbkdf2-sha256-v0")
+                .NeedsRehash);
+    }
+
+    // ------------------------------------------- structurally invalid stored
+
+    /// <summary>
+    /// Corruption in our own data, not a wrong password. Reporting these as a
+    /// failed sign-in would lock a user out of an account whose stored
+    /// credential we had quietly broken, with nothing to say so.
+    /// </summary>
+    [Theory]
+    [InlineData("not-a-hash")]
+    [InlineData("$pbkdf2-sha256$i=210000$onlythreeparts")]
+    [InlineData("$argon2id$i=3$c2FsdA==$a2V5")]
+    [InlineData("$pbkdf2-sha256$iterations=210000$c2FsdA==$a2V5")]
+    [InlineData("$pbkdf2-sha256$i=0$c2FsdA==$a2V5")]
+    [InlineData("$pbkdf2-sha256$i=210000$not-base64!$a2V5")]
+    [InlineData("$pbkdf2-sha256$i=210000$c2FsdA==$not-base64!")]
+    public void A_structurally_invalid_stored_hash_throws(string stored)
+    {
+        Assert.Throws<InvalidOperationException>(
+            () => _hasher.Verify("any password", stored, "pbkdf2-sha256-v1"));
+    }
+
+    // ----------------------------------------------------------------- decoy
+
+    /// <summary>
+    /// The decoy exists to make a missing credential cost what a real one does.
+    /// It must never succeed, and it must not throw — a failure path that threw
+    /// would be its own oracle.
+    /// </summary>
+    /// <summary>
+    /// That the decoy costs the same as a real verification is structural — it
+    /// runs the identical Pbkdf2 call at the identical work factor — and is
+    /// deliberately NOT asserted here. A timing comparison is unreliable under
+    /// parallel load and proves little when it passes; SignInDecoyTests
+    /// asserts the property that is observable, namely that the handler calls
+    /// it on the not-found path.
+    /// </summary>
+    [Fact]
+    public void The_decoy_verification_completes_for_any_input()
+    {
+        _hasher.VerifyDecoy("anything at all");
+        _hasher.VerifyDecoy(string.Empty);
+        _hasher.VerifyDecoy(new string('x', 512));
+    }
+
     /// <summary>
     /// Reads the stored string the way a verifier would, using only the string.
     /// </summary>

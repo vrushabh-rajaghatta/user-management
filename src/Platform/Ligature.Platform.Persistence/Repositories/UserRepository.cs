@@ -73,4 +73,15 @@ public sealed class UserRepository : IUserRepository
 
         return Task.CompletedTask;
     }
+
+    /// <inheritdoc />
+    public async Task<User?> FindAsync(
+        UserId userId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(userId);
+
+        return await _dbContext.Set<User>()
+            .FirstOrDefaultAsync(x => x.Id == userId, cancellationToken);
+    }
 }

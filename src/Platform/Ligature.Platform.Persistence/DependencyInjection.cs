@@ -55,6 +55,9 @@ public static class DependencyInjection
 
         services.AddScoped<IPasswordHistoryRepository, PasswordHistoryRepository>();
 
+        // SES-C1
+        services.AddScoped<IUserSessionRepository, UserSessionRepository>();
+
         return services;
     }
 }
