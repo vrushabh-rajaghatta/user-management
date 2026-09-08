@@ -266,6 +266,8 @@ feature/<story-id>-<short-description>
 fix/<story-id>-<short-description>
 ```
 
+Work that has no requirement ID drops the ID segment — see §12.
+
 **This is a new convention.** Existing branches (`PRV-C1`, `usr-c1`,
 `command-dispatch`, `authorization-service`, …) predate it and are not a
 description of what to do. Do not rename them.
