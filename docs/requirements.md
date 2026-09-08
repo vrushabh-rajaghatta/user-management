@@ -18,7 +18,7 @@ IDs currently referenced in code and not yet defined here:
 
 ```text
 Commands:     AUT-C1 AUT-C2 AUT-C5 AUT-C7  CRD-C1 CRD-C2  IDN-C3  PRV-C1 PRV-C3
-              SES-C1  USR-C1 USR-C4
+              SES-C1 SES-C2  USR-C1 USR-C4
 Rules:        AU3 AU8 AU11  UI5 UI7 UI8  UT4 UT5 UT7  UR3 UR5 UR7 UR8 UR9 UR10 UR12
               RP2 RP6  SP1 SP2 SP3 SP4  G1 G4
 ```
@@ -107,11 +107,6 @@ Things the code knowingly does not do yet. An agent that encounters one of these
 **Consequence:** persistence tests need a database that was provisioned by hand; `CatalogueDriftTests` fails with an explicit message on an unprovisioned one.
 **Deferred to:** the first host application.
 
-## Persistence tests skip silently when PostgreSQL is unreachable
-
-**State:** the connection helpers return `null` and test bodies return early, so xUnit reports the tests as passed. See `AGENTS.md` §3 for how to validate a run.
-**Intended fix:** make the skip explicit (throw or `Assert.Skip`) so a run without a database cannot report green. Not yet scheduled.
-
 ## Access token issuance is unspecified — §17 escalation
 
 **State:** SES-C1 creates the authoritative `user_session` row and returns its
@@ -136,6 +131,69 @@ Do not pick one inside a feature story.
 **Deferred to:** its own design decision, most naturally alongside the first
 host application.
 **Where recorded:** `SignInCommandHandler` class doc.
+
+## Audit is not implemented
+
+**State:** no `IAuditWriter`, no audit table, no ActorSnapshot type. Every command that should emit audit events carries an explicit TODO instead.
+
+The catalogue requires audit events to be written INSIDE the command's transaction — "if the business write committed, the audit write committed" (inv. 16). Handler-owned transactions (`docs/architecture.md` §11) already make that possible without restructuring.
+
+**Also missing, and larger than it looks:** a full ActorSnapshot needs `Username`, `IdentityProvider`, `SubjectId` and `AuthorizingRole`, none of which `IExecutionContext` carries. `AuthorizationService` returns `bool` and discards which assignment authorised the action.
+
+**Deferred to:** the Audit capability (`docs/architecture.md` §6).
+**Where recorded:** TODOs in `CreateUserCommandHandler`, `ActivateAccountCommandHandler`, `SignInCommandHandler`, `SignOutCommandHandler`.
+
+## Notifications are not implemented
+
+**State:** USR-C1 generates an activation token whose plaintext has no consumer. It is never persisted, returned or logged, so today the token simply cannot be delivered.
+
+**The trap for whoever builds delivery:** a queued row carrying an activation link necessarily carries the plaintext token — the exact disclosure that storing only a hash exists to prevent (UT7). Retention and encryption of that queue need deciding, not assuming.
+
+**Deferred to:** the Notifications capability, which owns delivery — User Management does not own email infrastructure (`docs/architecture.md` §8).
+**Where recorded:** TODO in `CreateUserCommandHandler`.
+
+## PRV-C2 — a provisioned tenant never receives new permissions
+
+**Rule:** every release that adds permissions runs `SeedPermissionCatalog`, under the migration role (PE2).
+
+**State:** not implemented. `PlatformProvisioner.ProvisionAsync` seeds the catalogue once and then no-ops forever, so adding a permission to `GetPermissionSeeds()` changes nothing for any existing tenant database — silently.
+
+`CatalogueDriftTests` detects the divergence; nothing fixes it, and the only current remedy is hand-written SQL.
+
+**Blocked on:** the provisioning entry point below, and the privilege model below — PE2's premise is a migration role with INSERT and an application role with SELECT only, and no role separation exists.
+
+## Enforcement layers G1, G4, PE2, PH3 and SP2 are not implemented
+
+**State:** no `GRANT`/`REVOKE` statements and no triggers exist in any migration — verified. So none of these hold at the database level:
+
+- **G1** no hard deletes (application role granted SELECT/INSERT/UPDATE only, with `user_session` the sole purge exception)
+- **G4** BEFORE UPDATE triggers rejecting writes to immutable and write-once columns
+- **PE2** `permission` readable but not writable by the application role
+- **PH3** `password_history` insert-only
+- **SP2** `security_policy` append-only
+
+The domain enforces the equivalent rules in code, so behaviour is correct today; what is missing is the database-level backstop the frozen model specifies, which is what makes these structural rather than a matter of developer discipline.
+
+**Deferred to:** unscheduled. Needs a database role model, which does not exist.
+
+## CR1 — no unique constraint on credential.user_identity_id
+
+**Rule:** one credential per identity, 1:0..1.
+
+**State:** the index on `(user_identity_id, identity_type)` is NOT unique, so two credential rows for one identity are possible. The composite FK pins `identity_type` to the identity but does not constrain cardinality.
+
+Nothing produces a second row today — CRD-C1 only ever inserts after consuming a single-use token — so this is a missing backstop rather than a live defect.
+
+**Deferred to:** unscheduled.
+
+## Integration-test fixtures can outlive a failed dispatch
+
+**State:** the persistence integration tests assign their fixture handle outside the `try`, so when a dispatch throws, the `finally` cleanup never runs and rows are left in the shared database. Two such rows were found and removed during CRD-C1 validation.
+
+Harmless to correctness — every test scopes by its own ids — but it accumulates.
+
+**Intended fix:** establish the cleanup scope BEFORE any operation that can throw, rather than wrapping more code in another `try`/`finally`.
+**Deferred to:** unscheduled.
 
 ## Database-per-tenant not implemented
 
