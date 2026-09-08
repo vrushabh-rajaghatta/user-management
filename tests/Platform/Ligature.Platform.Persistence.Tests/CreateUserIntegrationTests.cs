@@ -1,4 +1,3 @@
-using System.Net.Sockets;
 using Ligature.Platform.Application;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Execution;
@@ -22,13 +21,11 @@ namespace Ligature.Platform.Persistence.Tests;
 /// policy resolver, token generation, provenance stamping and the transaction
 /// boundary all compose into one business operation.
 ///
-/// Target database comes from LIGATURE_CONNECTION; the tests skip when no
-/// database is reachable, matching CatalogueDriftTests.
+/// Target database comes from LIGATURE_CONNECTION. These tests FAIL rather
+/// than skip when PostgreSQL is unreachable — see TestDatabase.
 /// </summary>
 public sealed class CreateUserIntegrationTests
 {
-    private const string DefaultConnection =
-        "Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres";
 
     private static readonly DateTimeOffset Now =
         new(2026, 9, 7, 14, 0, 0, TimeSpan.Zero);
@@ -312,8 +309,7 @@ public sealed class CreateUserIntegrationTests
     [Fact]
     public async Task An_unauthenticated_caller_is_refused()
     {
-        if (!await IsReachableAsync() || !await IsProvisionedAsync())
-            return;
+        await TestDatabase.EnsureProvisionedAsync();
 
         await using var provider = BuildProvider();
         using var scope = provider.CreateScope();
@@ -340,8 +336,7 @@ public sealed class CreateUserIntegrationTests
         string? roleCode,
         Func<ICommandDispatcher, UserId, Task> body)
     {
-        if (!await IsReachableAsync() || !await IsProvisionedAsync())
-            return;
+        await TestDatabase.EnsureProvisionedAsync();
 
         var administrator = await SeedCallerAsync(roleCode);
 
@@ -634,27 +629,6 @@ public sealed class CreateUserIntegrationTests
             "SELECT count(*) FROM role WHERE code = @value",
             "user-administrator") > 0;
 
-    private static string ConnectionString =>
-        Environment.GetEnvironmentVariable("LIGATURE_CONNECTION")
-        ?? DefaultConnection;
+    private static string ConnectionString => TestDatabase.ConnectionString;
 
-    private static async Task<bool> IsReachableAsync()
-    {
-        await using var connection = new NpgsqlConnection(ConnectionString);
-
-        try
-        {
-            await connection.OpenAsync();
-
-            return true;
-        }
-        catch (NpgsqlException)
-        {
-            return false;
-        }
-        catch (SocketException)
-        {
-            return false;
-        }
-    }
 }

@@ -1,4 +1,3 @@
-using System.Net.Sockets;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Persistence.Database;
@@ -19,13 +18,11 @@ namespace Ligature.Platform.Persistence.Tests;
 /// expected race, a programming error and a broken invariant are different
 /// things, and a generic fallback would flatten them together.
 ///
-/// Target database comes from LIGATURE_CONNECTION; the tests skip when no
-/// database is reachable, matching CatalogueDriftTests.
+/// Target database comes from LIGATURE_CONNECTION. These tests FAIL rather
+/// than skip when PostgreSQL is unreachable — see TestDatabase.
 /// </summary>
 public sealed class ExceptionTranslationTests
 {
-    private const string DefaultConnection =
-        "Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres";
 
     private static readonly DateTimeOffset Now =
         new(2026, 9, 7, 13, 0, 0, TimeSpan.Zero);
@@ -35,8 +32,7 @@ public sealed class ExceptionTranslationTests
     [Fact]
     public async Task A_duplicate_active_human_email_becomes_a_business_rule_error()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var unitOfWork = new UnitOfWork(context);
@@ -73,8 +69,7 @@ public sealed class ExceptionTranslationTests
     [Fact]
     public async Task A_duplicate_local_username_becomes_a_business_rule_error()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var unitOfWork = new UnitOfWork(context);
@@ -122,8 +117,7 @@ public sealed class ExceptionTranslationTests
     [Fact]
     public async Task An_unknown_unique_violation_survives_untranslated()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var unitOfWork = new UnitOfWork(context);
@@ -168,8 +162,7 @@ public sealed class ExceptionTranslationTests
     [Fact]
     public async Task A_check_constraint_violation_survives_untranslated()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var unitOfWork = new UnitOfWork(context);
@@ -216,8 +209,7 @@ public sealed class ExceptionTranslationTests
     [Fact]
     public async Task An_overlapping_assignment_raises_an_exclusion_violation()
     {
-        if (!await IsReachableAsync() || !await IsProvisionedAsync())
-            return;
+        await TestDatabase.EnsureProvisionedAsync();
 
         await using var context = CreateContext();
         var unitOfWork = new UnitOfWork(context);
@@ -268,8 +260,7 @@ public sealed class ExceptionTranslationTests
     [Fact]
     public async Task A_translated_failure_still_rolls_the_transaction_back()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var unitOfWork = new UnitOfWork(context);
@@ -437,29 +428,8 @@ public sealed class ExceptionTranslationTests
         await command.ExecuteNonQueryAsync();
     }
 
-    private static string ConnectionString =>
-        Environment.GetEnvironmentVariable("LIGATURE_CONNECTION")
-        ?? DefaultConnection;
+    private static string ConnectionString => TestDatabase.ConnectionString;
 
-    private static async Task<bool> IsReachableAsync()
-    {
-        await using var connection = new NpgsqlConnection(ConnectionString);
-
-        try
-        {
-            await connection.OpenAsync();
-
-            return true;
-        }
-        catch (NpgsqlException)
-        {
-            return false;
-        }
-        catch (SocketException)
-        {
-            return false;
-        }
-    }
 
     private sealed class FixedClock : IClock
     {

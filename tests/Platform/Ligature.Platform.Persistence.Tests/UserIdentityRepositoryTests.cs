@@ -1,4 +1,3 @@
-using System.Net.Sockets;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Persistence.Database;
@@ -14,13 +13,11 @@ namespace Ligature.Platform.Persistence.Tests;
 /// email rule, and the asymmetry is the thing most likely to be "corrected"
 /// by someone who has just read the AU3 predicate.
 ///
-/// Target database comes from LIGATURE_CONNECTION; the tests skip when no
-/// database is reachable, matching CatalogueDriftTests.
+/// Target database comes from LIGATURE_CONNECTION. These tests FAIL rather
+/// than skip when PostgreSQL is unreachable — see TestDatabase.
 /// </summary>
 public sealed class UserIdentityRepositoryTests
 {
-    private const string DefaultConnection =
-        "Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres";
 
     private static readonly DateTimeOffset Now =
         new(2026, 9, 7, 10, 30, 0, TimeSpan.Zero);
@@ -28,8 +25,7 @@ public sealed class UserIdentityRepositoryTests
     [Fact]
     public async Task AddAsync_tracks_without_saving()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var repository = new UserIdentityRepository(context);
@@ -57,8 +53,7 @@ public sealed class UserIdentityRepositoryTests
     [Fact]
     public async Task A_local_username_in_use_is_a_conflict()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var repository = new UserIdentityRepository(context);
@@ -89,8 +84,7 @@ public sealed class UserIdentityRepositoryTests
     [Fact]
     public async Task The_comparison_is_case_insensitive_like_the_index()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var repository = new UserIdentityRepository(context);
@@ -126,8 +120,7 @@ public sealed class UserIdentityRepositoryTests
     [Fact]
     public async Task An_inactive_local_identity_still_holds_its_username()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var repository = new UserIdentityRepository(context);
@@ -169,8 +162,7 @@ public sealed class UserIdentityRepositoryTests
     [Fact]
     public async Task An_external_identity_does_not_reserve_the_username()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var repository = new UserIdentityRepository(context);
@@ -215,8 +207,7 @@ public sealed class UserIdentityRepositoryTests
     [Fact]
     public async Task The_index_rejects_a_duplicate_the_pre_check_allowed()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var repository = new UserIdentityRepository(context);
@@ -338,29 +329,8 @@ public sealed class UserIdentityRepositoryTests
         await user.ExecuteNonQueryAsync();
     }
 
-    private static string ConnectionString =>
-        Environment.GetEnvironmentVariable("LIGATURE_CONNECTION")
-        ?? DefaultConnection;
+    private static string ConnectionString => TestDatabase.ConnectionString;
 
-    private static async Task<bool> IsReachableAsync()
-    {
-        await using var connection = new NpgsqlConnection(ConnectionString);
-
-        try
-        {
-            await connection.OpenAsync();
-
-            return true;
-        }
-        catch (NpgsqlException)
-        {
-            return false;
-        }
-        catch (SocketException)
-        {
-            return false;
-        }
-    }
 
     private sealed class FixedClock : IClock
     {

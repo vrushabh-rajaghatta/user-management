@@ -1,4 +1,3 @@
-using System.Net.Sockets;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Persistence.Database;
@@ -14,19 +13,16 @@ namespace Ligature.Platform.Persistence.Tests;
 /// and whether NOT NULL provenance columns are populated — all of which the
 /// in-memory provider answers incorrectly by not enforcing them.
 ///
-/// Target database comes from LIGATURE_CONNECTION; the tests skip when no
-/// database is reachable, matching CatalogueDriftTests.
+/// Target database comes from LIGATURE_CONNECTION. These tests FAIL rather
+/// than skip when PostgreSQL is unreachable — see TestDatabase.
 /// </summary>
 public sealed class UnitOfWorkTests
 {
-    private const string DefaultConnection =
-        "Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres";
 
     [Fact]
     public async Task Commit_persists_every_write_in_the_delegate()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var unitOfWork = new UnitOfWork(context);
@@ -56,8 +52,7 @@ public sealed class UnitOfWorkTests
     [Fact]
     public async Task A_throwing_delegate_leaves_nothing_behind()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var unitOfWork = new UnitOfWork(context);
@@ -88,8 +83,7 @@ public sealed class UnitOfWorkTests
     [Fact]
     public async Task An_existing_transaction_is_joined_rather_than_replaced()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var unitOfWork = new UnitOfWork(context);
@@ -127,8 +121,7 @@ public sealed class UnitOfWorkTests
     [Fact]
     public async Task Provenance_columns_are_stamped_without_an_execution_context()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         var clock = new FixedClock(
             new DateTimeOffset(2026, 9, 7, 10, 30, 0, TimeSpan.Zero));
@@ -170,8 +163,7 @@ public sealed class UnitOfWorkTests
     [Fact]
     public async Task Created_and_updated_timestamps_are_both_valid_without_being_equal()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         var createdAt = new DateTimeOffset(2026, 9, 7, 10, 30, 0, TimeSpan.Zero);
 
@@ -315,29 +307,8 @@ public sealed class UnitOfWorkTests
         await command.ExecuteNonQueryAsync();
     }
 
-    private static string ConnectionString =>
-        Environment.GetEnvironmentVariable("LIGATURE_CONNECTION")
-        ?? DefaultConnection;
+    private static string ConnectionString => TestDatabase.ConnectionString;
 
-    private static async Task<bool> IsReachableAsync()
-    {
-        await using var connection = new NpgsqlConnection(ConnectionString);
-
-        try
-        {
-            await connection.OpenAsync();
-
-            return true;
-        }
-        catch (NpgsqlException)
-        {
-            return false;
-        }
-        catch (SocketException)
-        {
-            return false;
-        }
-    }
 
     private sealed class FixedClock : IClock
     {

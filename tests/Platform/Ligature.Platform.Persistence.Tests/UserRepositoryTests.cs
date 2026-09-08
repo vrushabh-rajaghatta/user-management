@@ -1,4 +1,3 @@
-using System.Net.Sockets;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Persistence.Database;
@@ -14,19 +13,16 @@ namespace Ligature.Platform.Persistence.Tests;
 /// database can show that: an in-memory provider has neither the partial index
 /// nor lower() semantics, so it would agree with any predicate it was given.
 ///
-/// Target database comes from LIGATURE_CONNECTION; the tests skip when no
-/// database is reachable, matching CatalogueDriftTests.
+/// Target database comes from LIGATURE_CONNECTION. These tests FAIL rather
+/// than skip when PostgreSQL is unreachable — see TestDatabase.
 /// </summary>
 public sealed class UserRepositoryTests
 {
-    private const string DefaultConnection =
-        "Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres";
 
     [Fact]
     public async Task AddAsync_tracks_without_saving()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var repository = new UserRepository(context);
@@ -58,8 +54,7 @@ public sealed class UserRepositoryTests
     [Fact]
     public async Task An_active_human_with_the_same_email_is_a_conflict()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var repository = new UserRepository(context);
@@ -89,8 +84,7 @@ public sealed class UserRepositoryTests
     [Fact]
     public async Task The_comparison_is_case_insensitive_like_the_index()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var repository = new UserRepository(context);
@@ -128,8 +122,7 @@ public sealed class UserRepositoryTests
     [Fact]
     public async Task An_inactive_human_does_not_hold_their_email_address()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var repository = new UserRepository(context);
@@ -173,8 +166,7 @@ public sealed class UserRepositoryTests
     [Fact]
     public async Task The_index_rejects_a_duplicate_the_pre_check_allowed()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureReachableAsync();
 
         await using var context = CreateContext();
         var repository = new UserRepository(context);
@@ -261,29 +253,8 @@ public sealed class UserRepositoryTests
         await command.ExecuteNonQueryAsync();
     }
 
-    private static string ConnectionString =>
-        Environment.GetEnvironmentVariable("LIGATURE_CONNECTION")
-        ?? DefaultConnection;
+    private static string ConnectionString => TestDatabase.ConnectionString;
 
-    private static async Task<bool> IsReachableAsync()
-    {
-        await using var connection = new NpgsqlConnection(ConnectionString);
-
-        try
-        {
-            await connection.OpenAsync();
-
-            return true;
-        }
-        catch (NpgsqlException)
-        {
-            return false;
-        }
-        catch (SocketException)
-        {
-            return false;
-        }
-    }
 
     private sealed class FixedClock : IClock
     {

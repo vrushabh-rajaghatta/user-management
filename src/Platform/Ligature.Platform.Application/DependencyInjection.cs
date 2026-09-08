@@ -2,6 +2,7 @@ using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Behaviors;
 using Ligature.Platform.Application.Dispatching;
 using Ligature.Platform.Application.Execution;
+using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.SharedKernel.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -58,5 +59,10 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<CreateUserCommand, CreateUserResult>,
             CreateUserCommandHandler>();
+
+        // CRD-C1
+        services.AddScoped<
+            ICommandHandler<ActivateAccountCommand, ActivateAccountResult>,
+            ActivateAccountCommandHandler>();
     }
 }

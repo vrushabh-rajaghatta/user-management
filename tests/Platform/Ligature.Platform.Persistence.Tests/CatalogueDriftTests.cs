@@ -1,5 +1,4 @@
 using Ligature.Platform.Persistence.Provisioning;
-using System.Net.Sockets;
 using Npgsql;
 
 namespace Ligature.Platform.Persistence.Tests;
@@ -10,21 +9,16 @@ namespace Ligature.Platform.Persistence.Tests;
 /// in code therefore causes drift that nothing else reports. These tests read
 /// the deployed rows and compare them against what the code would seed today.
 ///
-/// Target database comes from LIGATURE_CONNECTION; the tests skip when no
-/// database is reachable, so they do not break a build without PostgreSQL.
+/// Target database comes from LIGATURE_CONNECTION. These tests FAIL rather
+/// than skip when PostgreSQL is unreachable — see TestDatabase.
 /// </summary>
 public sealed class CatalogueDriftTests
 {
-    private const string DefaultConnection =
-        "Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres";
 
     [Fact]
     public async Task Permission_catalogue_matches_the_database()
     {
-        await using var connection = await OpenAsync();
-
-        if (connection is null)
-            return;
+        await using var connection = await TestDatabase.OpenAsync();
 
         var expected = PlatformProvisioner.GetPermissionSeeds()
             .ToDictionary(
@@ -69,10 +63,7 @@ public sealed class CatalogueDriftTests
     [Fact]
     public async Task Role_catalogue_matches_the_database()
     {
-        await using var connection = await OpenAsync();
-
-        if (connection is null)
-            return;
+        await using var connection = await TestDatabase.OpenAsync();
 
         var expected = PlatformProvisioner.GetRoleSeeds()
             .ToDictionary(
@@ -111,10 +102,7 @@ public sealed class CatalogueDriftTests
     [Fact]
     public async Task Role_permission_grants_match_the_database()
     {
-        await using var connection = await OpenAsync();
-
-        if (connection is null)
-            return;
+        await using var connection = await TestDatabase.OpenAsync();
 
         var expected = PlatformProvisioner.GetRolePermissionSeeds()
             .Select(x => $"{x.RoleCode} -> {x.PermissionCode}")
@@ -152,31 +140,4 @@ public sealed class CatalogueDriftTests
             + "provisioned by PRV-C1, so drift cannot be assessed.");
     }
 
-    private static async Task<NpgsqlConnection?> OpenAsync()
-    {
-        var connectionString =
-            Environment.GetEnvironmentVariable("LIGATURE_CONNECTION")
-            ?? DefaultConnection;
-
-        var connection = new NpgsqlConnection(connectionString);
-
-        try
-        {
-            await connection.OpenAsync();
-
-            return connection;
-        }
-        catch (NpgsqlException)
-        {
-            await connection.DisposeAsync();
-
-            return null;
-        }
-        catch (SocketException)
-        {
-            await connection.DisposeAsync();
-
-            return null;
-        }
-    }
 }

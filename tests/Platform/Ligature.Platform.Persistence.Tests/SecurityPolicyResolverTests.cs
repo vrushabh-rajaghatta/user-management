@@ -1,4 +1,3 @@
-using System.Net.Sockets;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Persistence.Database;
@@ -16,13 +15,11 @@ namespace Ligature.Platform.Persistence.Tests;
 /// -infinity — round-trips and orders before every real timestamp. Neither is
 /// observable without PostgreSQL.
 ///
-/// Target database comes from LIGATURE_CONNECTION; the tests skip when no
-/// database is reachable, matching CatalogueDriftTests.
+/// Target database comes from LIGATURE_CONNECTION. These tests FAIL rather
+/// than skip when PostgreSQL is unreachable — see TestDatabase.
 /// </summary>
 public sealed class SecurityPolicyResolverTests
 {
-    private const string DefaultConnection =
-        "Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres";
 
     private static readonly DateTimeOffset Now =
         new(2026, 9, 7, 10, 30, 0, TimeSpan.Zero);
@@ -36,14 +33,10 @@ public sealed class SecurityPolicyResolverTests
     [Fact]
     public async Task A_provisioned_database_resolves_to_the_seeded_baseline()
     {
-        if (!await IsReachableAsync())
-            return;
+        await TestDatabase.EnsureProvisionedAsync();
 
         await using var context = CreateContext();
         var resolver = new SecurityPolicyResolver(context);
-
-        if (!await IsProvisionedAsync())
-            return;
 
         var effective = await resolver.GetEffectiveSettingsAsync(
             Now, CancellationToken.None);
@@ -79,8 +72,7 @@ public sealed class SecurityPolicyResolverTests
     [Fact]
     public async Task The_seeded_sentinel_orders_before_every_real_timestamp()
     {
-        if (!await IsReachableAsync() || !await IsProvisionedAsync())
-            return;
+        await TestDatabase.EnsureProvisionedAsync();
 
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
@@ -113,8 +105,7 @@ public sealed class SecurityPolicyResolverTests
     [Fact]
     public async Task The_newest_version_whose_date_has_passed_wins()
     {
-        if (!await IsReachableAsync() || !await IsProvisionedAsync())
-            return;
+        await TestDatabase.EnsureProvisionedAsync();
 
         await using var context = CreateContext();
         var resolver = new SecurityPolicyResolver(context);
@@ -158,8 +149,7 @@ public sealed class SecurityPolicyResolverTests
     [Fact]
     public async Task A_stored_value_weaker_than_the_baseline_is_clamped_without_being_rewritten()
     {
-        if (!await IsReachableAsync() || !await IsProvisionedAsync())
-            return;
+        await TestDatabase.EnsureProvisionedAsync();
 
         await using var context = CreateContext();
         var resolver = new SecurityPolicyResolver(context);
@@ -212,8 +202,7 @@ public sealed class SecurityPolicyResolverTests
     [Fact]
     public async Task An_unprovisioned_database_fails_loudly()
     {
-        if (!await IsReachableAsync() || !await IsProvisionedAsync())
-            return;
+        await TestDatabase.EnsureProvisionedAsync();
 
         await using var context = CreateContext();
         var resolver = new SecurityPolicyResolver(context);
@@ -334,29 +323,8 @@ public sealed class SecurityPolicyResolverTests
         return new LigatureDbContext(options);
     }
 
-    private static string ConnectionString =>
-        Environment.GetEnvironmentVariable("LIGATURE_CONNECTION")
-        ?? DefaultConnection;
+    private static string ConnectionString => TestDatabase.ConnectionString;
 
-    private static async Task<bool> IsReachableAsync()
-    {
-        await using var connection = new NpgsqlConnection(ConnectionString);
-
-        try
-        {
-            await connection.OpenAsync();
-
-            return true;
-        }
-        catch (NpgsqlException)
-        {
-            return false;
-        }
-        catch (SocketException)
-        {
-            return false;
-        }
-    }
 
     private sealed class FixedClock : IClock
     {

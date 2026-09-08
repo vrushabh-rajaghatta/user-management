@@ -25,6 +25,18 @@ public sealed class HumanActorBehavior<TCommand, TResult>
         if (command is not IHumanActorOnlyCommand<TResult>)
             return next(cancellationToken);
 
+        // A command cannot both run without a caller and require that caller to
+        // be human. Without this guard the ActorType read below would throw
+        // InvalidOperationException from an unestablished context — a confusing
+        // infrastructure error for what is a configuration mistake (CRD-C1).
+        if (command is IAnonymousCommand<TResult>)
+        {
+            throw new InvalidOperationException(
+                $"'{typeof(TCommand).Name}' declares both IAnonymousCommand and "
+                + "IHumanActorOnlyCommand. An anonymous command has no actor "
+                + "whose type could be checked.");
+        }
+
         if (_executionContext.ActorType != ActorType.Human)
         {
             throw new BusinessRuleViolationException(
