@@ -132,10 +132,11 @@ public sealed class SignInCommandHandler
                 // Step 6. Clears FailedAttemptCount and LockedUntil together.
                 credential.Unlock();
 
-                // TODO — SES-C1 step 9. Emit SignInSucceeded, SignInFailed or
-                // AccountLocked through IAuditWriter inside this transaction
-                // once the Audit capability exists (docs/architecture.md
-                // section 6). SignInFailed and AccountLocked must be emitted
+                // TODO — SES-C1 step 9. Declare SignInSucceeded, SignInFailed
+                // or AccountLocked through IAuditEvents, and register the
+                // command in AuditDeclarations; the pipeline writes them
+                // inside this transaction (docs/architecture.md section 11).
+                // SignInFailed and AccountLocked must be emitted
                 // even though no session exists, and the reason is known at
                 // each return above even though SignInResult deliberately
                 // withholds it from the caller.

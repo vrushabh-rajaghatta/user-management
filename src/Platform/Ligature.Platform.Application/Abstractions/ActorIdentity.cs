@@ -37,9 +37,15 @@ namespace Ligature.Platform.Application.Abstractions;
 /// The provider's permanent identifier for this subject. An identifier, so
 /// anonymisation preserves it (invariant 12).
 /// </param>
+/// <param name="CapturedAt">
+/// When this snapshot was built — once, at authentication. Distinct from the
+/// audit record's own CapturedAt: the snapshot is built once per scope, the
+/// record once per event. AR24 puts it in the all-or-nothing group.
+/// </param>
 public sealed record ActorIdentity(
     string DisplayName,
     string? Username,
     EmailAddress? Email,
     IdentityProvider IdentityProvider,
-    string SubjectId);
+    string SubjectId,
+    DateTimeOffset CapturedAt);

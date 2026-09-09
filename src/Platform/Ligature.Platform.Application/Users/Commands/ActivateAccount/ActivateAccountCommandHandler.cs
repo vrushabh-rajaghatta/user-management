@@ -133,10 +133,12 @@ public sealed class ActivateAccountCommandHandler
                         createdAt: now),
                     ct);
 
-                // TODO — CRD-C1 step 7. Emit TokenConsumed, PasswordSet and
-                // AccountActivated through IAuditWriter inside this
-                // transaction, once the Audit capability exists
-                // (docs/architecture.md section 6).
+                // TODO — CRD-C1 step 7. Declare TokenConsumed, PasswordSet
+                // and AccountActivated through IAuditEvents, and register the
+                // command in AuditDeclarations. The pipeline writes them
+                // inside this transaction (docs/architecture.md section 11).
+                // This command has no established caller yet, which is the
+                // token-bearer path that story also has to build.
 
                 return new ActivateAccountResult(identityId);
             },

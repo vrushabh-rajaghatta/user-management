@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Domain.Users;
 using Ligature.SharedKernel.Abstractions;
 using Ligature.SharedKernel.Exceptions;
@@ -16,6 +17,7 @@ public sealed class CreateUserCommandHandler
     private readonly IUserTokenRepository _userTokenRepository;
     private readonly ISecurityPolicyResolver _securityPolicyResolver;
     private readonly IUserTokenService _userTokenService;
+    private readonly IAuditEvents _auditEvents;
 
     public CreateUserCommandHandler(
         IExecutionContext executionContext,
@@ -25,7 +27,8 @@ public sealed class CreateUserCommandHandler
         IUserIdentityRepository userIdentityRepository,
         IUserTokenRepository userTokenRepository,
         ISecurityPolicyResolver securityPolicyResolver,
-        IUserTokenService userTokenService)
+        IUserTokenService userTokenService,
+        IAuditEvents auditEvents)
     {
         _executionContext = executionContext;
         _clock = clock;
@@ -35,6 +38,7 @@ public sealed class CreateUserCommandHandler
         _userTokenRepository = userTokenRepository;
         _securityPolicyResolver = securityPolicyResolver;
         _userTokenService = userTokenService;
+        _auditEvents = auditEvents;
     }
 
     /// <summary>
@@ -101,14 +105,13 @@ public sealed class CreateUserCommandHandler
             _executionContext.UserId
             );
 
-        // Transaction scope is handler-owned, per docs/architecture.md
-        // section 11: the handler wraps its whole operation and IUnitOfWork
-        // saves, translates known constraint violations and commits.
-        //
-        // Audit does not change this. When the Audit capability arrives it will
-        // write through IAuditWriter INSIDE this same handler-owned
-        // transaction, so the ordering guarantee of invariant 16 costs nothing
-        // architecturally.
+        // The handler wraps its whole operation in IUnitOfWork, which saves
+        // and translates known constraint violations. The transaction itself
+        // is now opened by the pipeline (TransactionScopeBehavior) and this
+        // call enlists in it: the work is flushed here, the audit rows follow
+        // on the same transaction, and the pipeline commits — which is what
+        // makes "if the business write committed, the audit write committed"
+        // (inv. 16) true without this handler writing an audit row itself.
         var result =
             await _unitOfWork.ExecuteInTransactionAsync(
                 async ct =>
@@ -152,16 +155,50 @@ public sealed class CreateUserCommandHandler
                         activationToken,
                         ct);
 
-                    // TODO — USR-C1 step 8. Emit UserCreated, IdentityCreated
-                    // and TokenIssued through IAuditWriter
-                    // (docs/architecture.md section 6), each carrying the
-                    // CALLER's ActorSnapshot — the administrator, not the
-                    // created user — inside this transaction: "if the business
-                    // write committed, the audit write committed" (inv. 16).
-                    // Deferred with the Audit capability. Note that a full
-                    // snapshot needs Username, IdentityProvider, SubjectId and
-                    // AuthorizingRole, none of which IExecutionContext carries
-                    // today.
+                    // USR-C1 step 8 — declare the events. The pipeline writes
+                    // them after this handler returns, still inside this
+                    // transaction, under the CALLER's snapshot — the
+                    // administrator, not the created user. Codes are verbatim
+                    // from the catalogue; shapes and refs are what its rows
+                    // declare, and behaviour 14 refuses anything else.
+                    //
+                    // The After objects use the catalogue's own path names
+                    // (After.FirstName, After.Email ...) so that the PII paths
+                    // anonymisation will later transform point at real keys.
+                    _auditEvents.Emit("UserCreated", version: 1)
+                        .Primary("User", userId.Value)
+                        .WithAfter(new
+                        {
+                            user.FirstName,
+                            user.LastName,
+                            user.DisplayName,
+                            Email = user.Email?.Value,
+                        });
+
+                    // SubjectId and IdentityProvider appear in After but are
+                    // identifiers, not PII paths (AUD-D29).
+                    _auditEvents.Emit("IdentityCreated", version: 1)
+                        .Primary("Identity", identityId.Value)
+                        .Ref("User", userId.Value, role: "Subject")
+                        .WithAfter(new
+                        {
+                            identity.Username,
+                            IdentityProvider = identity.IdentityProvider.Value,
+                            identity.SubjectId,
+                        });
+
+                    // NEVER the token or its hash: tokenType and expiresAt are
+                    // the whole payload, and the secret scan would refuse the
+                    // rest.
+                    _auditEvents.Emit("TokenIssued", version: 1)
+                        .Primary("Token", tokenId.Value)
+                        .Ref("Identity", identityId.Value, role: "Target")
+                        .Ref("User", userId.Value, role: "Subject")
+                        .WithPayload(new
+                        {
+                            tokenType = "Activation",
+                            expiresAt = activationToken.ExpiresAt,
+                        });
 
                     // TODO — USR-C1 step 9. Enqueue the activation
                     // notification. Deferred to the Notifications capability,

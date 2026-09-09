@@ -151,7 +151,7 @@ There is deliberately **no public `IAuditWriter` contract, and none is to be int
 
 **Do not introduce an event bus solely for audit decoupling.** Reconsider an event-based mechanism when there is a demonstrated need, such as multiple independent consumers.
 
-*Emission is target state — not yet implemented. The schema and its tamper boundary are implemented; see §19.*
+**Implemented.** The pipeline emits: `TransactionScopeBehavior` opens the command's transaction and `AuditEmissionBehavior` writes inside it, before the commit. `PlatformProvisioner` emits `TenantProvisioned` as the tenant's first record — the one emission that is not a command. USR-C1 is wired end to end and lands three records under one operation. The remaining commands, the events of Slice B, and audit queries are separate stories. See §11 for the pattern and §19 for the schema and its tamper boundary.
 
 ---
 
@@ -209,8 +209,11 @@ These are decisions already made in code. Follow them; do not introduce a parall
 `ICommandDispatcher` resolves the handler and the registered `ICommandBehavior<,>` instances and runs them through `CommandPipeline`, which executes behaviors in **registration order**:
 
 ```text
-AuthenticationBehavior → HumanActorBehavior → AuthorizationBehavior → handler
+AuthenticationBehavior → HumanActorBehavior → AuthorizationBehavior
+    → TransactionScopeBehavior → AuditEmissionBehavior → handler
 ```
+
+The last two are the audit pipeline, and their position is the design: a command refused by authorisation never opens a transaction, and everything a permitted command records is written before that transaction commits.
 
 **Authorization is the pipeline's responsibility, not the handler's.** A command declares its requirement through `IAuthorizableCommand` / `IHumanActorOnlyCommand`; the handler assumes it has already been enforced. Do not call handlers directly and do not re-check authorization inside a handler.
 
@@ -244,6 +247,22 @@ Handlers are registered explicitly, one by one, in `Ligature.Platform.Applicatio
 ### Transaction boundary
 
 `IUnitOfWork` owns the transaction. The handler wraps its whole operation in `IUnitOfWork.ExecuteInTransactionAsync(...)`; the unit of work saves, translates known constraint violations, and commits. One business operation, one transaction. Repositories never save or commit.
+
+`TransactionScopeBehavior` now opens that transaction first, through the same unit of work. The handler's own `ExecuteInTransactionAsync` call is unchanged and still correct: the unit of work already enlists in a transaction someone else owns, running the work and flushing while leaving the commit to the owner. Handlers were not modified for this and must not be.
+
+### Audit emission
+
+Handlers **declare**; the pipeline **writes**. A handler injects `IAuditEvents`, whose entire surface is `Emit(code, version)`, and describes the event with the fluent builder — primary entity, references, before/after or payload, reason. It never sees a record, a snapshot or a table.
+
+`AuditEmissionBehavior` runs inside the transaction `TransactionScopeBehavior` opened. When the handler returns, it takes what was declared, attaches the actor snapshot and the command's operation id and timestamps, resolves each event against the deployed catalogue, validates it, and writes. The rules it enforces are the invariants, named in the message when one fails.
+
+Three things follow, and each is load-bearing:
+
+- **`IAuditRecordWriter` is internal and unregistered outside the pipeline.** Handlers live in the same assembly, so the compiler cannot enforce the separation; `AuditWriterIsolationTests` does. There is no public write API and none is to be introduced (§6).
+- **Every emission failure is `InvalidOperationException`, never a domain error.** It is a defect in the code that declared the event, so it propagates, the transaction rolls back, and the host answers 500. A user-facing message would invite a retry that cannot succeed, and a record that fails validation is not evidence.
+- **Which command may emit which codes is a static registry**, `AuditDeclarations`, verified against the deployed catalogue at start-up in `Program.cs`. A release whose handlers declare an event the database has not seeded refuses to start, rather than failing on the first request that reaches it.
+
+Emission is not free of consequences elsewhere. An audit record names its actor by foreign key to `app_user` (AR10) and the assignment that authorised it by foreign key to `user_role` (AR12), and no role may delete audit rows. **Once a user has acted under an audited command, that user and that assignment can no longer be deleted** — by anyone. Integration suites that used to seed and discard a caller now seed a permanent one; see `PermanentTestCaller`.
 
 ### Pre-checks and database constraints
 
@@ -641,16 +660,38 @@ never handed over on the strength of an earlier step having exited 0.
 and their origins, in the pattern of `GetPermissionSeeds()`; the Entity
 Workbook's Event Catalogue sheet is the normative origin. `AuditCatalogueSeeder`
 writes it with raw SQL on provisioning's own transaction — no `DbSet`, no
-entity, and deliberately the same mechanism the emission writer will use to
+entity, and deliberately the same mechanism `AuditRecordWriter` now uses to
 write into a schema it does not own. `AuditCatalogueDriftTests` holds a
 provisioned database to the seed. The retention floor it seeds from,
 `AuditReleaseBaseline.MinimumRetentionMonths`, is a placeholder pending
 `AUD-O11` and is marked as one.
 
+## What the application does with a schema it does not own
+
+`AuditRecordWriter` holds no `DbContext` state of its own. It takes the
+`NpgsqlConnection` and `NpgsqlTransaction` off `DbContext.Database.CurrentTransaction`
+— the transaction `TransactionScopeBehavior` opened — and inserts with raw SQL,
+so the audit rows and the business rows commit together or not at all
+(invariant 16). It refuses to run outside a transaction rather than opening one
+of its own.
+
+The catalogue is read once per process, not per command: `IAuditEventCatalogue`
+is a lazy singleton over the deployed rows. A release that disagrees with those
+rows never starts (§11), so the snapshot cannot drift beneath a running host.
+
+Provisioning writes `TenantProvisioned` through the same writer, on its own
+transaction, with the catalogue it is in the middle of seeding — the rows exist
+but are not yet committed, so a database read would not find them. That record
+is Sequence 1, and `AuditHandoverVerification` checks it is before handing the
+tenant over.
+
 ## Rules
 
 - **Never grant `audit_owner` membership to anything.** It is the whole of
   mechanism 2.
+- **An actor recorded in the trail cannot be deleted.** AR10 and AR12 point at
+  `app_user` and `user_role`, and nothing may delete an audit row. Code and
+  tests must treat users as deactivated, never removed.
 - **Never create audit objects from an EF migration**, and never `ALTER … OWNER`
   an audit object to a role that can log in.
 - Any security or integrity `CHECK` whose correctness depends on the presence

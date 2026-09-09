@@ -13,13 +13,17 @@ namespace Ligature.Platform.Persistence.Tests;
 /// </summary>
 internal static class TestActorIdentity
 {
+    private static readonly DateTimeOffset Captured =
+        new(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+
     internal static ActorIdentity Human(string label = "Test Person")
         => new(
             DisplayName: label,
             Username: "test.person",
             Email: EmailAddress.Create("test.person@example.test"),
             IdentityProvider: IdentityProvider.Application,
-            SubjectId: "test-subject");
+            SubjectId: "test-subject",
+            CapturedAt: Captured);
 
     /// <summary>
     /// AR11 permits an email only for human actors, so this carries none.
@@ -30,5 +34,6 @@ internal static class TestActorIdentity
             Username: "test.agent",
             Email: null,
             IdentityProvider: IdentityProvider.Application,
-            SubjectId: "test-agent-subject");
+            SubjectId: "test-agent-subject",
+            CapturedAt: Captured);
 }

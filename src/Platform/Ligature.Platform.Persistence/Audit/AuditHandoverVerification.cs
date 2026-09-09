@@ -1,3 +1,4 @@
+using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Persistence.Provisioning;
 using Npgsql;
 
@@ -92,17 +93,32 @@ internal static class AuditHandoverVerification
             if (held) failures.Add($"the anonymiser role holds UPDATE on audit_record.{column}, outside the AR20 set");
         }
 
+        // AUD-S10 — the tenant's first record must be Sequence 1, and it is
+        // emitted later in this transaction. So the trail must be empty NOW
+        // and its sequence never consumed: a rolled-back write still consumes
+        // a value (AUD-D32), and a tenant whose first record would land at
+        // Sequence 2 is refused here, where the cause is nameable, rather
+        // than by the probe after emission.
+        var records = await ScalarAsync<long>(connection, transaction,
+            "SELECT count(*) FROM audit.audit_record", cancellationToken);
+
+        if (records != 0)
+            failures.Add($"the trail already holds {records} record(s); a tenant is provisioned once, onto an empty trail");
+
+        var consumed = await ScalarAsync<bool>(connection, transaction,
+            "SELECT is_called FROM audit.audit_record_sequence_seq", cancellationToken);
+
+        if (consumed)
+            failures.Add("the audit sequence has already been consumed, so the first record cannot be Sequence 1 (AUD-S10)");
+
         Refuse(failures, "before seeding");
     }
 
     /// <summary>
-    /// AUD-S11, in its Story-1 form. "Sequence 1 = TenantProvisioned" becomes
-    /// the assertion once emission exists; until then the handover fact is
-    /// that the trail is empty and its sequence has never been consumed, so
-    /// the first record CAN be Sequence 1. A consumed sequence on an empty
-    /// trail means something already attempted a write — and the provisioning
-    /// probe that later expects Sequence 1 would fail for a reason nobody
-    /// could see.
+    /// AUD-S11 — the handover probes, after the seed and after the tenant's
+    /// first record has been emitted: the catalogue matches the release, EO5
+    /// holds exactly, retention v1 exists, and the trail holds exactly one
+    /// record — TenantProvisioned, Sequence 1, by the System actor.
     /// </summary>
     public static async Task VerifyHandoverAsync(
         NpgsqlConnection connection,
@@ -135,18 +151,18 @@ internal static class AuditHandoverVerification
 
         if (retention != 1) failures.Add("retention policy version 1 is not present (RT7)");
 
-        var records = await ScalarAsync<long>(connection, transaction,
-            "SELECT count(*) FROM audit.audit_record", cancellationToken);
+        // AUD-S10 / AUD-S11 — exactly one record, Sequence 1, TenantProvisioned,
+        // by the System actor. The handover fact, in its final form.
+        var first = await ScalarAsync<string?>(connection, transaction,
+            "SELECT (SELECT count(*) FROM audit.audit_record)::text || '|' || "
+            + "coalesce((SELECT sequence::text || '|' || event_type || '|' || coalesce(actor_user_id::text, '') "
+            + "FROM audit.audit_record ORDER BY sequence LIMIT 1), '')",
+            cancellationToken);
 
-        if (records != 0) failures.Add($"the trail already holds {records} record(s) before its first record was emitted");
+        var expectedFirst = $"1|1|TenantProvisioned|{User.SystemUserId.Value}";
 
-        // is_called = false means nextval has never run. A rolled-back write
-        // still consumes a value (AUD-D32), so this is stricter than "no
-        // rows", on purpose.
-        var consumed = await ScalarAsync<bool>(connection, transaction,
-            "SELECT is_called FROM audit.audit_record_sequence_seq", cancellationToken);
-
-        if (consumed) failures.Add("the audit sequence has already been consumed, so the first record cannot be Sequence 1 (AUD-S10)");
+        if (first != expectedFirst)
+            failures.Add($"the trail's first record is [{first}]; it must be exactly one record, Sequence 1, TenantProvisioned by the System actor (AUD-S10)");
 
         Refuse(failures, "at handover");
     }

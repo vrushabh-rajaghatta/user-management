@@ -144,12 +144,18 @@ non-decisions; reopening one is an architectural change, not an implementation
 detail.
 
 
-## Audit emission is not implemented
+## Audit emission is implemented for USR-C1 only
 
-**State:** the audit tables and their tamper boundary now exist
-(`docs/architecture.md` §19), but nothing writes to them: there is no emission
-pipeline and no ActorSnapshot type. Every command that should emit audit events
-carries an explicit TODO instead.
+**State:** the pipeline emits. `TransactionScopeBehavior` opens the command's
+transaction and `AuditEmissionBehavior` writes inside it; `AuditRecordAssembler`
+resolves each declared event against the deployed catalogue and validates it;
+`AuditRecordWriter` inserts on the ambient transaction. `docs/architecture.md`
+§11 records the pattern.
+
+**What is wired:** USR-C1 (`UserCreated`, `IdentityCreated`, `TokenIssued`) and
+provisioning's own `TenantProvisioned`, which is the tenant's Sequence 1.
+Everything else in the 49-row catalogue is declared by no command yet, including
+the events of the other implemented commands.
 
 **There is deliberately no `IAuditWriter`.** An earlier version of this entry
 and of `docs/architecture.md` §6 described one as the intended contract; the
@@ -157,32 +163,36 @@ frozen Audit model names a direct write API as an anti-feature, and the
 architecture text was corrected rather than the model. Handlers declare events;
 the pipeline writes them. Do not introduce a public writer abstraction.
 
-The catalogue requires audit events to be written INSIDE the command's transaction — "if the business write committed, the audit write committed" (inv. 16). Handler-owned transactions (`docs/architecture.md` §11) already make that possible without restructuring.
-
-**The context contract is now in place.** `IExecutionContext` carries the
-identity half of the snapshot (`DisplayName`, `Username`, `Email`,
-`IdentityProvider`, `SubjectId`) as one `ActorIdentity`, and
-`IAuthorizationService` returns which assignment authorised the act rather
-than a bare `bool`. `docs/architecture.md` §11 records the two lifetimes.
-
 **AUD-O1 is closed:** `AuthorizingAssignment` carries `AssignmentId`, so
 point-in-time reconstruction is a direct reference to what authorised an act
 rather than a re-evaluation of what would authorise it now.
 
-**The receiving contract is populated.** `AUD-C4` seeds the 49-row event
-catalogue, its origins and retention policy v1 at provisioning, and verifies
-the tenant before handing it over (`docs/architecture.md` §19). The trail is
-left empty and unconsumed, ready for `TenantProvisioned` at Sequence 1.
+**Still missing:**
 
-**Still missing for emission:** the pipeline behaviours that build a record
-from that contract and write it, and a second establishment path for
-token-bearer commands (CRD-C1, CRD-C3), which authenticate by possessing a
-token rather than a session and today establish no context at all. The
-contract can express that case (AUD-D28: no authorising role,
-`IdentityProvider` 'Application'); the path is deliberately not built.
+- **The other commands.** `ActivateAccountCommandHandler`,
+  `SignInCommandHandler` and `SignOutCommandHandler` declare nothing, so they
+  write nothing. A command that declares nothing is silent by design, not by
+  failure, which is why nothing detects this for you.
+- **A second establishment path for token-bearer commands** (CRD-C1, CRD-C3),
+  which authenticate by possessing a token rather than a session and today
+  establish no context at all. The contract can express the case (AUD-D28: no
+  authorising role, `IdentityProvider` 'Application'); the path is not built.
+- **Payload schema validation (IMPL-09).** `payload_schema_ref` is carried on
+  the catalogue row and nothing validates against it.
+- **Audit queries (AUD-Q1, AUD-Q3).** Reading the trail needs the query pattern
+  that `docs/architecture.md` §11 says must not be invented inside another
+  story.
+- **The hard duration bound T** (behaviour 6 amended, AUD-18), excluded from
+  Slice A and parked as AUD-O17.
+
+**A consequence to know before writing tests.** An audit record references its
+actor (AR10) and the assignment that authorised it (AR12) by foreign key, and no
+role may delete an audit row. A user who has acted under an audited command can
+never be deleted. `PermanentTestCaller` and the host suite's fixed callers exist
+for that reason; a shared development database also accumulates audit records
+permanently as those suites run.
 
 **Deferred to:** the Audit capability (`docs/architecture.md` §6).
-**Where recorded:** TODOs in `CreateUserCommandHandler`, `ActivateAccountCommandHandler`, `SignInCommandHandler`, `SignOutCommandHandler`.
 
 ## Authorization failures are not distinguishable from validation failures
 

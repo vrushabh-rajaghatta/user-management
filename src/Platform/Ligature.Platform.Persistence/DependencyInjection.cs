@@ -1,4 +1,6 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Audit;
+using Ligature.Platform.Persistence.Audit;
 using Ligature.Platform.Persistence.Database;
 using Ligature.Platform.Persistence.Repositories;
 using Ligature.Platform.Persistence.Services;
@@ -57,6 +59,17 @@ public static class DependencyInjection
 
         // SES-C1
         services.AddScoped<IUserSessionRepository, UserSessionRepository>();
+
+        // The audit writer: scoped, on the same DbContext as the command, so
+        // it writes on the transaction behaviour 6 opened. Registered against
+        // an internal interface — handlers have no public seam to it (IMPL-02).
+        services.AddScoped<IAuditRecordWriter, AuditRecordWriter>();
+
+        // The catalogue: one per process, loaded on first access. The host
+        // forces that access at start and verifies its declarations against
+        // it; everything else simply reads (IMPL-08).
+        services.AddSingleton<IAuditEventCatalogue>(
+            _ => new LazyAuditEventCatalogue(connectionString));
 
         // The User Management side of the section 17 ownership boundary. The
         // Host extracts a SessionId and asks this; it does not decide session

@@ -88,9 +88,10 @@ public sealed class SignOutCommandHandler
                 // conflict with.
                 _ = session.Revoke(now, caller, LogoutReason);
 
-                // TODO — SES-C2. Emit SignedOut through IAuditWriter inside
-                // this transaction once the Audit capability exists
-                // (docs/architecture.md section 6). Note that the audit event
+                // TODO — SES-C2. Declare SignedOut through IAuditEvents, and
+                // register the command in AuditDeclarations; the pipeline
+                // writes it inside this transaction (docs/architecture.md
+                // section 11). Note that the audit event
                 // is where an attempt against someone else's session becomes
                 // visible: this command deliberately tells the caller nothing.
 

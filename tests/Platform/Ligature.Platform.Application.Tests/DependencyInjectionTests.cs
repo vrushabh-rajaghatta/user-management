@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Behaviors;
 using Ligature.Platform.Application.Dispatching;
 using Ligature.Platform.Domain.Users;
@@ -50,6 +51,35 @@ public sealed class DependencyInjectionTests
             => new(2026, 9, 3, 10, 0, 0, TimeSpan.Zero);
     }
 
+    /// <summary>
+    /// Behaviour 6 opens the command's transaction through the unit of work,
+    /// which is a persistence concern; this runs the delegate directly.
+    /// </summary>
+    private sealed class FakeUnitOfWork : IUnitOfWork
+    {
+        public Task<TResult> ExecuteInTransactionAsync<TResult>(
+            Func<CancellationToken, Task<TResult>> operation,
+            CancellationToken cancellationToken)
+            => operation(cancellationToken);
+    }
+
+    private sealed class FakeCatalogue : IAuditEventCatalogue
+    {
+        public AuditEventTypeDefinition? Find(string code, int version)
+            => null;
+
+        public IReadOnlyCollection<AuditEventTypeDefinition> All
+            => [];
+    }
+
+    private sealed class FakeAuditRecordWriter : IAuditRecordWriter
+    {
+        public Task WriteAsync(
+            IReadOnlyList<AuditRecordRow> rows,
+            CancellationToken cancellationToken)
+            => Task.CompletedTask;
+    }
+
     [Fact]
     public void Application_services_register_command_pipeline()
     {
@@ -68,6 +98,18 @@ public sealed class DependencyInjectionTests
         services.AddScoped<
             IClock,
             FakeClock>();
+
+        services.AddScoped<
+            IUnitOfWork,
+            FakeUnitOfWork>();
+
+        services.AddScoped<
+            IAuditEventCatalogue,
+            FakeCatalogue>();
+
+        services.AddScoped<
+            IAuditRecordWriter,
+            FakeAuditRecordWriter>();
 
         using var provider = services.BuildServiceProvider();
 
@@ -96,6 +138,18 @@ public sealed class DependencyInjectionTests
             IClock,
             FakeClock>();
 
+        services.AddScoped<
+            IUnitOfWork,
+            FakeUnitOfWork>();
+
+        services.AddScoped<
+            IAuditEventCatalogue,
+            FakeCatalogue>();
+
+        services.AddScoped<
+            IAuditRecordWriter,
+            FakeAuditRecordWriter>();
+
         using var provider = services.BuildServiceProvider();
 
         using var scope = provider.CreateScope();
@@ -120,6 +174,19 @@ public sealed class DependencyInjectionTests
             behavior =>
                 Assert.IsType<
                     AuthorizationBehavior<TestCommand, TestResult>>(
+                    behavior),
+
+            // Behaviour 6 opens the transaction the emission writes inside,
+            // so it must wrap behaviour 7 — and both must sit inside
+            // authorisation, so a refused command never reaches either.
+            behavior =>
+                Assert.IsType<
+                    TransactionScopeBehavior<TestCommand, TestResult>>(
+                    behavior),
+
+            behavior =>
+                Assert.IsType<
+                    AuditEmissionBehavior<TestCommand, TestResult>>(
                     behavior));
     }
 
