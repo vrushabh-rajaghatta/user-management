@@ -231,6 +231,8 @@ Absent authority is a real answer, not a half-built context: sign-in, self-servi
 
 There are two write seams, `IExecutionContextInitializer` (identity) and `IAuthorityInitializer` (authority), kept separate so the component that records authority cannot rewrite who the caller is.
 
+**Not decided:** the context assumes one command at a time within a scope. Its guards are check-then-set, which is correct for the sequential pipeline but is not a synchronisation primitive; a scope driven concurrently by several commands is outside the model, not something the guards make safe. Supporting that is an explicit decision, not an implementation detail to be added by whoever first needs it.
+
 ### Queries
 
 `IQuery` / `IQueryHandler` exist in SharedKernel, but no query dispatcher, pipeline or handler has been built and no query pattern is established. Do not invent a query dispatcher or query pipeline inside another story; the first query needs its own approved story and architectural decision.
