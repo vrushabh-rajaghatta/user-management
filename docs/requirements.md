@@ -121,9 +121,10 @@ never be issued. So delivery is a **required** callback invoked after
 already durable. A failed delivery rolls the whole thing back and leaves the
 tenant provisionable. Reverse that ordering and two tests fail.
 
-**Still deferred:** the PE2 privilege model — the tool uses the same connection
-string as everything else, so nothing yet enforces that seeding runs under a
-migration role while the application reads under another.
+**Now resolved:** the tool runs as `provisioning_role`, not as the same
+superuser as everything else (`docs/architecture.md` §19). PE2's remaining
+obligation — `permission` writable only by a migration role — is tracked in the
+enforcement-layer entry below.
 
 ## Access token issuance — §17 escalation, RESOLVED
 
@@ -143,9 +144,18 @@ non-decisions; reopening one is an architectural change, not an implementation
 detail.
 
 
-## Audit is not implemented
+## Audit emission is not implemented
 
-**State:** no `IAuditWriter`, no audit table, no ActorSnapshot type. Every command that should emit audit events carries an explicit TODO instead.
+**State:** the audit tables and their tamper boundary now exist
+(`docs/architecture.md` §19), but nothing writes to them: there is no emission
+pipeline and no ActorSnapshot type. Every command that should emit audit events
+carries an explicit TODO instead.
+
+**There is deliberately no `IAuditWriter`.** An earlier version of this entry
+and of `docs/architecture.md` §6 described one as the intended contract; the
+frozen Audit model names a direct write API as an anti-feature, and the
+architecture text was corrected rather than the model. Handlers declare events;
+the pipeline writes them. Do not introduce a public writer abstraction.
 
 The catalogue requires audit events to be written INSIDE the command's transaction — "if the business write committed, the audit write committed" (inv. 16). Handler-owned transactions (`docs/architecture.md` §11) already make that possible without restructuring.
 
@@ -198,7 +208,14 @@ is not.
 
 `CatalogueDriftTests` detects the divergence; nothing fixes it, and the only current remedy is hand-written SQL.
 
-**Blocked on:** the privilege model below. PE2's premise is a migration role with INSERT and an application role with SELECT only, and no role separation exists. The provisioning entry point, its other blocker, is now resolved above.
+**No longer blocked, still not implemented.** Both blockers are now gone: the
+provisioning entry point was resolved above, and role separation now exists
+(`docs/architecture.md` §19). PE2's own premise — `permission` writable only by
+a migration role — is not yet met (see the enforcement-layer entry below), but
+that does not prevent PRV-C2 being written.
+
+**Deferred to:** its own story. Deliberately kept out of AUD-S01, which
+established the deployment's security boundary and nothing else.
 
 ## Enforcement layers G1, G4, PE2, PH3 and SP2 are not implemented
 
@@ -212,7 +229,25 @@ is not.
 
 The domain enforces the equivalent rules in code, so behaviour is correct today; what is missing is the database-level backstop the frozen model specifies, which is what makes these structural rather than a matter of developer discipline.
 
-**Deferred to:** unscheduled. Needs a database role model, which does not exist.
+**Partially lifted.** A database role model now exists (`docs/architecture.md`
+§19), and `AddUserManagementPrivilegeModel` grants the ordinary tables to
+`app_role` and `provisioning_role` in G1's shape — `SELECT`, `INSERT`, `UPDATE`,
+and no `DELETE` for anyone. That closes G1's **grant** half only.
+
+**Still outstanding:**
+
+- **G1** — `user_session` is named as the eventual purge exception; no purge
+  exists, so no `DELETE` is granted for it either. Revisit when one is built.
+- **G4** — no BEFORE UPDATE triggers on immutable/write-once columns of the
+  User Management tables. The audit tables have their equivalents; these do not.
+- **PE2** — `permission` is granted `INSERT`/`UPDATE` to `provisioning_role`
+  rather than being writable only by a migration role.
+- **PH3** — `password_history` is not insert-only at the database.
+- **SP2** — `security_policy` is not append-only at the database.
+
+**Deferred to:** unscheduled. The blocker was the missing role model; that is
+no longer the obstacle, so these are now schedulable work rather than blocked
+work.
 
 ## CR1 — no unique constraint on credential.user_identity_id
 

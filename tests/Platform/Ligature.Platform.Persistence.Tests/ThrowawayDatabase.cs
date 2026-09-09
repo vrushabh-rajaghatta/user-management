@@ -45,6 +45,13 @@ internal sealed class ThrowawayDatabase : IAsyncDisposable
         var maintenance = Rebuild("postgres");
         var target = Rebuild(databaseName);
 
+        // AddUserManagementPrivilegeModel grants to app_role and
+        // provisioning_role, and a GRANT to a missing role fails. A customer
+        // installation runs the roles foundation step before the migrator;
+        // this is the fixture doing the same, so the suite works on a clean
+        // machine rather than only where a previous run left the roles behind.
+        await TestRoles.EnsureAsync(maintenance);
+
         await using (var connection = new NpgsqlConnection(maintenance))
         {
             await connection.OpenAsync();
