@@ -9,6 +9,7 @@
     <Project Path="src/Host/Ligature.Host/Ligature.Host.csproj" />
   </Folder>
   <Folder Name="/src/Tools/">
+    <Project Path="src/Tools/Ligature.AuditSchema/Ligature.AuditSchema.csproj" />
     <Project Path="src/Tools/Ligature.Provisioning/Ligature.Provisioning.csproj" />
   </Folder>
   <Folder Name="/src/Shared/" />

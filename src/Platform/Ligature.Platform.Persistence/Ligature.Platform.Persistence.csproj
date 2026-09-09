@@ -10,6 +10,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      Audit DDL is embedded, not read from disk, so a deployed image carries
+      the exact scripts its release was built from. AuditSchemaDeployer
+      applies them; they are deliberately not EF migrations, because an
+      EF-created audit table would be owned by migration_role and an owner
+      can drop what it owns. See Audit/AuditSchemaDeployer.cs.
+    -->
+    <EmbeddedResource Include="Audit\Schema\*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.11" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
