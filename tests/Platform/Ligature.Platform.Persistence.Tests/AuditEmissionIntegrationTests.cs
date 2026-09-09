@@ -1,5 +1,6 @@
 using Ligature.Platform.Application;
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Execution;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Domain.Users;
@@ -123,7 +124,7 @@ public sealed class AuditEmissionIntegrationTests
                     Assert.Equal("test.person@example.test", record.ActorEmail);
                     Assert.Equal("Application", record.ActorIdentityProvider);
                     Assert.Equal("test-subject", record.ActorSubjectId);
-                    Assert.NotNull(record.ActorCapturedAt);
+                    Assert.Equal(TestActorIdentity.Captured, record.ActorCapturedAt);
 
                     // AR6 — the database derives the origin; nothing declares it.
                     Assert.Equal("Authenticated", record.OriginKind);
@@ -133,6 +134,55 @@ public sealed class AuditEmissionIntegrationTests
                     Assert.Equal("Global", record.AuthorizingScopeType);
                     Assert.NotNull(record.AuthorizingRoleId);
                     Assert.NotNull(record.AuthorizingAssignmentId);
+                });
+            }
+            finally
+            {
+                await DeleteActorAsync(result.UserId);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Four timestamps, four meanings, and the one that is easiest to lose is
+    /// ActorCapturedAt. It is when the actor snapshot was READ, at
+    /// establishment, and it is the reason a reviewer can tell whether the
+    /// display name on a record was current at the time or has since changed.
+    /// Stamping it at emission would destroy exactly that, and would still
+    /// leave a plausible-looking timestamp in the column, so this asserts the
+    /// value rather than its presence.
+    ///
+    ///     ActorCapturedAt   the actor snapshot was established
+    ///     OccurredAt        the command opened its transaction
+    ///     CapturedAt        the pipeline assembled the record
+    ///     CreatedAt         the database wrote the row
+    /// </summary>
+    [Fact]
+    public async Task The_actor_snapshot_is_stamped_when_it_was_established()
+    {
+        await RunAsync(async (dispatcher, administrator) =>
+        {
+            var result = await dispatcher
+                .SendAsync<CreateUserCommand, CreateUserResult>(
+                    NewCommand(), CancellationToken.None);
+
+            try
+            {
+                var records = await ReadOperationAsync(result.UserId);
+
+                Assert.All(records, record =>
+                {
+                    Assert.Equal(TestActorIdentity.Captured, record.ActorCapturedAt);
+
+                    // Establishment precedes the command, which precedes the
+                    // capture. Three moments, in order, none of them reused.
+                    Assert.True(
+                        record.ActorCapturedAt < record.OccurredAt,
+                        "ActorCapturedAt is not the moment the event occurred.");
+
+                    Assert.True(
+                        record.OccurredAt < record.CapturedAt,
+                        "CapturedAt is not the moment the command opened.");
                 });
             }
             finally
@@ -215,6 +265,39 @@ public sealed class AuditEmissionIntegrationTests
                 await DeleteActorAsync(result.UserId);
             }
         });
+    }
+
+    /// <summary>
+    /// AUD-4, and the other half of invariant 16. The writer refuses to run
+    /// without a transaction rather than opening one of its own, because a
+    /// transaction of its own would commit independently of the command: the
+    /// business write could roll back with the record already permanent, and
+    /// nothing downstream could tell that record from a true one.
+    ///
+    /// The guard is unreachable through the pipeline, since behaviour 6 always
+    /// opens the transaction first. That is exactly why it needs a test: a
+    /// regression here would be invisible until a pipeline was assembled
+    /// without behaviour 6, which is the moment it matters most.
+    /// </summary>
+    [Fact]
+    public async Task The_writer_refuses_to_run_outside_the_commands_transaction()
+    {
+        await TestDatabase.EnsureReachableAsync();
+
+        await using var provider = new ServiceCollection()
+            .AddPlatformApplication()
+            .AddPlatformPersistence(ConnectionString)
+            .BuildServiceProvider(validateScopes: true);
+
+        using var scope = provider.CreateScope();
+
+        var writer = scope.ServiceProvider.GetRequiredService<IAuditRecordWriter>();
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => writer.WriteAsync([], CancellationToken.None));
+
+        Assert.StartsWith("Audit emission defect", failure.Message);
+        Assert.Contains("AUD-4", failure.Message);
     }
 
     /// <summary>

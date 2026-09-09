@@ -13,7 +13,12 @@ namespace Ligature.Platform.Persistence.Tests;
 /// </summary>
 internal static class TestActorIdentity
 {
-    private static readonly DateTimeOffset Captured =
+    /// <summary>
+    /// When the identity was read from the database, which is what an audit
+    /// record's ActorCapturedAt must carry. Exposed so a test can assert the
+    /// snapshot was not re-stamped at emission.
+    /// </summary>
+    internal static readonly DateTimeOffset Captured =
         new(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
 
     internal static ActorIdentity Human(string label = "Test Person")

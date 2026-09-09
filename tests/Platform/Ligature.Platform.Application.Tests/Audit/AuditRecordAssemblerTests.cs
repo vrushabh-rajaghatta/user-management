@@ -13,7 +13,7 @@ public sealed class AuditRecordAssemblerTests
     private static readonly DateTimeOffset Now = new(2026, 9, 10, 12, 0, 0, TimeSpan.Zero);
 
     private static readonly AuditDeclaration Permitted =
-        new("UserManagement", ["UserCreated", "RoleGranted", "SignInFailed", "Thing"]);
+        new("UserManagement", ["UserCreated", "RoleGranted", "SignInFailed", "UsernameChanged", "PolicyChanged", "Thing"]);
 
     // ------------------------------------------------------------- happy path
 
@@ -153,6 +153,69 @@ public sealed class AuditRecordAssemblerTests
         Assert.Contains("repeats the primary entity (AE4)", failure.Message);
     }
 
+    /// <summary>
+    /// IMPL-10. A PII path that describes RefRole:Subject is a promise that
+    /// the record carries a Subject ref: it is how the erasure worker later
+    /// finds which paths belong to which person. A record making the promise
+    /// without the ref would put the path beyond reach of the transformation
+    /// the catalogue declares for it.
+    ///
+    /// The ref is OPTIONAL on this event, so AE3 has nothing to say and the
+    /// single failure reported is the one under test. The assertion checks the
+    /// count as well as the text, because a test that passes on some other
+    /// rule's message proves nothing about this one.
+    /// </summary>
+    [Fact]
+    public void A_PII_path_naming_a_ref_that_was_not_declared_is_a_defect()
+    {
+        var failure = Defect(
+            new AuditEventDeclaration("UsernameChanged", 1)
+                .Primary("Identity", Guid.NewGuid())
+                .WithBefore(new { Username = "ada" })
+                .WithAfter(new { Username = "ada.lovelace" }),
+            Human());
+
+        Assert.Contains(
+            "'After.Username' describes RefRole:Subject but no ref with role Subject was declared (AE5/IMPL-10)",
+            failure.Message);
+
+        Assert.Equal(1, CountFailures(failure));
+    }
+
+    [Fact]
+    public void The_same_declaration_carrying_the_ref_is_accepted()
+    {
+        var rows = Assemble(
+            [new AuditEventDeclaration("UsernameChanged", 1)
+                .Primary("Identity", Guid.NewGuid())
+                .Ref("User", Guid.NewGuid(), "Subject")
+                .WithBefore(new { Username = "ada" })
+                .WithAfter(new { Username = "ada.lovelace" })],
+            Human());
+
+        Assert.Equal("UsernameChanged", Assert.Single(rows).EventType);
+    }
+
+    /// <summary>
+    /// The other half of IMPL-10: a path describing the primary subject on an
+    /// event whose primary entity is not a person.
+    /// </summary>
+    [Fact]
+    public void A_PII_path_describing_a_primary_subject_that_is_not_a_person_is_a_defect()
+    {
+        var failure = Defect(
+            new AuditEventDeclaration("PolicyChanged", 1)
+                .Primary("SecurityPolicy", Guid.NewGuid())
+                .WithAfter(new { Notes = "raised the lockout threshold" }),
+            Human());
+
+        Assert.Contains(
+            "'After.Notes' describes the primary subject but SecurityPolicy is not a user-subject type (IMPL-10)",
+            failure.Message);
+
+        Assert.Equal(1, CountFailures(failure));
+    }
+
     [Fact]
     public void A_missing_reason_is_a_defect_where_the_catalogue_requires_one()
     {
@@ -238,13 +301,21 @@ public sealed class AuditRecordAssemblerTests
         return failure;
     }
 
+    /// <summary>
+    /// How many rules a defect reports. Each is one bullet in the message.
+    /// </summary>
+    private static int CountFailures(InvalidOperationException failure)
+        => failure.Message
+            .Split(Environment.NewLine)
+            .Count(x => x.StartsWith("  - ", StringComparison.Ordinal));
+
     internal static ActorSnapshot Human()
         => new(
             UserId.New(), ActorType.Human, "Ada Lovelace", "ada.lovelace", "ada@example.test",
             "Application", "subject-1",
             null, null, null, null, null, null, Now);
 
-    /// <summary>A three-type catalogue, plus one retired type.</summary>
+    /// <summary>A small catalogue: four live types and one retired.</summary>
     internal static AuditEventCatalogueSnapshot Catalogue()
         => new(
         [
@@ -271,6 +342,24 @@ public sealed class AuditRecordAssemblerTests
                 [new("Payload.IpAddress", "PrimarySubject")],
                 IsActive: true,
                 new Dictionary<string, bool> { ["Anonymous"] = true }),
+
+            // The ref is optional, so omitting it is an IMPL-10 failure and
+            // nothing else.
+            new AuditEventTypeDefinition(
+                "UsernameChanged", 1, "UserManagement", "IdentityLifecycle", ReasonRequired: false,
+                "Transactional", "BeforeAfter", "Identity", PrimaryEntityRequired: true,
+                [new("User", "Subject", Required: false)],
+                [new("After.Username", "RefRole:Subject")],
+                IsActive: true,
+                new Dictionary<string, bool> { ["Authenticated"] = true }),
+
+            new AuditEventTypeDefinition(
+                "PolicyChanged", 1, "UserManagement", "ConfigurationChange", ReasonRequired: false,
+                "Transactional", "BeforeAfter", "SecurityPolicy", PrimaryEntityRequired: true,
+                [],
+                [new("After.Notes", "PrimarySubject")],
+                IsActive: true,
+                new Dictionary<string, bool> { ["Authenticated"] = true }),
 
             new AuditEventTypeDefinition(
                 "Thing", 1, "UserManagement", "SecurityEvent", ReasonRequired: false,
