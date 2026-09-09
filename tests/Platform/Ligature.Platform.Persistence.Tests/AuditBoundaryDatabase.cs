@@ -35,7 +35,7 @@ internal sealed class AuditBoundaryDatabase : IAsyncDisposable
     /// dropped when the test finishes. Real deployments supply role passwords
     /// through configuration with no default (docs/architecture.md section 17).
     /// </summary>
-    private const string TestRolePassword = "ligature-test-role";
+    private const string TestRolePassword = TestRoles.Password;
 
     internal const string AppRole = "app_role";
     internal const string MigrationRole = "migration_role";
@@ -67,7 +67,7 @@ internal sealed class AuditBoundaryDatabase : IAsyncDisposable
             Database = "postgres",
         }.ConnectionString;
 
-        await EnsureRolesAsync(maintenance);
+        await TestRoles.EnsureAsync(maintenance);
 
         await using (var connection = new NpgsqlConnection(maintenance))
         {
@@ -147,36 +147,6 @@ internal sealed class AuditBoundaryDatabase : IAsyncDisposable
             $"DROP DATABASE IF EXISTS \"{_databaseName}\"", connection);
 
         await drop.ExecuteNonQueryAsync();
-    }
-
-    /// <summary>
-    /// Guarded because roles are cluster-scoped: a second throwaway database
-    /// in the same cluster would otherwise collide on CREATE ROLE.
-    /// audit_owner and audit_anonymiser are NOT created here — the deployer
-    /// owns them, and a fixture that pre-created them would hide a failure to
-    /// do so.
-    /// </summary>
-    private static async Task EnsureRolesAsync(string maintenance)
-    {
-        await using var connection = new NpgsqlConnection(maintenance);
-
-        await connection.OpenAsync();
-
-        foreach (var role in new[] { AppRole, MigrationRole, ProvisioningRole })
-        {
-            await using var command = new NpgsqlCommand(
-                $"""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM pg_roles WHERE rolname = '{role}') THEN
-                        CREATE ROLE {role} LOGIN PASSWORD '{TestRolePassword}';
-                    END IF;
-                END $$;
-                """, connection);
-
-            await command.ExecuteNonQueryAsync();
-        }
     }
 
     private async Task ApplyUserManagementSchemaAsync()

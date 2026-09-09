@@ -68,6 +68,12 @@ internal sealed class ProvisioningDatabase : IAsyncDisposable
             await command.ExecuteNonQueryAsync();
         }
 
+        // Before migrating: AddUserManagementPrivilegeModel grants to
+        // app_role and provisioning_role, and a GRANT to a missing role
+        // fails. A customer installation runs the roles foundation step
+        // before the migrator; this is the fixture doing the same.
+        await TestRoles.EnsureAsync(For("postgres"));
+
         var database = new ProvisioningDatabase(databaseName, target);
 
         if (!migrated)

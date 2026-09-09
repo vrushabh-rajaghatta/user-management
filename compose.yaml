@@ -1,14 +1,34 @@
-# The whole system, from a clean clone: database, schema, and the host.
+# The whole system, from a clean clone: database, roles, schema, and the host.
 #
 #   ./up.sh
 #
 # Bootstrapping an administrator is deliberately NOT part of that. It mints a
 # one-time activation token, and AGENTS.md section 3 keeps seeding separate from
 # schema so the two stay separately auditable. It has its own profile below.
-
+#
 # Every .NET service talks to `db` on the compose network, never localhost. The
 # published 55432 is for tools on the developer's machine, not for these.
-x-connection: &conn "Host=db;Port=5432;Database=ligature;Username=postgres;Password=postgres"
+#
+# There is no longer one connection string. Each component authenticates as the
+# role its job needs, because the audit tamper boundary is a property of the
+# application NOT being a superuser: a superuser walks through every privilege,
+# every trigger and every ownership rule the boundary is built from. Passwords
+# come from .env, which ./up.sh generates; there are no defaults.
+
+x-app-connection: &app-conn
+  "Host=db;Port=5432;Database=ligature;Username=app_role;Password=${LIGATURE_APP_PASSWORD:?not set — run ./up.sh, which generates one into .env}"
+
+x-migration-connection: &migration-conn
+  "Host=db;Port=5432;Database=ligature;Username=migration_role;Password=${LIGATURE_MIGRATION_PASSWORD:?not set — run ./up.sh, which generates one into .env}"
+
+x-provisioning-connection: &provisioning-conn
+  "Host=db;Port=5432;Database=ligature;Username=provisioning_role;Password=${LIGATURE_PROVISIONING_PASSWORD:?not set — run ./up.sh, which generates one into .env}"
+
+# Cluster authority. Two steps need it — creating the general roles, and
+# creating a schema owned by a role nothing can authenticate as — and no
+# long-running component uses it.
+x-privileged-connection: &privileged-conn
+  "Host=db;Port=5432;Database=ligature;Username=postgres;Password=postgres"
 
 name: ligature
 
@@ -34,15 +54,48 @@ services:
       # old path makes the container refuse to start. Most guides still show
       # the pre-18 path.
       - db-data:/var/lib/postgresql
+      - ./docker/roles.sql:/roles.sql:ro
     healthcheck:
       # Nothing downstream may start on a container that is merely RUNNING.
       # Postgres accepts connections only after initdb has finished, and the
-      # migrator would otherwise race it.
+      # roles step would otherwise race it.
       test: ["CMD-SHELL", "pg_isready -U postgres -d ligature"]
       interval: 2s
       timeout: 3s
       retries: 30
       start_period: 5s
+
+  # --------------------------------------------------- database foundation
+
+  # The general application roles. Runs as the administrator, once, before
+  # any schema exists. Deliberately NOT an init script under
+  # /docker-entrypoint-initdb.d: those run only on first initialisation of the
+  # data volume, so anyone with an existing volume would silently skip them.
+  #
+  # It does not create audit_owner or audit_anonymiser. Those belong to the
+  # tamper boundary rather than to the database foundation, so the
+  # audit-schema step creates them and refuses if these three are missing.
+  roles:
+    image: postgres:18-alpine
+    environment:
+      PGPASSWORD: postgres
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./docker/roles.sql:/roles.sql:ro
+    entrypoint:
+      - psql
+      - --host=db
+      - --username=postgres
+      - --dbname=ligature
+      - --set=ON_ERROR_STOP=1
+      - --set=database=ligature
+      - --set=app_password=${LIGATURE_APP_PASSWORD:?not set — run ./up.sh}
+      - --set=migration_password=${LIGATURE_MIGRATION_PASSWORD:?not set — run ./up.sh}
+      - --set=provisioning_password=${LIGATURE_PROVISIONING_PASSWORD:?not set — run ./up.sh}
+      - --file=/roles.sql
+    restart: "no"
 
   # ------------------------------------------------------------- schema
 
@@ -52,12 +105,32 @@ services:
       dockerfile: docker/Dockerfile
       target: migrator
     environment:
-      LIGATURE_CONNECTION: *conn
+      LIGATURE_CONNECTION: *migration-conn
     depends_on:
-      db:
-        condition: service_healthy
+      roles:
+        condition: service_completed_successfully
     # Applies pending migrations and exits. Re-running is a no-op, so this is
     # safe on every `up` rather than only the first.
+    restart: "no"
+
+  # Audit schema and tamper boundary. AFTER the migrator, because the Audit
+  # foreign keys reference app_user, role and user_role, which the EF
+  # migrations create.
+  #
+  # Not an EF migration: whoever runs CREATE TABLE owns the table, and an
+  # owner can disable triggers and drop what it owns regardless of any GRANT.
+  # This step issues SET ROLE audit_owner first, so the objects are born owned
+  # by a role that cannot log in and has no members.
+  audit-schema:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: audit-schema
+    environment:
+      LIGATURE_PRIVILEGED_CONNECTION: *privileged-conn
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
     restart: "no"
 
   # --------------------------------------------------------------- host
@@ -68,7 +141,7 @@ services:
       dockerfile: docker/Dockerfile
       target: host
     environment:
-      LIGATURE_CONNECTION: *conn
+      LIGATURE_CONNECTION: *app-conn
 
       # There is NO default and no committed key (docs/architecture.md §17).
       # `:?` makes a missing key a clear Compose error rather than a container
@@ -82,7 +155,7 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      migrator:
+      audit-schema:
         condition: service_completed_successfully
     restart: unless-stopped
 
@@ -95,13 +168,13 @@ services:
       target: provisioner
     profiles: ["bootstrap"]
     environment:
-      LIGATURE_CONNECTION: *conn
+      LIGATURE_CONNECTION: *provisioning-conn
     volumes:
       # The activation token lands here, owner-only. Gitignored, and meant to be
       # delivered and then deleted — it cannot be recovered if lost.
       - ./.secrets:/secrets
     depends_on:
-      migrator:
+      audit-schema:
         condition: service_completed_successfully
 
 volumes:
