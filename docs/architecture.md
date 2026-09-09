@@ -12,7 +12,9 @@ This document defines the architectural direction and boundaries for the Ligatur
 
 All work to date is in the **Platform** module, specifically **User Management** (its ownership is defined in §5).
 
-Nothing else described in this document exists yet — no Audit, Notifications or Logging implementation, no business domain, no tenancy. Where a later section describes one of those, it is describing target state.
+Little else described in this document exists yet — no Notifications or Logging implementation, no business domain, no tenancy. Where a later section describes one of those, it is describing target state.
+
+The one exception is **Audit's schema and tamper boundary**, which is implemented: the five audit tables, the database role model and the privilege, ownership and trigger protections around them (§19). Audit *emission* — the pipeline that writes records — is not built, so nothing yet populates the trail.
 
 ---
 
@@ -143,9 +145,13 @@ Audit is a separate platform capability. It records business- and security-relev
 
 Audit is not application logging. Audit records are business/compliance records, not diagnostic messages.
 
-When Audit is implemented, modules will write audit information through an `IAuditWriter` contract; that contract does not exist yet. **Do not introduce an event bus solely for audit decoupling.** Reconsider an event-based mechanism when there is a demonstrated need, such as multiple independent consumers.
+Handlers do not write audit records. A handler **declares** the events its catalogue entry names — event type and version, primary entity, entity references, before/after or payload, reason — and returns them. The command pipeline resolves the event catalogue, attaches the actor snapshot, correlation and timestamps, validates the declaration, and writes `audit.audit_record` and `audit.audit_entity_ref`.
 
-*Target state — not yet implemented.*
+There is deliberately **no public `IAuditWriter` contract, and none is to be introduced.** A direct write API is a named anti-feature: anything a handler can call, a handler can omit, and a caller holding a writer can invent its own snapshot. The writer is internal to the pipeline assembly, is not registered in the container, and handler assemblies do not reference it. The pipeline cannot omit itself.
+
+**Do not introduce an event bus solely for audit decoupling.** Reconsider an event-based mechanism when there is a demonstrated need, such as multiple independent consumers.
+
+*Emission is target state — not yet implemented. The schema and its tamper boundary are implemented; see §19.*
 
 ---
 
@@ -496,3 +502,118 @@ This section deliberately does **not** decide, and code must not assume:
 - **document linting in the build** — no CI pipeline exists to run it (`AGENTS.md` §3)
 - **generated clients** from the document
 - **API versioning**, or any meaning for the document name `v1` beyond the generator's default
+
+---
+
+# 19. Audit Schema Ownership and the Database Role Model
+
+**Status:** Architectural decision, **implemented** by `docker/roles.sql`,
+`src/Platform/Ligature.Platform.Persistence/Audit/` and
+`src/Tools/Ligature.AuditSchema`. Implements Audit Command/Query Catalog
+AUD-S01. No requirement ID: this is infrastructure, not a catalogue entry
+(`AGENTS.md` §16).
+
+Until this decision, every component connected to PostgreSQL as one superuser.
+That is why it matters: a superuser bypasses privileges, ownership rules and —
+via `session_replication_role` — triggers. Any audit protection built on top of
+a superuser connection is decoration.
+
+## The property being established
+
+> **The application runtime and the ordinary deployment roles cannot rewrite or
+> delete a committed audit record, and the role that owns the audit schema
+> cannot be reached through the application's role graph.**
+
+Stated deliberately narrowly. It is **not** "nobody can ever destroy audit
+objects": a cluster superuser can always perform privileged DDL, and
+PostgreSQL treats superusers as unrestricted by design. Pretending otherwise
+would be a false control. What the boundary removes is every route available to
+the roles the running system actually uses.
+
+## The five roles
+
+| Role | Used by | Holds |
+| --- | --- | --- |
+| `app_role` | The host application | `SELECT`, `INSERT` on the trail. No `UPDATE`, no `DELETE` |
+| `migration_role` | EF migrations | Owns the ordinary schema. **Nothing at all** on `audit_record` or `audit_entity_ref` |
+| `provisioning_role` | `Ligature.Provisioning` | Seeds release-controlled data; catalogue inserts only |
+| `audit_owner` | Nobody | Owns the `audit` schema and every object in it. `NOLOGIN`, no members, no password |
+| `audit_anonymiser` | The future erasure worker | Column-level `UPDATE` on the AR20 set only. `NOLOGIN` until that worker exists |
+
+`audit_owner` is the permanent owner of the Audit schema and its objects.
+**The migration role must never become their owner.**
+
+## Why the Audit schema is not an EF migration
+
+Whoever runs `CREATE TABLE` owns the table, and an owner's authority is
+implicit: it can disable triggers and drop what it owns regardless of any
+`GRANT`, and it can grant itself back anything revoked. EF migrations run as
+`migration_role`, so EF-created audit tables would be owned — and therefore
+destroyable — by the migration credential.
+
+`Ligature.AuditSchema` applies the Audit DDL instead, under a privileged
+connection that issues `SET ROLE audit_owner` **before** creating anything, so
+objects are born owned by a role nothing can authenticate as. Ownership is
+never transferred: a transfer implies an interval during which something else
+owned the trail, and the property above would be false for that interval.
+
+The accepted cost is that these tables leave `__EFMigrationsHistory`. A
+checksummed ledger, `audit.audit_schema_version`, replaces it, and an already
+applied script whose content has changed fails the deployment rather than being
+silently re-applied.
+
+## Why a dedicated schema, not a naming prefix
+
+`DROP TABLE` permits the table owner, **the schema owner**, or a superuser.
+Since PostgreSQL 15 the `public` schema is owned by the database owner — so
+with the audit tables in `public`, `migration_role` could drop tables it did
+not own. This is not theoretical: probing during AUD-S01 destroyed two audit
+tables that way. Object ownership alone was never sufficient.
+
+A dedicated `audit` schema owned by `audit_owner` closes it. Treat that schema
+as a genuine module boundary and reference its objects explicitly —
+`audit.audit_record` — rather than compensating with `search_path`, which would
+make the boundary invisible at the call site.
+
+## Three independent mechanisms
+
+1. **Privilege** — `app_role` holds `SELECT` and `INSERT`; no reachable role
+   holds `UPDATE` or `DELETE`.
+2. **Ownership** — the schema and its objects belong to `audit_owner`, which
+   has no login and no members, so the powers no `GRANT` can remove have no
+   reachable holder.
+3. **Trigger** — every protection trigger is `ENABLE ALWAYS`, so it fires even
+   under `session_replication_role = replica`. Without this a superuser reaches
+   every row with one `SET`; with it, defeating the trail requires an explicit
+   DDL statement.
+
+Each is asserted by an adversarial test in `AuditTamperBoundaryTests`, which
+attempts the attack and requires refusal. Configuration assertions were
+deliberately not accepted as evidence.
+
+## Rules
+
+- **Never grant `audit_owner` membership to anything.** It is the whole of
+  mechanism 2.
+- **Never create audit objects from an EF migration**, and never `ALTER … OWNER`
+  an audit object to a role that can log in.
+- Any security or integrity `CHECK` whose correctness depends on the presence
+  or absence of a value **must account for SQL NULL semantics**: a `CHECK`
+  passes when its expression evaluates to NULL. Five constraints written
+  straight from the workbook admitted rows they existed to refuse until they
+  were rewritten with `IS NOT DISTINCT FROM`. Correct the implementation to
+  match the frozen invariant; do not weaken the invariant to accommodate
+  three-valued logic.
+- Extensions are database infrastructure and are installed by the foundation
+  step, not by migrations. The alternative — `GRANT CREATE ON DATABASE` to
+  `migration_role` — also permits creating schemas.
+
+## Explicit non-decisions
+
+This section deliberately does **not** decide, and code must not assume:
+
+- **secret management** for role passwords beyond "configuration, no defaults"
+- **CI/CD**, **PRV-C2**, **tenancy**, **backup/restore** or **rollback policy**
+- **forward-only database evolution** — a deployment policy that still needs
+  stating; EF migrations currently retain working `Down()` methods, so the
+  repository presently implies reversibility that no policy has confirmed

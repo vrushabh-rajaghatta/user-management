@@ -92,12 +92,43 @@ no separate test project (a source project is not required to have one):
 
 ### Database connection
 
-Persistence tests and the EF design-time factory read `LIGATURE_CONNECTION`.
-When it is unset, both fall back to:
+Persistence tests read `LIGATURE_CONNECTION` and fall back to:
 
 ```text
 Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres
 ```
+
+**The EF design-time factory reads `LIGATURE_CONNECTION` and has NO fallback.**
+It used to hard-code the string above, which meant `dotnet ef database update`
+silently applied migrations to whichever database the default named, no matter
+what the environment said. An unset variable now stops the command and names
+the fix. Set it before any `dotnet ef` invocation, including
+`migrations add`.
+
+### Database roles
+
+There is no longer one connection for everything. Each component authenticates
+as the role its job needs, because the Audit tamper boundary is a property of
+the application **not** being a superuser — a superuser bypasses privileges,
+ownership and triggers alike (`docs/architecture.md` §19).
+
+| Role | Used by |
+| --- | --- |
+| `app_role` | The host application |
+| `migration_role` | EF migrations |
+| `provisioning_role` | `Ligature.Provisioning` |
+| `audit_owner` | Nobody — owns the `audit` schema, `NOLOGIN`, no members |
+| `audit_anonymiser` | The future erasure worker; `NOLOGIN` today |
+
+`docker/roles.sql` creates the first three; `Ligature.AuditSchema` creates the
+last two and refuses, naming them, if the first three are missing. `./up.sh`
+generates the passwords into `.env`. **There are no defaults and no committed
+development passwords**, for the reason `docs/architecture.md` §17 gives about
+the signing key.
+
+**The test suites do not need any of this.** Every fixture that migrates
+establishes the roles itself, exactly as an installation runs the roles step
+before the migrator, so `dotnet test` works against a clean cluster.
 
 ### Running the host
 
@@ -125,9 +156,22 @@ The host suite supplies its own configuration, so none of this is needed to run
 Schema first, then seed data. They are separate steps on purpose: separately
 auditable, and eventually separately privileged (PE2).
 
+Schema now comes in two steps, because the Audit tables cannot be an EF
+migration: whoever runs `CREATE TABLE` owns the table, and an owner can drop
+what it owns and disable its triggers regardless of any `GRANT`
+(`docs/architecture.md` §19). `Ligature.AuditSchema` applies them under a
+privileged connection that becomes `audit_owner` first. It runs **after** the
+migrator, because the Audit foreign keys reference `app_user`, `role` and
+`user_role`.
+
 ```bash
-export LIGATURE_CONNECTION="Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres"
+export LIGATURE_CONNECTION="Host=localhost;Port=5432;Database=ligature;Username=migration_role;Password=..."
 dotnet ef database update --project src/Platform/Ligature.Platform.Persistence
+
+export LIGATURE_PRIVILEGED_CONNECTION="Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres"
+dotnet run --project src/Tools/Ligature.AuditSchema
+
+export LIGATURE_CONNECTION="Host=localhost;Port=5432;Database=ligature;Username=provisioning_role;Password=..."
 dotnet run --project src/Tools/Ligature.Provisioning -- \
     --first-name Ada --last-name Lovelace --display-name "Ada Lovelace" \
     --email ada@example.test --username ada.lovelace \
@@ -155,14 +199,15 @@ A clean clone to a running system, in one command:
 ./up.sh
 ```
 
-That starts PostgreSQL, applies migrations and starts the host, in that order,
-each step waiting for the previous one rather than sleeping. The host is on
+That starts PostgreSQL, creates the database roles, applies migrations,
+deploys the Audit schema and starts the host, in that order, each step waiting
+for the previous one rather than sleeping. The host is on
 `http://localhost:8080`, the API reference on `/scalar`, and the container
 database is published on **55432** so it cannot collide with a PostgreSQL
 running natively on 5432 — which is the one the test suites use.
 
-`up.sh` exists for one reason: it generates a signing key into `.env` on first
-run. `docs/architecture.md` §17 forbids a default key, a committed development
+`up.sh` exists for one reason: it generates secrets into `.env` on first run —
+the signing key and the three database role passwords. `docs/architecture.md` §17 forbids a default key, a committed development
 key and a key regenerated per restart, so the key cannot live in `compose.yaml`
 and the host cannot mint one. Once `.env` has a key, plain `docker compose up`
 works identically.
@@ -179,8 +224,8 @@ The activation token is written to `.secrets/bootstrap.token`, which is
 gitignored. Re-running reports that provisioning is already complete and leaves
 any existing token alone.
 
-`docker/Dockerfile` builds **three** images from one source tree: `host`,
-`migrator` and `provisioner`. They are separate because §4 and this section keep
+`docker/Dockerfile` builds **four** images from one source tree: `host`,
+`migrator`, `audit-schema` and `provisioner`. They are separate because §4 and this section keep
 schema and seed data out of the host — a host image that migrated on startup
 would collapse a distinction the architecture depends on. The migrator runs an
 EF migration bundle, so no runtime image carries the SDK.
