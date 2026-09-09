@@ -95,3 +95,52 @@ GRANT USAGE          ON SCHEMA public TO app_role, provisioning_role;
 -- AddUserManagementPostgresConstraints issues CREATE EXTENSION IF NOT EXISTS
 -- for this, which becomes a no-op once it is already present.
 CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+
+-- ---------------------------------------------------------------------
+-- THE UPGRADE PATH.
+--
+-- A database created before the roles existed has every object owned by
+-- whichever superuser ran the migrator then. migration_role would own
+-- nothing in it, and EF fails on its very first statement — reading
+-- __EFMigrationsHistory — with "permission denied".
+--
+-- A fresh install does not need this: migration_role creates the objects
+-- and therefore owns them. An existing one does, and the failure is not
+-- subtle, so hand ownership over here, in the step that already runs as
+-- an administrator before the migrator.
+--
+-- SCOPED TO public, DELIBERATELY. The audit schema is owned by
+-- audit_owner and must stay that way: handing audit objects to a role
+-- that can log in would undo the entire tamper boundary
+-- (docs/architecture.md section 19). The filter below is the only thing
+-- standing between "fix the upgrade path" and "quietly disable the audit
+-- protections", so it is a WHERE clause on nspname, not a REASSIGN OWNED,
+-- which would take the audit objects too.
+-- ---------------------------------------------------------------------
+DO $$
+DECLARE
+    target record;
+BEGIN
+    FOR target IN
+        SELECT c.oid::regclass AS ident, c.relkind
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public'
+          AND c.relkind IN ('r', 'p', 'S', 'v', 'm')
+          AND pg_get_userbyid(c.relowner) <> 'migration_role'
+    LOOP
+        IF target.relkind = 'S' THEN
+            EXECUTE format(
+                'ALTER SEQUENCE %s OWNER TO migration_role', target.ident);
+        ELSIF target.relkind IN ('v', 'm') THEN
+            EXECUTE format(
+                'ALTER VIEW %s OWNER TO migration_role', target.ident);
+        ELSE
+            EXECUTE format(
+                'ALTER TABLE %s OWNER TO migration_role', target.ident);
+        END IF;
+
+        RAISE NOTICE 'Transferred % to migration_role', target.ident;
+    END LOOP;
+END $$;
