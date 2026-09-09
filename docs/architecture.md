@@ -214,6 +214,23 @@ AuthenticationBehavior → HumanActorBehavior → AuthorizationBehavior → hand
 
 **Authorization is the pipeline's responsibility, not the handler's.** A command declares its requirement through `IAuthorizableCommand` / `IHumanActorOnlyCommand`; the handler assumes it has already been enforced. Do not call handlers directly and do not re-check authorization inside a handler.
 
+`IAuthorizationService` returns an `AuthorizationResult`, not a `bool`: it reports **which** assignment permitted the act, and `AuthorizationBehavior` records that on the execution context. The selection — earliest `EffectiveFrom`, then assignment id — decides only what is *reported*; several assignments may legitimately authorise one act, and the decision is unchanged. Reconstructing the authority later would re-run the predicate against tables that have since changed, which answers a question about the past with today's configuration.
+
+### The execution context has two lifetimes
+
+`IExecutionContext` carries the caller's **identity** and the **authority** under which the current command was permitted. They are not the same lifetime, and conflating them is a defect:
+
+```text
+Identity    scope lifetime      established once, atomically, immutable
+Authority   command lifetime    established per command, released afterwards
+```
+
+**A DI scope is not one command** — a request or a test may dispatch several. Authority that outlived its command would be read by the next one, and an audit record naming the wrong authorising assignment is worse than one naming none. `AuthorizationBehavior` therefore holds it for the duration of the command and releases it afterwards, including when the handler throws.
+
+Absent authority is a real answer, not a half-built context: sign-in, self-service and token-bearer commands are authenticated and authorised by no role, and a refused command has an identity and no authority by definition.
+
+There are two write seams, `IExecutionContextInitializer` (identity) and `IAuthorityInitializer` (authority), kept separate so the component that records authority cannot rewrite who the caller is.
+
 ### Queries
 
 `IQuery` / `IQueryHandler` exist in SharedKernel, but no query dispatcher, pipeline or handler has been built and no query pattern is established. Do not invent a query dispatcher or query pipeline inside another story; the first query needs its own approved story and architectural decision.

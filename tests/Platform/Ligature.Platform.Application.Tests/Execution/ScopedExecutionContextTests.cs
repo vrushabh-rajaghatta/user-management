@@ -380,4 +380,54 @@ public sealed class ScopedExecutionContextTests
                 ActorType.Agent,
                 TestActorIdentity.Human()));
     }
+
+    /// <summary>
+    /// A handle clears only the establishment it came from.
+    ///
+    /// Without this, a stale handle disposed after a later command had
+    /// established its own authority would clear that newer authority, and the
+    /// running command would carry on with none recorded — silently, because
+    /// nothing throws. The pipeline's `using` is well structured and does not
+    /// do this today; the guard exists because a write seam whose whole
+    /// purpose is correct audit attribution should not depend on every future
+    /// caller being well behaved.
+    /// </summary>
+    [Fact]
+    public void A_stale_handle_does_not_clear_a_later_commands_authority()
+    {
+        var context = new ScopedExecutionContext();
+
+        context.Establish(
+            UserId.New(), ActorType.Human, TestActorIdentity.Human());
+
+        var first = SomeAuthority();
+        var firstHandle = context.EstablishAuthority(first);
+
+        firstHandle.Dispose();
+
+        var second = SomeAuthority();
+
+        using var secondHandle = context.EstablishAuthority(second);
+
+        // The stale handle, disposed late.
+        firstHandle.Dispose();
+
+        Assert.Same(second, context.Authority);
+    }
+
+    [Fact]
+    public void Disposing_a_handle_twice_is_harmless()
+    {
+        var context = new ScopedExecutionContext();
+
+        context.Establish(
+            UserId.New(), ActorType.Human, TestActorIdentity.Human());
+
+        var handle = context.EstablishAuthority(SomeAuthority());
+
+        handle.Dispose();
+        handle.Dispose();
+
+        Assert.Null(context.Authority);
+    }
 }

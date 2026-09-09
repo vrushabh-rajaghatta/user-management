@@ -78,6 +78,12 @@ public sealed class ScopedExecutionContext
     private ActorIdentity? _identity;
     private AuthorizingAssignment? _authority;
 
+    /// <summary>
+    /// Identifies WHICH establishment the current authority came from, so a
+    /// handle can only clear its own. See <see cref="AuthorityLifetime"/>.
+    /// </summary>
+    private object? _authorityToken;
+
     public bool IsAuthenticated => _userId is not null;
 
     /// <summary>
@@ -202,23 +208,44 @@ public sealed class ScopedExecutionContext
         }
 
         _authority = authority;
+        _authorityToken = new object();
 
-        return new AuthorityLifetime(this);
+        return new AuthorityLifetime(this, _authorityToken);
     }
 
     /// <summary>
     /// Clears the authority when the command it belongs to finishes, however
     /// it finishes. A command that threw must not leave its authority behind
     /// for the next one to read.
+    ///
+    /// It clears only the establishment it came from. A handle disposed twice,
+    /// or disposed late after a later command has established its own
+    /// authority, would otherwise clear that newer command's authority and
+    /// leave it acting with none recorded. Nothing in the pipeline disposes
+    /// out of order today — the behaviour's `using` is well structured — but
+    /// this type exists to prevent incorrect audit attribution, and a write
+    /// seam should not depend on every future caller being well behaved.
     /// </summary>
     private sealed class AuthorityLifetime : IDisposable
     {
         private readonly ScopedExecutionContext _owner;
+        private readonly object _token;
 
-        internal AuthorityLifetime(ScopedExecutionContext owner)
-            => _owner = owner;
+        internal AuthorityLifetime(ScopedExecutionContext owner, object token)
+        {
+            _owner = owner;
+            _token = token;
+        }
 
         public void Dispose()
-            => _owner._authority = null;
+        {
+            // Not ours: either already disposed, or a later establishment has
+            // replaced it. Either way there is nothing here to clear.
+            if (!ReferenceEquals(_owner._authorityToken, _token))
+                return;
+
+            _owner._authority = null;
+            _owner._authorityToken = null;
+        }
     }
 }

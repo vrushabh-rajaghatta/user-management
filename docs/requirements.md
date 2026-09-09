@@ -159,7 +159,22 @@ the pipeline writes them. Do not introduce a public writer abstraction.
 
 The catalogue requires audit events to be written INSIDE the command's transaction — "if the business write committed, the audit write committed" (inv. 16). Handler-owned transactions (`docs/architecture.md` §11) already make that possible without restructuring.
 
-**Also missing, and larger than it looks:** a full ActorSnapshot needs `Username`, `IdentityProvider`, `SubjectId` and `AuthorizingRole`, none of which `IExecutionContext` carries. `AuthorizationService` returns `bool` and discards which assignment authorised the action.
+**The context contract is now in place.** `IExecutionContext` carries the
+identity half of the snapshot (`DisplayName`, `Username`, `Email`,
+`IdentityProvider`, `SubjectId`) as one `ActorIdentity`, and
+`IAuthorizationService` returns which assignment authorised the act rather
+than a bare `bool`. `docs/architecture.md` §11 records the two lifetimes.
+
+**AUD-O1 is closed:** `AuthorizingAssignment` carries `AssignmentId`, so
+point-in-time reconstruction is a direct reference to what authorised an act
+rather than a re-evaluation of what would authorise it now.
+
+**Still missing for emission:** the pipeline behaviours that build a record
+from that contract and write it, and a second establishment path for
+token-bearer commands (CRD-C1, CRD-C3), which authenticate by possessing a
+token rather than a session and today establish no context at all. The
+contract can express that case (AUD-D28: no authorising role,
+`IdentityProvider` 'Application'); the path is deliberately not built.
 
 **Deferred to:** the Audit capability (`docs/architecture.md` §6).
 **Where recorded:** TODOs in `CreateUserCommandHandler`, `ActivateAccountCommandHandler`, `SignInCommandHandler`, `SignOutCommandHandler`.

@@ -274,6 +274,133 @@ public sealed class CommandBehaviorCompositionTests
         public string RequiredPermission => "test.permission";
     }
 
+
+    // ------------------------------------------------- authority lifetime
+
+    /// <summary>
+    /// THE CONTRACT THIS PROVES is not "the context clears on Dispose" — that
+    /// is ScopedExecutionContext's own test. It is that AuthorizationBehavior
+    /// does not leak an assignment into the next command when the handler
+    /// fails.
+    ///
+    /// A DI scope dispatches several commands. If a failing command left its
+    /// authority behind, the next one would execute — and be recorded — under
+    /// an authorising assignment that permitted something else. A false audit
+    /// record is worse than none, so the release has to survive the exception
+    /// path, not merely the happy one.
+    /// </summary>
+    [Fact]
+    public async Task Authority_is_released_when_the_handler_throws()
+    {
+        var executionContext = new FakeExecutionContext
+        {
+            IsAuthenticated = true,
+            ActorType = ActorType.Human
+        };
+
+        var authorizationService = new FakeAuthorizationService
+        {
+            IsAllowed = true
+        };
+
+        var authorityInitializer = new RecordingAuthorityInitializer();
+
+        var behavior =
+            new AuthorizationBehavior<TestCommand, TestResult>(
+                executionContext,
+                authorizationService,
+                authorityInitializer,
+                Clock());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => behavior.Handle(
+                new TestCommand(),
+                CancellationToken.None,
+                _ => throw new InvalidOperationException("handler failed")));
+
+        // It WAS established — otherwise this test would pass for the wrong
+        // reason, proving only that nothing was ever recorded.
+        Assert.NotNull(authorityInitializer.Recorded);
+
+        Assert.False(
+            authorityInitializer.Held,
+            "The handler threw, so the authority must have been released "
+            + "before the exception left AuthorizationBehavior.");
+    }
+
+    [Fact]
+    public async Task Authority_is_released_when_the_handler_succeeds()
+    {
+        var executionContext = new FakeExecutionContext
+        {
+            IsAuthenticated = true,
+            ActorType = ActorType.Human
+        };
+
+        var authorizationService = new FakeAuthorizationService
+        {
+            IsAllowed = true
+        };
+
+        var authorityInitializer = new RecordingAuthorityInitializer();
+
+        var behavior =
+            new AuthorizationBehavior<TestCommand, TestResult>(
+                executionContext,
+                authorizationService,
+                authorityInitializer,
+                Clock());
+
+        await behavior.Handle(
+            new TestCommand(),
+            CancellationToken.None,
+            _ => Task.FromResult(new TestResult("success")));
+
+        Assert.NotNull(authorityInitializer.Recorded);
+        Assert.False(authorityInitializer.Held);
+    }
+
+    /// <summary>
+    /// A refused command establishes no authority at all, so the eventual
+    /// audit record for the refusal carries an identity and no authorising
+    /// role — which is exactly what a refusal record should say.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_command_establishes_no_authority()
+    {
+        var executionContext = new FakeExecutionContext
+        {
+            IsAuthenticated = true,
+            ActorType = ActorType.Human
+        };
+
+        var authorizationService = new FakeAuthorizationService
+        {
+            IsAllowed = false
+        };
+
+        var authorityInitializer = new RecordingAuthorityInitializer();
+
+        var behavior =
+            new AuthorizationBehavior<TestCommand, TestResult>(
+                executionContext,
+                authorizationService,
+                authorityInitializer,
+                Clock());
+
+        await Assert.ThrowsAsync<BusinessRuleViolationException>(
+            () => behavior.Handle(
+                new TestCommand(),
+                CancellationToken.None,
+                _ => Task.FromResult(new TestResult("unreachable"))));
+
+        Assert.Null(authorityInitializer.Recorded);
+        Assert.False(authorityInitializer.Held);
+    }
+
+    private static FakeClock Clock()
+        => new(new DateTimeOffset(2026, 9, 3, 10, 0, 0, TimeSpan.Zero));
+
     private sealed record TestResult(string Value);
 
     private sealed class FakeHandler

@@ -33,7 +33,7 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.True(await IsAllowedAsync(service, 
+            Assert.True(await IsAllowedAsync(service,
                 fixture.Request(), CancellationToken.None));
         });
     }
@@ -43,7 +43,7 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.False(await IsAllowedAsync(service, 
+            Assert.False(await IsAllowedAsync(service,
                 fixture.Request() with { UserId = UserId.New() },
                 CancellationToken.None));
         });
@@ -67,12 +67,12 @@ public sealed class AuthorizationServiceTests
             try
             {
                 Assert.True(
-                    await IsAllowedAsync(service, 
+                    await IsAllowedAsync(service,
                         fixture.Request(), CancellationToken.None),
                     "The assignment holder is allowed.");
 
                 Assert.False(
-                    await IsAllowedAsync(service, 
+                    await IsAllowedAsync(service,
                         fixture.Request() with { UserId = bystanderId },
                         CancellationToken.None),
                     "A user holding no assignment must not borrow one.");
@@ -96,14 +96,14 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.True(await IsAllowedAsync(service, 
+            Assert.True(await IsAllowedAsync(service,
                 fixture.Request(), CancellationToken.None));
 
             await ExecuteAsync(
                 "UPDATE app_user SET status = 'Inactive' WHERE id = @id",
                 fixture.UserId.Value);
 
-            Assert.False(await IsAllowedAsync(service, 
+            Assert.False(await IsAllowedAsync(service,
                 fixture.Request(), CancellationToken.None));
         });
     }
@@ -115,14 +115,14 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.True(await IsAllowedAsync(service, 
+            Assert.True(await IsAllowedAsync(service,
                 fixture.Request(), CancellationToken.None));
 
             await ExecuteAsync(
                 "UPDATE user_identity SET status = 'Inactive' WHERE user_id = @id",
                 fixture.UserId.Value);
 
-            Assert.False(await IsAllowedAsync(service, 
+            Assert.False(await IsAllowedAsync(service,
                 fixture.Request(), CancellationToken.None));
         });
     }
@@ -139,10 +139,10 @@ public sealed class AuthorizationServiceTests
                 At = fixture.EffectiveFrom.AddSeconds(-1),
             };
 
-            Assert.False(await IsAllowedAsync(service, 
+            Assert.False(await IsAllowedAsync(service,
                 request, CancellationToken.None));
 
-            Assert.True(await IsAllowedAsync(service, 
+            Assert.True(await IsAllowedAsync(service,
                 request with { At = fixture.EffectiveFrom },
                 CancellationToken.None));
         });
@@ -160,16 +160,16 @@ public sealed class AuthorizationServiceTests
                 fixture.AssignmentId.Value,
                 expiry);
 
-            Assert.True(await IsAllowedAsync(service, 
+            Assert.True(await IsAllowedAsync(service,
                 fixture.Request() with { At = expiry.AddSeconds(-1) },
                 CancellationToken.None));
 
             // Half-open interval: the end instant is already outside.
-            Assert.False(await IsAllowedAsync(service, 
+            Assert.False(await IsAllowedAsync(service,
                 fixture.Request() with { At = expiry },
                 CancellationToken.None));
 
-            Assert.False(await IsAllowedAsync(service, 
+            Assert.False(await IsAllowedAsync(service,
                 fixture.Request() with { At = expiry.AddSeconds(1) },
                 CancellationToken.None));
         });
@@ -188,7 +188,7 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.True(await IsAllowedAsync(service, 
+            Assert.True(await IsAllowedAsync(service,
                 fixture.Request(), CancellationToken.None));
 
             await ExecuteAsync(
@@ -204,7 +204,7 @@ public sealed class AuthorizationServiceTests
                 Now,
                 extra: (User.SystemUserId.Value, Now.AddYears(5)));
 
-            Assert.False(await IsAllowedAsync(service, 
+            Assert.False(await IsAllowedAsync(service,
                 fixture.Request(), CancellationToken.None));
         });
     }
@@ -214,7 +214,7 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.True(await IsAllowedAsync(service, 
+            Assert.True(await IsAllowedAsync(service,
                 fixture.Request(), CancellationToken.None));
 
             await ExecuteAsync(
@@ -227,7 +227,7 @@ public sealed class AuthorizationServiceTests
                 Now,
                 extra: (User.SystemUserId.Value, (object?)null));
 
-            Assert.False(await IsAllowedAsync(service, 
+            Assert.False(await IsAllowedAsync(service,
                 fixture.Request(), CancellationToken.None));
         });
     }
@@ -239,7 +239,7 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.False(await IsAllowedAsync(service, 
+            Assert.False(await IsAllowedAsync(service,
                 fixture.Request() with { ScopeType = "Product" },
                 CancellationToken.None));
         });
@@ -255,7 +255,7 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.False(await IsAllowedAsync(service, 
+            Assert.False(await IsAllowedAsync(service,
                 fixture.Request() with { ScopeId = Guid.NewGuid() },
                 CancellationToken.None));
         });
@@ -268,14 +268,14 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.True(await IsAllowedAsync(service, 
+            Assert.True(await IsAllowedAsync(service,
                 fixture.Request(), CancellationToken.None));
 
             await ExecuteAsync(
                 "UPDATE permission SET is_active = false WHERE id = @id",
                 fixture.PermissionId.Value);
 
-            Assert.False(await IsAllowedAsync(service, 
+            Assert.False(await IsAllowedAsync(service,
                 fixture.Request(), CancellationToken.None));
         });
     }
@@ -285,7 +285,7 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.False(await IsAllowedAsync(service, 
+            Assert.False(await IsAllowedAsync(service,
                 fixture.Request() with { PermissionCode = "some.other.permission" },
                 CancellationToken.None));
         });
@@ -313,10 +313,10 @@ public sealed class AuthorizationServiceTests
                 {
                     // The human holder of the very same role is allowed, so the
                     // denial below is about the actor and nothing else.
-                    Assert.True(await IsAllowedAsync(service, 
+                    Assert.True(await IsAllowedAsync(service,
                         fixture.Request(), CancellationToken.None));
 
-                    Assert.False(await IsAllowedAsync(service, 
+                    Assert.False(await IsAllowedAsync(service,
                         fixture.Request() with { UserId = agentId },
                         CancellationToken.None));
                 }
@@ -338,7 +338,7 @@ public sealed class AuthorizationServiceTests
 
                 try
                 {
-                    Assert.True(await IsAllowedAsync(service, 
+                    Assert.True(await IsAllowedAsync(service,
                         fixture.Request() with { UserId = agentId },
                         CancellationToken.None));
                 }
@@ -368,7 +368,7 @@ public sealed class AuthorizationServiceTests
                 fixture.RoleId.Value);
 
             Assert.True(
-                await IsAllowedAsync(service, 
+                await IsAllowedAsync(service,
                     fixture.Request(), CancellationToken.None),
                 "Deactivating a role must not strand its existing holders.");
         });

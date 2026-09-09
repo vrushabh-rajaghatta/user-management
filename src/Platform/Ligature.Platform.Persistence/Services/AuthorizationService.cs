@@ -34,9 +34,12 @@ namespace Ligature.Platform.Persistence.Services;
 /// permission is an ordinary configuration. The predicate is unchanged and the
 /// decision is still "does at least one eligible assignment exist"; ordering
 /// only decides which of them is REPORTED. Earliest EffectiveFrom, then
-/// assignment id, so the answer is deterministic and stays stable when the
-/// question is asked again later — which point-in-time reconstruction
-/// (REV-Q6) depends on.
+/// assignment id: the selection is deterministic FOR A GIVEN AUTHORISATION
+/// STATE. It is not a promise that a later call returns the same assignment —
+/// the one selected today may be revoked tomorrow. That is precisely why the
+/// chosen AssignmentId is recorded on the audit record: historical
+/// reconstruction (REV-Q6) is then a direct reference to what authorised the
+/// act, not a re-evaluation of what would authorise it now.
 /// </summary>
 public sealed class AuthorizationService : IAuthorizationService
 {

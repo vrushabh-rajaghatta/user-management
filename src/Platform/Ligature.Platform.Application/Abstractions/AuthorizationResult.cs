@@ -15,6 +15,11 @@ namespace Ligature.Platform.Application.Abstractions;
 /// changes only what is RECORDED. It does not change who is authorised: the
 /// decision is still "at least one eligible assignment exists", exactly as
 /// before.
+///
+/// The choice is deterministic for a given authorisation state, not stable
+/// across changes to it: an assignment selected today can be revoked
+/// tomorrow. Recording the AssignmentId is what makes the past reconstructable
+/// regardless.
 /// </summary>
 public sealed record AuthorizationResult
 {
