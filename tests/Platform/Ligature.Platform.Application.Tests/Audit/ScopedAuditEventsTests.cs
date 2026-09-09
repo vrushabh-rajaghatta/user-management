@@ -3,6 +3,10 @@ using Ligature.Platform.Application.Audit;
 namespace Ligature.Platform.Application.Tests.Audit;
 
 /// <summary>
+/// Every failure here is an emission defect and says so in the same words,
+/// because "Audit emission defect" is the phrase an operator searches for
+/// when a 500 has no detail (E1 decision: no dedicated exception type).
+///
 /// The collector's lifetime is a command, not a scope — the same distinction
 /// the execution context draws for authority, and for the same reason: a
 /// scope may dispatch several commands, and a declaration that outlived its
@@ -19,6 +23,7 @@ public sealed class ScopedAuditEventsTests
 
         var failure = Assert.Throws<InvalidOperationException>(() => events.Emit("UserCreated", 1));
 
+        Assert.StartsWith("Audit emission defect", failure.Message);
         Assert.Contains("outside a dispatched command", failure.Message);
     }
 
@@ -50,7 +55,10 @@ public sealed class ScopedAuditEventsTests
         }
 
         Assert.Empty(events.Declarations);
-        Assert.Throws<InvalidOperationException>(() => events.OperationId);
+
+        Assert.StartsWith(
+            "Audit emission defect",
+            Assert.Throws<InvalidOperationException>(() => events.OperationId).Message);
     }
 
     [Fact]
@@ -79,6 +87,7 @@ public sealed class ScopedAuditEventsTests
 
         var failure = Assert.Throws<InvalidOperationException>(() => events.BeginCommand(Guid.NewGuid(), Now));
 
+        Assert.StartsWith("Audit emission defect", failure.Message);
         Assert.Contains("not nested", failure.Message);
     }
 

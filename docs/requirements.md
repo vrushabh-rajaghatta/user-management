@@ -167,6 +167,18 @@ the pipeline writes them. Do not introduce a public writer abstraction.
 point-in-time reconstruction is a direct reference to what authorised an act
 rather than a re-evaluation of what would authorise it now.
 
+**Two decisions were frozen at E1 review** and are not open to being
+re-taken as implementation details:
+
+- **`CausationId` stays null within a command.** The shared `OperationId` is
+  what groups a command's records; causation would assert an event dependency
+  the handler does not have. Recorded in `docs/architecture.md` §11.
+- **No `AuditEmissionDefect` type.** Emission defects are
+  `InvalidOperationException`, identified by a message opening with
+  `Audit emission defect`. The plan called for a dedicated type; the platform's
+  exception vocabulary is frozen at three, and widening it for one capability
+  is a larger decision than this story had.
+
 **Still missing:**
 
 - **The other commands.** `ActivateAccountCommandHandler`,

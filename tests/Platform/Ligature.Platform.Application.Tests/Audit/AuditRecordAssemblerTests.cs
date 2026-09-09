@@ -222,8 +222,21 @@ public sealed class AuditRecordAssemblerTests
         ActorSnapshot actor)
         => AuditRecordAssembler.Assemble(declarations, Permitted, actor, Catalogue(), Guid.NewGuid(), Now, Now);
 
+    /// <summary>
+    /// Every refusal is an InvalidOperationException whose message opens with
+    /// the same phrase. E1 deliberately introduces no AuditEmissionDefect
+    /// type: the platform's exception vocabulary is frozen at three, and the
+    /// message is what identifies the defect.
+    /// </summary>
     private static InvalidOperationException Defect(AuditEventDeclaration declaration, ActorSnapshot actor)
-        => Assert.Throws<InvalidOperationException>(() => Assemble([declaration], actor));
+    {
+        var failure = Assert.Throws<InvalidOperationException>(
+            () => Assemble([declaration], actor));
+
+        Assert.StartsWith("Audit emission defect", failure.Message);
+
+        return failure;
+    }
 
     internal static ActorSnapshot Human()
         => new(

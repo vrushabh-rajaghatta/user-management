@@ -260,7 +260,11 @@ Three things follow, and each is load-bearing:
 
 - **`IAuditRecordWriter` is internal and unregistered outside the pipeline.** Handlers live in the same assembly, so the compiler cannot enforce the separation; `AuditWriterIsolationTests` does. There is no public write API and none is to be introduced (§6).
 - **Every emission failure is `InvalidOperationException`, never a domain error.** It is a defect in the code that declared the event, so it propagates, the transaction rolls back, and the host answers 500. A user-facing message would invite a retry that cannot succeed, and a record that fails validation is not evidence.
+
+  **Frozen (E1).** A dedicated `AuditEmissionDefect` was considered and rejected: the platform's exception vocabulary is three types, and widening it for one capability is a larger decision than this story. Every emission failure therefore opens its message with `Audit emission defect`, which is what identifies it in a log when the response carries no detail. Keep that phrase; a new emission failure that does not use it is a defect in the defect.
 - **Which command may emit which codes is a static registry**, `AuditDeclarations`, verified against the deployed catalogue at start-up in `Program.cs`. A release whose handlers declare an event the database has not seeded refuses to start, rather than failing on the first request that reaches it.
+
+**`CausationId` is null within a command. Frozen (E1).** `OperationId` already groups the records of one command, and causation names the record that *caused* another. Declaring it between USR-C1's three events would assert a dependency the handler does not have, and would make the trail claim something about causality that nobody established. Causation is for a cause that is genuinely a different act; use it there, and nowhere else, and do not backfill it into a command's own events.
 
 Emission is not free of consequences elsewhere. An audit record names its actor by foreign key to `app_user` (AR10) and the assignment that authorised it by foreign key to `user_role` (AR12), and no role may delete audit rows. **Once a user has acted under an audited command, that user and that assignment can no longer be deleted** — by anyone. Integration suites that used to seed and discard a caller now seed a permanent one; see `PermanentTestCaller`.
 

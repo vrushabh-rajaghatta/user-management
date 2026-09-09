@@ -52,12 +52,14 @@ internal sealed class ScopedAuditEvents : IAuditEvents, IAuditEmissionScope
 
     public Guid OperationId =>
         _operationId ?? throw new InvalidOperationException(
-            "No command is open on this scope, so there is no OperationId. "
-            + "Audit events are declared inside a dispatched command.");
+            "Audit emission defect — no command is open on this scope, so "
+            + "there is no OperationId. Audit events are declared inside a "
+            + "dispatched command.");
 
     public DateTimeOffset OccurredAt =>
         _occurredAt ?? throw new InvalidOperationException(
-            "No command is open on this scope, so there is no command clock.");
+            "Audit emission defect — no command is open on this scope, so "
+            + "there is no command clock.");
 
     public IReadOnlyList<AuditEventDeclaration> Declarations => _declarations;
 
@@ -70,10 +72,11 @@ internal sealed class ScopedAuditEvents : IAuditEvents, IAuditEmissionScope
             // pipeline to write into. Refusing the declaration here is what
             // stops an event from being silently dropped.
             throw new InvalidOperationException(
-                $"'{code}' was declared outside a dispatched command. Audit "
-                + "events are emitted by the pipeline inside the command's "
-                + "transaction; a handler invoked directly has no such "
-                + "transaction and its events would never be written.");
+                $"Audit emission defect — '{code}' was declared outside a "
+                + "dispatched command. Audit events are emitted by the "
+                + "pipeline inside the command's transaction; a handler "
+                + "invoked directly has no such transaction and its events "
+                + "would never be written.");
         }
 
         var declaration = new AuditEventDeclaration(code, version);
@@ -88,9 +91,10 @@ internal sealed class ScopedAuditEvents : IAuditEvents, IAuditEmissionScope
         if (_operationId is not null)
         {
             throw new InvalidOperationException(
-                "A command is already open on this scope. Commands are not "
-                + "nested; a second dispatch inside a handler would attribute "
-                + "its events to the wrong operation.");
+                "Audit emission defect — a command is already open on this "
+                + "scope. Commands are not nested; a second dispatch inside a "
+                + "handler would attribute its events to the wrong "
+                + "operation.");
         }
 
         _operationId = operationId;
