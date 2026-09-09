@@ -153,6 +153,29 @@ public sealed class ProvisioningCliTests : IDisposable
     /// crucially, nothing may be committed when it refuses. The database has to
     /// remain provisionable after the operator clears the file.
     /// </summary>
+    /// <summary>
+    /// The sibling of the migrations gate. The audit schema is deployed by a
+    /// different tool under a different credential, and a seed run against a
+    /// database where it is absent would fail deep inside with a missing-table
+    /// error that says nothing about which step was skipped. Refused up front,
+    /// with the remedy, before anything is written.
+    /// </summary>
+    [Fact]
+    public async Task A_database_without_the_audit_schema_is_refused_with_the_remedy()
+    {
+        await using var database = await ProvisioningDatabase.CreateAsync(
+            migrated: true, auditDeployed: false);
+
+        var run = await RunAsync(database, Path.Combine(_workspace, "t.token"));
+
+        Assert.Equal(Program.ProvisioningFailed, run.ExitCode);
+        Assert.Contains("Audit schema is not deployed", run.Error);
+        Assert.Contains("Ligature.AuditSchema", run.Error);
+
+        Assert.False(File.Exists(Path.Combine(_workspace, "t.token")));
+        Assert.Equal(0, await database.CountAsync("SELECT count(*) FROM app_user"));
+    }
+
     [Fact]
     public async Task An_existing_token_file_is_refused_and_nothing_is_committed()
     {

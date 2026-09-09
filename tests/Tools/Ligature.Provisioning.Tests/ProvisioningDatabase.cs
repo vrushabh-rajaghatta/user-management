@@ -1,3 +1,4 @@
+using Ligature.Platform.Persistence.Audit;
 using Ligature.Platform.Persistence.Database;
 using Ligature.Platform.Persistence.Services;
 using Microsoft.EntityFrameworkCore;
@@ -40,7 +41,15 @@ internal sealed class ProvisioningDatabase : IAsyncDisposable
         Environment.GetEnvironmentVariable("LIGATURE_CONNECTION")
         ?? DefaultConnection;
 
-    internal static async Task<ProvisioningDatabase> CreateAsync(bool migrated)
+    /// <param name="migrated">Apply the EF migrations.</param>
+    /// <param name="auditDeployed">
+    /// Also deploy the audit schema, as an installation does after migrating.
+    /// False exercises the tool's second precondition: migrated, but the
+    /// audit schema absent.
+    /// </param>
+    internal static async Task<ProvisioningDatabase> CreateAsync(
+        bool migrated,
+        bool auditDeployed = true)
     {
         var databaseName = $"ligature_prov_{Guid.NewGuid():N}";
 
@@ -81,9 +90,13 @@ internal sealed class ProvisioningDatabase : IAsyncDisposable
 
         try
         {
-            await using var context = database.CreateContext();
+            await using (var context = database.CreateContext())
+            {
+                await context.Database.MigrateAsync();
+            }
 
-            await context.Database.MigrateAsync();
+            if (auditDeployed)
+                await new AuditSchemaDeployer(target).DeployAsync();
         }
         catch
         {

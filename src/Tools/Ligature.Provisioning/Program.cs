@@ -122,6 +122,29 @@ public static class Program
             return ProvisioningFailed;
         }
 
+        // The sibling of the migrations gate. The audit schema is deployed by
+        // a different tool under a different credential, and a seed run
+        // against a database where it is absent would fail deep inside with a
+        // missing-table error that says nothing about which step was skipped.
+        var missingAuditScripts = await Ligature.Platform.Persistence.Audit
+            .AuditSchemaDeployer.MissingScriptsAsync(
+                context.Database.GetDbConnection(), cancellationToken);
+
+        if (missingAuditScripts.Count > 0)
+        {
+            error.WriteLine(
+                $"The Audit schema is not deployed: {missingAuditScripts.Count} "
+                + "script(s) have not been applied "
+                + $"({string.Join(", ", missingAuditScripts)}). This tool seeds "
+                + "data only. Run, after the migrations:"
+                + Environment.NewLine
+                + Environment.NewLine
+                + "  dotnet run --project src/Tools/Ligature.AuditSchema"
+                + Environment.NewLine);
+
+            return ProvisioningFailed;
+        }
+
         var now = services.GetRequiredService<IClock>().UtcNow;
 
         await services.GetRequiredService<PlatformProvisioner>()

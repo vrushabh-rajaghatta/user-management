@@ -99,7 +99,59 @@ public sealed class AuditSchemaDeployer
             applied.Add(script.Name);
         }
 
+        // Applied is not the same as correct. Verify what was built before
+        // reporting success, so a deployment stops here rather than handing
+        // the migrator and provisioner a boundary that only looks right.
+        await AuditConstructionVerification.VerifyAsync(connection, cancellationToken);
+
         return new AuditSchemaDeploymentResult(applied, alreadyCurrent);
+    }
+
+    /// <summary>The scripts a current release expects the ledger to hold, in order.</summary>
+    public static IReadOnlyList<string> ExpectedScriptNames
+        => LoadScripts().Select(x => x.Name).ToArray();
+
+    /// <summary>
+    /// Which of the release's scripts the target database has NOT recorded.
+    /// Ligature.Provisioning uses this as a precondition, in the same way it
+    /// refuses to run with pending EF migrations: a missing-table error from
+    /// inside a seed would not say what was actually wrong. Opens the
+    /// connection if the caller has not.
+    /// </summary>
+    public static async Task<IReadOnlyList<string>> MissingScriptsAsync(
+        System.Data.Common.DbConnection connection,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+
+        if (connection.State != System.Data.ConnectionState.Open)
+            await connection.OpenAsync(cancellationToken);
+
+        var expected = ExpectedScriptNames;
+
+        await using var command = connection.CreateCommand();
+
+        command.CommandText =
+            $"SELECT script_name FROM {Schema}.audit_schema_version "
+            + "WHERE to_regclass('" + Schema + ".audit_schema_version') IS NOT NULL";
+
+        var applied = new HashSet<string>(StringComparer.Ordinal);
+
+        try
+        {
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+            while (await reader.ReadAsync(cancellationToken))
+                applied.Add(reader.GetString(0));
+        }
+        catch (Npgsql.PostgresException failure)
+            when (failure.SqlState == Npgsql.PostgresErrorCodes.UndefinedTable
+               || failure.SqlState == Npgsql.PostgresErrorCodes.InvalidSchemaName)
+        {
+            // No ledger at all: nothing has been deployed.
+        }
+
+        return expected.Where(x => !applied.Contains(x)).ToArray();
     }
 
     /// <summary>
@@ -203,6 +255,11 @@ public sealed class AuditSchemaDeployer
 
                 CONSTRAINT pk_audit_schema_version PRIMARY KEY (script_name)
             );
+
+            -- Provisioning refuses to seed against a schema whose scripts are
+            -- not all applied, which means reading this ledger. Granted here,
+            -- with the table it belongs to, so the grant cannot be skipped.
+            GRANT SELECT ON {Schema}.audit_schema_version TO provisioning_role;
             """, cancellationToken);
 
     private static async Task<bool> IsAppliedAsync(

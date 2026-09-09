@@ -1,3 +1,4 @@
+using Ligature.Platform.Persistence.Audit;
 using Ligature.Platform.Persistence.Database;
 using Ligature.Platform.Persistence.Services;
 using Microsoft.EntityFrameworkCore;
@@ -33,7 +34,12 @@ internal sealed class ThrowawayDatabase : IAsyncDisposable
 
     internal string ConnectionString { get; }
 
-    internal static async Task<ThrowawayDatabase> CreateAsync()
+    /// <param name="auditDeployed">
+    /// Deploy the audit schema after migrating, as an installation does.
+    /// False leaves a migrated database with no audit schema, which is what
+    /// provisioning must refuse to seed.
+    /// </param>
+    internal static async Task<ThrowawayDatabase> CreateAsync(bool auditDeployed = true)
     {
         // Fails loudly rather than silently skipping, per AGENTS.md section 3.
         await TestDatabase.EnsureReachableAsync();
@@ -71,6 +77,13 @@ internal sealed class ThrowawayDatabase : IAsyncDisposable
             // The real migrations, so what is provisioned sits on the same
             // schema production would have.
             await context.Database.MigrateAsync();
+
+            // Then the audit schema, exactly as an installation does: after
+            // the migrations, because its foreign keys reference app_user.
+            // Provisioning verifies it before seeding, so a fixture without
+            // it would refuse to provision anything.
+            if (auditDeployed)
+                await new AuditSchemaDeployer(target).DeployAsync();
         }
         catch
         {

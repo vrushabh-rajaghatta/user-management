@@ -178,9 +178,22 @@ dotnet run --project src/Tools/Ligature.Provisioning -- \
     --activation-token-out ./bootstrap.token
 ```
 
-The tool seeds only, and refuses to run when migrations are pending. It is
-idempotent: a second run reports that provisioning is already complete, changes
-nothing, and does not touch the token file.
+The tool seeds only. It refuses to run when migrations are pending, and it
+refuses to run when the Audit schema is not deployed — each with the command
+that fixes it. It is idempotent: a second run reports that provisioning is
+already complete, changes nothing, and does not touch the token file.
+
+Provisioning also runs `AUD-C4`: it verifies the Audit boundary it is about to
+seed against (and refuses the tenant, rolling everything back, if the
+application role could write the trail), then seeds the 49-row event catalogue
+and retention policy v1. It emits no audit record — the trail is left empty
+with its sequence unconsumed, so the tenant's first record can be Sequence 1.
+
+**A database provisioned before `AUD-C4` existed never receives the
+catalogue.** PRV-C1 runs once per database, guarded by the System actor, and
+does not seed retroactively — by decision, because doing so would be `AUD-C3`'s
+job without `AUD-C3`'s audit event. Recreate such a database and provision it
+again; `AuditCatalogueDriftTests` says exactly this when it finds one.
 
 `--activation-token-out` receives the bootstrap administrator's one-time
 activation token, written owner-only. **The token is never printed**, and it
