@@ -555,7 +555,7 @@ the roles the running system actually uses.
 | --- | --- | --- |
 | `app_role` | The host application | `SELECT`, `INSERT` on the trail. No `UPDATE`, no `DELETE` |
 | `migration_role` | EF migrations | Owns the ordinary schema. **Nothing at all** on `audit_record` or `audit_entity_ref` |
-| `provisioning_role` | `Ligature.Provisioning` | Seeds release-controlled data; catalogue inserts only |
+| `provisioning_role` | `Ligature.Provisioning` | Seeds the catalogue and retention v1; **reads** the trail and the deployment ledger so it can verify a tenant before handing it over. Never writes a record |
 | `audit_owner` | Nobody | Owns the `audit` schema and every object in it. `NOLOGIN`, no members, no password |
 | `audit_anonymiser` | The future erasure worker | Column-level `UPDATE` on the AR20 set only. `NOLOGIN` until that worker exists |
 
@@ -610,6 +610,43 @@ Each is asserted by an adversarial test in `AuditTamperBoundaryTests`, which
 attempts the attack and requires refusal. Configuration assertions were
 deliberately not accepted as evidence.
 
+## Two verifications, deliberately redundant
+
+They answer different questions, so neither trusts the other.
+
+**`Ligature.AuditSchema` verifies construction** — *did it build what it
+claims?* After applying its scripts it checks ownership of the schema and every
+object, that `audit_owner` cannot log in and has no members, that every
+protection trigger is `ENABLE ALWAYS`, that the expected indexes and
+constraints exist, and the full privilege matrix — including that the
+anonymiser's `UPDATE` covers exactly the AR20 columns. Any failing fact stops
+the deployment; all failing facts are reported together.
+
+**Provisioning verifies handover** — *is this tenant safe to hand over?*
+`AUD-C4` checks, before seeding, that every audit script is in the ledger and
+that the application role cannot update or delete any audit table; and after
+seeding (`AUD-S11`) that the catalogue matches the release seed, that Anonymous
+origin is declared for exactly the two types EO5 permits, that retention v1
+exists, and that the trail is empty **and its sequence unconsumed** — a
+rolled-back write consumes a value, and the first record must be Sequence 1.
+Any failure refuses the tenant and rolls the whole provisioning back.
+
+The handover set is small and tied to the acceptance criteria; the adversarial
+suite is not duplicated into it. What the redundancy buys is that a tenant is
+never handed over on the strength of an earlier step having exited 0.
+
+## The catalogue is seeded, not migrated
+
+`AuditEventCatalogue` is the single code-side source of the 49 V1 event types
+and their origins, in the pattern of `GetPermissionSeeds()`; the Entity
+Workbook's Event Catalogue sheet is the normative origin. `AuditCatalogueSeeder`
+writes it with raw SQL on provisioning's own transaction — no `DbSet`, no
+entity, and deliberately the same mechanism the emission writer will use to
+write into a schema it does not own. `AuditCatalogueDriftTests` holds a
+provisioned database to the seed. The retention floor it seeds from,
+`AuditReleaseBaseline.MinimumRetentionMonths`, is a placeholder pending
+`AUD-O11` and is marked as one.
+
 ## Rules
 
 - **Never grant `audit_owner` membership to anything.** It is the whole of
@@ -626,6 +663,10 @@ deliberately not accepted as evidence.
 - Extensions are database infrastructure and are installed by the foundation
   step, not by migrations. The alternative — `GRANT CREATE ON DATABASE` to
   `migration_role` — also permits creating schemas.
+- **Audit schema scripts are immutable once deployed.** The ledger records each
+  script's checksum and a changed script fails the deployment. A correction
+  ships as a new numbered script — `003` added the RT5 foreign key that `001`
+  had omitted, and the provisioning read grants, exactly this way.
 
 ## Explicit non-decisions
 

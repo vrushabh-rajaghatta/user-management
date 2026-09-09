@@ -169,6 +169,11 @@ than a bare `bool`. `docs/architecture.md` §11 records the two lifetimes.
 point-in-time reconstruction is a direct reference to what authorised an act
 rather than a re-evaluation of what would authorise it now.
 
+**The receiving contract is populated.** `AUD-C4` seeds the 49-row event
+catalogue, its origins and retention policy v1 at provisioning, and verifies
+the tenant before handing it over (`docs/architecture.md` §19). The trail is
+left empty and unconsumed, ready for `TenantProvisioned` at Sequence 1.
+
 **Still missing for emission:** the pipeline behaviours that build a record
 from that contract and write it, and a second establishment path for
 token-bearer commands (CRD-C1, CRD-C3), which authenticate by possessing a
@@ -205,6 +210,19 @@ naturally alongside Audit — which will want the same distinction for a differe
 reason, since an authorization failure is a security event and a mistyped email
 is not.
 **Where recorded:** `UserEndpoints` class doc.
+
+## AUD-O11 — the retention baseline is a placeholder
+
+**Rule:** every tenant inherits a minimum audit retention, in months, owned by
+the release (RT3, AUD-12).
+**State:** `AuditReleaseBaseline.MinimumRetentionMonths` is **120**, and that
+number is not a decision. `AUD-O11` is parked with Regulatory; the value was
+chosen so a development tenant reports a plausible policy, and the constant's
+XML doc says so. Code and tests reference it by name, never by value, so
+closing `AUD-O11` changes one line.
+**Deferred to:** Regulatory's answer. Do not "correct" the number inside another
+story.
+**Where recorded:** `AuditReleaseBaseline` class doc.
 
 ## Notifications are not implemented
 

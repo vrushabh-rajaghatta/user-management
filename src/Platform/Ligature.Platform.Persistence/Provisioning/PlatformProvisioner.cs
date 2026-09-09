@@ -1,6 +1,9 @@
 using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Persistence.Database;
+using Ligature.Platform.Persistence.Audit;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Npgsql;
 
 namespace Ligature.Platform.Persistence.Provisioning;
 
@@ -68,6 +71,15 @@ public sealed class PlatformProvisioner
         // exists — which is exactly the provisioning case.
         _dbContext.Add(created);
 
+        // Flushed now, still inside the transaction, because AUD-C4 follows
+        // and its retention row references this actor (RT5). AUD-S10's order
+        // is: schema, System actor, AUD-C4, the remaining UM seeds, then
+        // TenantProvisioned as the first record. Two saves in one transaction
+        // is what that order costs; a rollback still takes everything.
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        await ProvisionAuditAsync(transaction, executionTimestamp, cancellationToken);
+
         var permissionsByCode = new Dictionary<string, PermissionId>(
             StringComparer.Ordinal);
 
@@ -128,10 +140,52 @@ public sealed class PlatformProvisioner
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
+        // AUD-S11 — the handover probes, last, so they see everything this
+        // transaction will commit. A failure rolls all of it back: a tenant is
+        // never handed over with a trail that is not in the state its first
+        // record expects.
+        await AuditHandoverVerification.VerifyHandoverAsync(
+            AuditConnection(),
+            AuditTransaction(transaction),
+            cancellationToken);
+
         await transaction.CommitAsync(cancellationToken);
 
         return created;
     }
+
+    /// <summary>
+    /// AUD-C4 — ProvisionAudit, invoked from PRV-C1 inside its transaction.
+    /// Verifies the structure and privileges the seed relies on, then seeds
+    /// the event catalogue and retention policy v1. Emits nothing: the
+    /// catalogue is being established, not changed, and TenantProvisioned
+    /// records its version in its payload.
+    ///
+    /// Raw SQL on this context's own connection and transaction, because the
+    /// audit tables are not this application's to model (docs/architecture.md
+    /// section 19): no DbSet, no entity. It is the mechanism the emission
+    /// writer will use, established here first.
+    /// </summary>
+    private async Task ProvisionAuditAsync(
+        IDbContextTransaction transaction,
+        DateTimeOffset executionTimestamp,
+        CancellationToken cancellationToken)
+    {
+        var connection = AuditConnection();
+        var npgsqlTransaction = AuditTransaction(transaction);
+
+        await AuditHandoverVerification.VerifyStructureAsync(
+            connection, npgsqlTransaction, cancellationToken);
+
+        await new AuditCatalogueSeeder(connection, npgsqlTransaction)
+            .SeedAsync(executionTimestamp, User.SystemUserId, cancellationToken);
+    }
+
+    private NpgsqlConnection AuditConnection()
+        => (NpgsqlConnection)_dbContext.Database.GetDbConnection();
+
+    private static NpgsqlTransaction AuditTransaction(IDbContextTransaction transaction)
+        => (NpgsqlTransaction)transaction.GetDbTransaction();
 
     /// <summary>
     /// Seeded FROM the baseline rather than duplicating its eight values, so a
