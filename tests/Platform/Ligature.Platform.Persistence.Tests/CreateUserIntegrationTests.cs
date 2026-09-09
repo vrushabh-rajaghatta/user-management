@@ -338,25 +338,22 @@ public sealed class CreateUserIntegrationTests
     {
         await TestDatabase.EnsureProvisionedAsync();
 
-        var administrator = await SeedCallerAsync(roleCode);
+        // Seeded once and left in place: USR-C1 is audited, so the caller and
+        // the assignment that authorised it are referenced by rows nobody can
+        // delete. See PermanentTestCaller.
+        var administrator = await PermanentTestCaller.EnsureAsync(
+            ConnectionString, roleCode);
 
-        try
-        {
-            await using var provider = BuildProvider();
-            using var scope = provider.CreateScope();
+        await using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
 
-            scope.ServiceProvider
-                .GetRequiredService<IExecutionContextInitializer>()
-                .Establish(administrator, ActorType.Human, TestActorIdentity.Human());
+        scope.ServiceProvider
+            .GetRequiredService<IExecutionContextInitializer>()
+            .Establish(administrator, ActorType.Human, TestActorIdentity.Human());
 
-            await body(
-                scope.ServiceProvider.GetRequiredService<ICommandDispatcher>(),
-                administrator);
-        }
-        finally
-        {
-            await DeleteActorAsync(administrator);
-        }
+        await body(
+            scope.ServiceProvider.GetRequiredService<ICommandDispatcher>(),
+            administrator);
     }
 
     private static ServiceProvider BuildProvider()
@@ -375,92 +372,6 @@ public sealed class CreateUserIntegrationTests
             $"Created Person {discriminator[..8]}",
             $"created-{discriminator}@example.test",
             $"created-{discriminator[..12]}");
-    }
-
-    /// <summary>
-    /// An active human with an active local identity, optionally holding the
-    /// seeded user-administrator role — which PRV-C1 grants user.create.
-    /// </summary>
-    private static async Task<UserId> SeedCallerAsync(string? roleCode)
-    {
-        var adminId = UserId.New();
-        var identityId = UserIdentityId.New();
-        var discriminator = Guid.NewGuid().ToString("N");
-
-        await using var connection = new NpgsqlConnection(ConnectionString);
-        await connection.OpenAsync();
-
-        await using var transaction = await connection.BeginTransactionAsync();
-
-        await using (var user = new NpgsqlCommand(
-            """
-            INSERT INTO app_user
-                (id, actor_type, first_name, last_name, display_name, email,
-                 status, created_at, created_by, updated_at, updated_by)
-            VALUES
-                (@id, 'Human', 'Admin', 'Caller', @displayName, @email,
-                 'Active', @now, @system, @now, @system)
-            """, connection, transaction))
-        {
-            user.Parameters.AddWithValue("id", adminId.Value);
-            user.Parameters.AddWithValue("displayName", $"Admin {discriminator[..8]}");
-            user.Parameters.AddWithValue("email", $"admin-{discriminator}@example.test");
-            user.Parameters.AddWithValue("now", Now);
-            user.Parameters.AddWithValue("system", User.SystemUserId.Value);
-            await user.ExecuteNonQueryAsync();
-        }
-
-        await using (var identity = new NpgsqlCommand(
-            """
-            INSERT INTO user_identity
-                (id, user_id, actor_type, identity_type, identity_provider,
-                 subject_id, username, status, created_at, created_by)
-            VALUES
-                (@id, @userId, 'Human', 'Local', 'Application',
-                 @subjectId, @username, 'Active', @now, @system)
-            """, connection, transaction))
-        {
-            identity.Parameters.AddWithValue("id", identityId.Value);
-            identity.Parameters.AddWithValue("userId", adminId.Value);
-            identity.Parameters.AddWithValue("subjectId", identityId.Value.ToString());
-            identity.Parameters.AddWithValue("username", $"admin-{discriminator[..12]}");
-            identity.Parameters.AddWithValue("now", Now);
-            identity.Parameters.AddWithValue("system", User.SystemUserId.Value);
-            await identity.ExecuteNonQueryAsync();
-        }
-
-        if (roleCode is not null)
-        {
-            await using var assignment = new NpgsqlCommand(
-                """
-                INSERT INTO user_role
-                    (id, user_id, actor_type, role_id, scope_type, scope_id,
-                     effective_from, effective_to, assigned_at, assigned_by,
-                     assignment_reason)
-                SELECT @id, @userId, 'Human', r.id, 'Global', NULL,
-                       @from, NULL, @now, @system, 'USR-C1 integration tests.'
-                FROM role r
-                WHERE r.code = @roleCode
-                """, connection, transaction);
-
-            assignment.Parameters.AddWithValue("roleCode", roleCode);
-
-            assignment.Parameters.AddWithValue("id", Guid.NewGuid());
-            assignment.Parameters.AddWithValue("userId", adminId.Value);
-            assignment.Parameters.AddWithValue("from", Now.AddDays(-1));
-            assignment.Parameters.AddWithValue("now", Now);
-            assignment.Parameters.AddWithValue("system", User.SystemUserId.Value);
-
-            var rows = await assignment.ExecuteNonQueryAsync();
-
-            Assert.True(
-                rows == 1,
-                $"The seeded role '{roleCode}' is missing; PRV-C1 creates it.");
-        }
-
-        await transaction.CommitAsync();
-
-        return adminId;
     }
 
     // ------------------------------------------------------------- readers

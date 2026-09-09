@@ -130,12 +130,23 @@ the signing key.
 establishes the roles itself, exactly as an installation runs the roles step
 before the migrator, so `dotnet test` works against a clean cluster.
 
+**Audited suites leave permanent rows behind.** USR-C1 is audited, and audit
+rows can be deleted by nobody, so the integration and host suites append records
+to the shared database on every run and their callers — seeded once, with fixed
+identifiers — can never be removed. That is the trail behaving correctly, not
+leakage to clean up; a database that must be pristine has to be recreated.
+
 ### Running the host
 
 The host reads its configuration from the environment and **has no defaults**.
 It refuses to start without a connection string, and refuses to start without a
 signing key — see `docs/architecture.md` §17 for why a generated or default key
 is not an option.
+
+It also refuses to start when the audit event catalogue in the database does not
+contain, and keep active, every event its handlers declare. The message names
+each mismatch. The fix is to deploy the release the database was seeded for, or
+to seed the database for this release — never to remove the declaration.
 
 ```bash
 export LIGATURE_CONNECTION="Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres"

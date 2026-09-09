@@ -147,19 +147,62 @@ public sealed class AuditProvisioningTests
         Assert.Contains("\"describes\": \"RefRole:Subject\"", pii);
     }
 
+    /// <summary>
+    /// AUD-S10 step 5: the tenant's first record. Emitted by provisioning
+    /// itself — the one emission that is not a command — under the System
+    /// actor, with a System origin the database derived (AR6), a reference
+    /// to the security policy it seeded, and a payload naming the catalogue
+    /// and retention versions the tenant was established with.
+    /// </summary>
     [Fact]
-    public async Task A_provisioned_tenant_has_an_empty_unconsumed_trail()
+    public async Task The_tenants_first_record_is_TenantProvisioned_at_Sequence_1()
     {
         await using var database = await ThrowawayDatabase.CreateAsync();
 
         await ProvisionAsync(database);
 
-        Assert.Equal(0, await CountAsync(database, "audit.audit_record"));
+        Assert.Equal(1, await CountAsync(database, "audit.audit_record"));
 
-        // Stricter than "no rows": a rolled-back write consumes a value
-        // (AUD-D32), and the first record must be Sequence 1 (AUD-S10).
-        Assert.False(await ScalarAsync<bool>(database,
-            "SELECT is_called FROM audit.audit_record_sequence_seq"));
+        await using var connection = new NpgsqlConnection(database.ConnectionString);
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT sequence, event_type, event_version, origin_kind, write_path,
+                   regulatory_classification, actor_user_id, actor_type,
+                   actor_display_name, actor_email, entity_type, entity_id,
+                   payload::text, before, after, reason
+            FROM audit.audit_record
+            """, connection);
+
+        await using var reader = await command.ExecuteReaderAsync();
+
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(1L, reader.GetInt64(0));
+        Assert.Equal("TenantProvisioned", reader.GetString(1));
+        Assert.Equal(1, reader.GetInt32(2));
+        Assert.Equal("System", reader.GetString(3));
+        Assert.Equal("Transactional", reader.GetString(4));
+        Assert.Equal("Provisioning", reader.GetString(5));
+        Assert.Equal(User.SystemUserId.Value, reader.GetGuid(6));
+        Assert.Equal("System", reader.GetString(7));
+        Assert.Equal(User.SystemDisplayName, reader.GetString(8));
+        Assert.True(reader.IsDBNull(9), "the System actor has no email (AR11)");
+        Assert.Equal("Tenant", reader.GetString(10));
+        Assert.True(reader.IsDBNull(11), "the catalogue does not require a primary id for TenantProvisioned");
+
+        var payload = reader.GetString(12);
+        Assert.Contains("\"auditCatalogueVersion\": 1", payload);
+        Assert.Contains("\"auditRetentionPolicyVersion\": 1", payload);
+        Assert.Contains("\"seededRoleCodes\"", payload);
+
+        Assert.True(reader.IsDBNull(13) && reader.IsDBNull(14), "shape is Payload (AR17)");
+        Assert.True(reader.IsDBNull(15), "TenantProvisioned requires no reason");
+
+        var refs = await ScalarAsync<string>(database,
+            "SELECT string_agg(entity_type || '/' || ref_role, ',') FROM audit.audit_entity_ref");
+
+        Assert.Equal("SecurityPolicy/InitialVersion", refs);
     }
 
     [Fact]

@@ -2,6 +2,7 @@ using Ligature.Host.Api;
 using Ligature.Host.Authentication;
 using Ligature.Host.Configuration;
 using Ligature.Platform.Application;
+using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Persistence;
 using Scalar.AspNetCore;
 
@@ -52,6 +53,15 @@ builder.Services.AddScoped<CallerMiddleware>();
 builder.Services.AddScoped<ProblemMiddleware>();
 
 var app = builder.Build();
+
+// IMPL-08 — the compiled handlers and the deployed audit catalogue must
+// agree before a single command runs. Resolving the catalogue here loads it,
+// once, and the verification throws on any handler declaring an event the
+// database does not carry or has retired. That stops the process, in the
+// same way a missing signing key does: a host that started anyway would
+// fail on the first affected command, in production, with a 500.
+AuditDeclarations.VerifyAgainst(
+    app.Services.GetRequiredService<IAuditEventCatalogue>());
 
 // Order matters, in both directions.
 //

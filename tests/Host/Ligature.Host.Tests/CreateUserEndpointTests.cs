@@ -27,6 +27,30 @@ public sealed class CreateUserEndpointTests
 
     private const string UserAdministrator = "user-administrator";
 
+    /// <summary>
+    /// The two callers are seeded once and never removed.
+    ///
+    /// USR-C1 is audited, and an audit record names its actor through a
+    /// foreign key to app_user (AR10) and the assignment that authorised it
+    /// through another to user_role (AR12). Audit rows cannot be deleted by
+    /// anyone — the guard trigger is ENABLE ALWAYS — so from the first
+    /// successful request onward, the caller and its role assignment are
+    /// permanent. Seeding a fresh caller per test would leave two undeletable
+    /// users behind on every run.
+    ///
+    /// So the identifiers are fixed. The first run creates the caller,
+    /// activates it and signs it in; every later run signs the same caller in
+    /// again. The users these tests CREATE are still deleted: a created user
+    /// is the subject of a record, not its actor, and no key points at it.
+    /// </summary>
+    private static readonly (Guid User, Guid Identity) Administrator =
+        (Guid.Parse("a0000000-0000-4000-8000-000000000001"),
+         Guid.Parse("a0000000-0000-4000-8000-000000000002"));
+
+    private static readonly (Guid User, Guid Identity) Unprivileged =
+        (Guid.Parse("b0000000-0000-4000-8000-000000000001"),
+         Guid.Parse("b0000000-0000-4000-8000-000000000002"));
+
     // ------------------------------------------------------- authorization
 
     /// <summary>
@@ -214,8 +238,6 @@ public sealed class CreateUserEndpointTests
     {
         await RunAsync(async (client, admin, plain, cleanup) =>
         {
-            var before = await ScalarAsync("SELECT count(*) FROM app_user", null);
-
             // Refused inside the pipeline, by AuthorizationBehavior.
             var unauthorized = await PostAsync(client, plain.Carrier, Payload(cleanup));
 
@@ -228,8 +250,13 @@ public sealed class CreateUserEndpointTests
             Assert.Equal(HttpStatusCode.BadRequest, unauthorized.StatusCode);
             Assert.Equal(HttpStatusCode.BadRequest, malformed.StatusCode);
 
-            Assert.Equal(before, await ScalarAsync("SELECT count(*) FROM app_user", null));
+            // Scoped to this fixture's own identifiers rather than a count of
+            // every user in the database: the suites share one database and
+            // run concurrently, so a global count answers a question about
+            // other tests as much as about this one.
             Assert.Equal(0, await CountUsersAsync(cleanup.Email));
+            Assert.Equal(0, await CountIdentitiesAsync(cleanup.Username));
+            Assert.Equal(0, await CountUsersAsync("OnlyThis"));
         });
     }
 
@@ -359,8 +386,8 @@ public sealed class CreateUserEndpointTests
 
         var client = factory.CreateClient();
 
-        var admin = await SeedCallerAsync(client, grantUserCreate: true);
-        var plain = await SeedCallerAsync(client, grantUserCreate: false);
+        var admin = await EnsureCallerAsync(client, grantUserCreate: true);
+        var plain = await EnsureCallerAsync(client, grantUserCreate: false);
 
         try
         {
@@ -372,8 +399,6 @@ public sealed class CreateUserEndpointTests
                 await DeleteUserAsync(created);
 
             await DeleteByEmailAsync(cleanup.Email);
-            await DeleteUserAsync(admin.UserId.Value);
-            await DeleteUserAsync(plain.UserId.Value);
         }
     }
 
@@ -381,22 +406,47 @@ public sealed class CreateUserEndpointTests
     /// A real signed-in caller: seeded pending, activated over HTTP, signed in
     /// over HTTP. The only difference between the two callers is one user_role
     /// row, so the tests attribute outcomes to the permission and nothing else.
+    ///
+    /// Seeding and activation happen once, on the run that first creates the
+    /// caller; afterwards only the sign-in runs. Signing in each time rather
+    /// than caching a carrier keeps what these tests exercise unchanged —
+    /// every request still carries a token this suite obtained over HTTP.
     /// </summary>
-    private static async Task<Caller> SeedCallerAsync(
+    private static async Task<Caller> EnsureCallerAsync(
         HttpClient client, bool grantUserCreate)
     {
-        var discriminator = Guid.NewGuid().ToString("N");
+        var identifiers = grantUserCreate ? Administrator : Unprivileged;
+        var label = grantUserCreate ? "endpoint-administrator" : "endpoint-unprivileged";
+        var username = $"permanent-{label}";
+        var userId = new UserId(identifiers.User);
+
+        await using (var existing = CreateContext())
+        {
+            if (await existing.Set<User>().AnyAsync(x => x.Id == userId))
+                return new Caller(userId, await SignInAsync(client, username));
+        }
+
+        await SeedCallerAsync(client, identifiers, label, username, grantUserCreate);
+
+        return new Caller(userId, await SignInAsync(client, username));
+    }
+
+    private static async Task SeedCallerAsync(
+        HttpClient client,
+        (Guid User, Guid Identity) identifiers,
+        string label,
+        string username,
+        bool grantUserCreate)
+    {
         var now = DateTimeOffset.UtcNow;
 
         var user = User.CreateHuman(
-            UserId.New(), "Caller", "Person",
-            $"Caller {discriminator[..8]}",
-            $"caller-{discriminator}@example.test", now, User.SystemUserId);
-
-        var username = $"caller-{discriminator[..12]}";
+            new UserId(identifiers.User), "Permanent", "Caller",
+            $"Permanent {label}",
+            $"permanent-{label}@example.test", now, User.SystemUserId);
 
         var identity = UserIdentity.CreateLocal(
-            UserIdentityId.New(), user.Id, ActorType.Human,
+            new UserIdentityId(identifiers.Identity), user.Id, ActorType.Human,
             username, now, User.SystemUserId);
 
         var tokenService = new UserTokenService();
@@ -436,7 +486,10 @@ public sealed class CreateUserEndpointTests
             new { Token = material.PlainText, NewPassword = Password });
 
         activation.EnsureSuccessStatusCode();
+    }
 
+    private static async Task<string> SignInAsync(HttpClient client, string username)
+    {
         var signIn = await client.PostAsJsonAsync(
             "/api/auth/sign-in", new { Username = username, Password });
 
@@ -445,8 +498,7 @@ public sealed class CreateUserEndpointTests
         using var document = JsonDocument.Parse(
             await signIn.Content.ReadAsStringAsync());
 
-        return new Caller(
-            user.Id, document.RootElement.GetProperty("accessToken").GetString()!);
+        return document.RootElement.GetProperty("accessToken").GetString()!;
     }
 
     private static async Task<HttpResponseMessage> PostAsync(
@@ -484,6 +536,18 @@ public sealed class CreateUserEndpointTests
             .Options;
 
         return new LigatureDbContext(options);
+    }
+
+    private static async Task<long> CountIdentitiesAsync(string username)
+    {
+        await using var connection = await TestDatabase.OpenAsync();
+
+        await using var command = new NpgsqlCommand(
+            "SELECT count(*) FROM user_identity WHERE username = @username", connection);
+
+        command.Parameters.AddWithValue("username", username);
+
+        return Convert.ToInt64(await command.ExecuteScalarAsync());
     }
 
     private static async Task<long> CountUsersAsync(string email)

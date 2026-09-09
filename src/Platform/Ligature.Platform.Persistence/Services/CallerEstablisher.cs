@@ -127,7 +127,8 @@ public sealed class CallerEstablisher : ICallerEstablisher
                 snapshot.Username,
                 snapshot.Email,
                 snapshot.IdentityProvider,
-                snapshot.SubjectId));
+                snapshot.SubjectId,
+                CapturedAt: now));
 
         await _userSessionRepository.RecordActivityAsync(
             sessionId, now, ActivityStaleness, cancellationToken);

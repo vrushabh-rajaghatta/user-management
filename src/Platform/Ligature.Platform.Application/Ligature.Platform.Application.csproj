@@ -1,6 +1,18 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!--
+      Persistence implements the audit writer, which is internal so that
+      handlers — which live in this assembly — have no public seam to it
+      (IMPL-02). The test projects see internals for the same reason the
+      Persistence tests do.
+    -->
+    <InternalsVisibleTo Include="Ligature.Platform.Persistence" />
+    <InternalsVisibleTo Include="Ligature.Platform.Application.Tests" />
+    <InternalsVisibleTo Include="Ligature.Platform.Persistence.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\Shared\Ligature.SharedKernel\Ligature.SharedKernel.csproj" />
     <ProjectReference Include="..\Ligature.Platform.Domain\Ligature.Platform.Domain.csproj" />
   </ItemGroup>

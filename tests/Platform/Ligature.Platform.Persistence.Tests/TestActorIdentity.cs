@@ -13,13 +13,22 @@ namespace Ligature.Platform.Persistence.Tests;
 /// </summary>
 internal static class TestActorIdentity
 {
+    /// <summary>
+    /// When the identity was read from the database, which is what an audit
+    /// record's ActorCapturedAt must carry. Exposed so a test can assert the
+    /// snapshot was not re-stamped at emission.
+    /// </summary>
+    internal static readonly DateTimeOffset Captured =
+        new(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+
     internal static ActorIdentity Human(string label = "Test Person")
         => new(
             DisplayName: label,
             Username: "test.person",
             Email: EmailAddress.Create("test.person@example.test"),
             IdentityProvider: IdentityProvider.Application,
-            SubjectId: "test-subject");
+            SubjectId: "test-subject",
+            CapturedAt: Captured);
 
     /// <summary>
     /// AR11 permits an email only for human actors, so this carries none.
@@ -30,5 +39,6 @@ internal static class TestActorIdentity
             Username: "test.agent",
             Email: null,
             IdentityProvider: IdentityProvider.Application,
-            SubjectId: "test-agent-subject");
+            SubjectId: "test-agent-subject",
+            CapturedAt: Captured);
 }

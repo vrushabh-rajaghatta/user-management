@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Behaviors;
 using Ligature.Platform.Application.Dispatching;
 using Ligature.Platform.Application.Execution;
@@ -48,6 +49,29 @@ public static class DependencyInjection
 
         services.AddScoped(typeof(ICommandBehavior<,>),
             typeof(AuthorizationBehavior<,>));
+
+        // The audit collector, one instance per scope under two interfaces —
+        // the declaration side a handler injects, and the pipeline side
+        // behaviours 6 and 7 use — for the same single-instance reason as the
+        // execution context above.
+        services.AddScoped<ScopedAuditEvents>();
+
+        services.AddScoped<IAuditEvents>(
+            sp => sp.GetRequiredService<ScopedAuditEvents>());
+
+        services.AddScoped<IAuditEmissionScope>(
+            sp => sp.GetRequiredService<ScopedAuditEvents>());
+
+        // Registration order is execution order, outermost first. Behaviour
+        // 6 opens the transaction; behaviour 7 runs inside it and writes
+        // after the handler returns; 6 then commits (IMPL-05: 1 → 2 → 5 → 3
+        // → 4 → 6 → handler → 7, with 5 satisfied before the pipeline by
+        // CallerEstablisher).
+        services.AddScoped(typeof(ICommandBehavior<,>),
+            typeof(TransactionScopeBehavior<,>));
+
+        services.AddScoped(typeof(ICommandBehavior<,>),
+            typeof(AuditEmissionBehavior<,>));
 
         AddCommandHandlers(services);
 

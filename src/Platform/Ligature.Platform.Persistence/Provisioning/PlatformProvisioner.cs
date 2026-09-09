@@ -1,5 +1,6 @@
 using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Persistence.Database;
+using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Persistence.Audit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -136,9 +137,16 @@ public sealed class PlatformProvisioner
 
         // security_policy declares no UpdatedAt/UpdatedBy shadow properties,
         // so nothing to stamp here.
-        _dbContext.Add(CreateInitialSecurityPolicy(executionTimestamp));
+        var initialPolicy = CreateInitialSecurityPolicy(executionTimestamp);
+
+        _dbContext.Add(initialPolicy);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // AUD-S10 step 5 — the tenant's first record, after every seed and
+        // before the handover probes that will insist it is Sequence 1.
+        await EmitTenantProvisionedAsync(
+            transaction, executionTimestamp, initialPolicy, cancellationToken);
 
         // AUD-S11 — the handover probes, last, so they see everything this
         // transaction will commit. A failure rolls all of it back: a tenant is
@@ -179,6 +187,50 @@ public sealed class PlatformProvisioner
 
         await new AuditCatalogueSeeder(connection, npgsqlTransaction)
             .SeedAsync(executionTimestamp, User.SystemUserId, cancellationToken);
+    }
+
+    /// <summary>
+    /// TenantProvisioned — the one emission that is not a command. PRV-C1 is
+    /// a provisioning procedure running in the tool on its own transaction,
+    /// so it uses the writer directly rather than through the pipeline;
+    /// everything else about the record is held to the same rules, through
+    /// the same assembler, against the release seed it has just written
+    /// (no process could have loaded a catalogue that does not yet exist).
+    ///
+    /// Actor SYSTEM_UUID, origin System (AUD-D24); primary Tenant with no
+    /// id; a reference to the security policy version it seeded; a payload
+    /// recording the catalogue and retention versions, so the first record
+    /// states what the tenant was established with (AUD-S05, AUD-S08).
+    /// </summary>
+    private async Task EmitTenantProvisionedAsync(
+        IDbContextTransaction transaction,
+        DateTimeOffset executionTimestamp,
+        SecurityPolicy initialPolicy,
+        CancellationToken cancellationToken)
+    {
+        var declaration = new AuditEventDeclaration("TenantProvisioned", version: 1)
+            .Primary("Tenant")
+            .Ref("SecurityPolicy", initialPolicy.Id.Value, role: "InitialVersion")
+            .WithPayload(new
+            {
+                auditCatalogueVersion = AuditEventCatalogue.Version,
+                auditRetentionPolicyVersion = 1,
+                securityPolicyVersion = 1,
+                seededRoleCodes = GetRoleSeeds().Select(x => x.Code).ToArray(),
+                permissionCount = GetPermissionSeeds().Count,
+            });
+
+        var rows = AuditRecordAssembler.Assemble(
+            [declaration],
+            AuditDeclarations.For(typeof(PlatformProvisioning))!,
+            ActorSnapshot.System(executionTimestamp),
+            AuditEventCatalogueLoader.FromSeeds(),
+            operationId: Guid.CreateVersion7(),
+            occurredAt: executionTimestamp,
+            capturedAt: executionTimestamp);
+
+        await AuditRecordWriter.WriteAsync(
+            AuditConnection(), AuditTransaction(transaction), rows, cancellationToken);
     }
 
     private NpgsqlConnection AuditConnection()

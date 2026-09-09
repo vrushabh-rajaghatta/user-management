@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Application.Dispatching;
 using Ligature.Platform.Application.Execution;
@@ -75,7 +76,9 @@ public sealed class CommandHandlerRegistrationTests
             .GetServices<ICommandBehavior<CreateUserCommand, CreateUserResult>>()
             .ToList();
 
-        Assert.Equal(3, behaviors.Count);
+        // Three authorisation-side behaviours, plus the transaction scope and
+        // the audit emission that writes inside it.
+        Assert.Equal(5, behaviors.Count);
 
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<IExecutionContext>());
         Assert.NotNull(
@@ -105,8 +108,33 @@ public sealed class CommandHandlerRegistrationTests
         services.AddScoped<ICredentialRepository, StubCredentialRepository>();
         services.AddScoped<IPasswordHistoryRepository, StubPasswordHistoryRepository>();
         services.AddScoped<IUserSessionRepository, StubUserSessionRepository>();
+        services.AddScoped<IAuditEventCatalogue, StubAuditEventCatalogue>();
+        services.AddScoped<IAuditRecordWriter, StubAuditRecordWriter>();
 
         return services.BuildServiceProvider(validateScopes: true);
+    }
+
+    /// <summary>
+    /// Behaviour 7's collaborators are persistence concerns like the rest:
+    /// the catalogue is loaded from the audit schema and the writer inserts
+    /// into it. Neither is exercised here — the command declares nothing when
+    /// the handler never runs.
+    /// </summary>
+    private sealed class StubAuditEventCatalogue : IAuditEventCatalogue
+    {
+        public AuditEventTypeDefinition? Find(string code, int version)
+            => null;
+
+        public IReadOnlyCollection<AuditEventTypeDefinition> All
+            => [];
+    }
+
+    private sealed class StubAuditRecordWriter : IAuditRecordWriter
+    {
+        public Task WriteAsync(
+            IReadOnlyList<AuditRecordRow> rows,
+            CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 
     private sealed class StubUnitOfWork : IUnitOfWork
