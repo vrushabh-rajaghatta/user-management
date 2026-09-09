@@ -22,6 +22,21 @@ namespace Ligature.Platform.Persistence.Services;
 /// while "existing assignments are unaffected". Adding the filter because it
 /// looks safer would silently strip access from every current holder of a
 /// retired role. A regression test pins this.
+///
+/// It returns which assignment authorised the act, not merely whether one did.
+/// The assignment was always computed here and discarded on the final line;
+/// Audit needs it, and the only alternative is reconstructing it later against
+/// tables that have since changed, which answers a question about the past
+/// with today's configuration.
+///
+/// THE SELECTION DOES NOT CHANGE WHO IS AUTHORISED. Several assignments may
+/// legitimately authorise one act — holding two roles that both carry a
+/// permission is an ordinary configuration. The predicate is unchanged and the
+/// decision is still "does at least one eligible assignment exist"; ordering
+/// only decides which of them is REPORTED. Earliest EffectiveFrom, then
+/// assignment id, so the answer is deterministic and stays stable when the
+/// question is asked again later — which point-in-time reconstruction
+/// (REV-Q6) depends on.
 /// </summary>
 public sealed class AuthorizationService : IAuthorizationService
 {
@@ -34,7 +49,7 @@ public sealed class AuthorizationService : IAuthorizationService
         _dbContext = dbContext;
     }
 
-    public async Task<bool> IsAllowedAsync(
+    public async Task<AuthorizationResult> IsAllowedAsync(
         AuthorizationRequest request,
         CancellationToken cancellationToken)
     {
@@ -53,7 +68,7 @@ public sealed class AuthorizationService : IAuthorizationService
             .FirstOrDefaultAsync(cancellationToken);
 
         if (actor is null || actor.Status != UserStatus.Active)
-            return false;
+            return AuthorizationResult.Denied;
 
         // "At least one active identity", per AUT-Q1's parameters, which carry
         // no identity id. Enforcement against the SPECIFIC identity that
@@ -67,14 +82,19 @@ public sealed class AuthorizationService : IAuthorizationService
                 cancellationToken);
 
         if (!hasActiveIdentity)
-            return false;
+            return AuthorizationResult.Denied;
 
+        // The Role join is new: the authorising role's NAME is captured
+        // alongside its id, because renaming a role (AUT-C4) must not rewrite
+        // the authority recorded against acts already performed.
         var candidates =
             from assignment in _dbContext.Set<UserRole>().AsNoTracking()
             join grant in _dbContext.Set<RolePermission>().AsNoTracking()
                 on assignment.RoleId equals grant.RoleId
             join permission in _dbContext.Set<Permission>().AsNoTracking()
                 on grant.PermissionId equals permission.Id
+            join role in _dbContext.Set<Role>().AsNoTracking()
+                on assignment.RoleId equals role.Id
             where assignment.UserId == request.UserId
 
                 // Exact scope match. V1 is Global-only; a Global assignment
@@ -100,15 +120,30 @@ public sealed class AuthorizationService : IAuthorizationService
 
                 && permission.Code == request.PermissionCode
                 && permission.IsActive
-            select permission;
+            select new { Assignment = assignment, Role = role, Permission = permission };
 
         // UR10 — the third edge of the two-edge check. UR9 blocks the
         // assignment and RP6 blocks the grant; this blocks the act. Defence in
         // depth: a role that acquired a human-only permission through some path
         // those two missed still cannot be exercised by a non-human.
         if (actor.ActorType != ActorType.Human)
-            candidates = candidates.Where(x => !x.RequiresHumanActor);
+            candidates = candidates.Where(x => !x.Permission.RequiresHumanActor);
 
-        return await candidates.AnyAsync(cancellationToken);
+        var deciding = await candidates
+            .OrderBy(x => x.Assignment.EffectiveFrom)
+            .ThenBy(x => x.Assignment.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        // Same decision as the previous AnyAsync(): none eligible is denial.
+        if (deciding is null)
+            return AuthorizationResult.Denied;
+
+        return AuthorizationResult.Allowed(
+            new AuthorizingAssignment(
+                deciding.Assignment.RoleId,
+                deciding.Role.Name,
+                deciding.Assignment.ScopeType,
+                deciding.Assignment.ScopeId,
+                deciding.Assignment.Id));
     }
 }

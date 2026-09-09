@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Execution;
 using Ligature.Platform.Application.Behaviors;
 using Ligature.Platform.Application.Dispatching;
 using Ligature.Platform.Domain.Users;
@@ -47,6 +48,7 @@ public sealed class CommandBehaviorCompositionTests
             new AuthorizationBehavior<TestCommand, TestResult>(
                 executionContext,
                 authorizationService,
+                new RecordingAuthorityInitializer(),
                 clock);
 
         var pipeline = new CommandPipeline();
@@ -119,6 +121,7 @@ public sealed class CommandBehaviorCompositionTests
                 TestResult>(
                 executionContext,
                 authorizationService,
+                new RecordingAuthorityInitializer(),
                 clock);
 
         var pipeline = new CommandPipeline();
@@ -179,6 +182,7 @@ public sealed class CommandBehaviorCompositionTests
                 TestResult>(
                 executionContext,
                 authorizationService,
+                new RecordingAuthorityInitializer(),
                 clock);
 
         var pipeline = new CommandPipeline();
@@ -239,6 +243,7 @@ public sealed class CommandBehaviorCompositionTests
                 TestResult>(
                 executionContext,
                 authorizationService,
+                new RecordingAuthorityInitializer(),
                 clock);
 
         var pipeline = new CommandPipeline();
@@ -287,6 +292,37 @@ public sealed class CommandBehaviorCompositionTests
         }
     }
 
+    /// <summary>
+    /// Accepts the authority the behaviour records and remembers it, so a test
+    /// can assert that an authorised command captured one and a refused
+    /// command did not.
+    /// </summary>
+    private sealed class RecordingAuthorityInitializer : IAuthorityInitializer
+    {
+        public AuthorizingAssignment? Recorded { get; private set; }
+
+        /// <summary>True while the command that established it is running.</summary>
+        public bool Held { get; private set; }
+
+        public IDisposable EstablishAuthority(AuthorizingAssignment authority)
+        {
+            Recorded = authority;
+            Held = true;
+
+            return new Release(this);
+        }
+
+        private sealed class Release : IDisposable
+        {
+            private readonly RecordingAuthorityInitializer _owner;
+
+            internal Release(RecordingAuthorityInitializer owner)
+                => _owner = owner;
+
+            public void Dispose() => _owner.Held = false;
+        }
+    }
+
     private sealed class FakeExecutionContext
         : IExecutionContext
     {
@@ -295,6 +331,10 @@ public sealed class CommandBehaviorCompositionTests
         public ActorType ActorType { get; init; }
 
         public bool IsAuthenticated { get; init; }
+
+        public ActorIdentity Identity { get; } = TestActorIdentity.Human();
+
+        public AuthorizingAssignment? Authority => null;
     }
 
     private sealed class FakeAuthorizationService
@@ -304,13 +344,22 @@ public sealed class CommandBehaviorCompositionTests
 
         public AuthorizationRequest? LastRequest { get; private set; }
 
-        public Task<bool> IsAllowedAsync(
+        public Task<AuthorizationResult> IsAllowedAsync(
             AuthorizationRequest request,
             CancellationToken cancellationToken)
         {
             LastRequest = request;
 
-            return Task.FromResult(IsAllowed);
+            return Task.FromResult(
+                IsAllowed
+                    ? AuthorizationResult.Allowed(
+                        new AuthorizingAssignment(
+                            RoleId.New(),
+                            "Test Role",
+                            ScopeType.Global,
+                            null,
+                            UserRoleId.New()))
+                    : AuthorizationResult.Denied);
         }
     }
 

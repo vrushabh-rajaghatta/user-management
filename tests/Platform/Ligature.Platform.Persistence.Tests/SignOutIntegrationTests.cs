@@ -187,7 +187,7 @@ public sealed class SignOutIntegrationTests
 
             scope.ServiceProvider
                 .GetRequiredService<IExecutionContextInitializer>()
-                .Establish(owner.UserId, ActorType.Agent);
+                .Establish(owner.UserId, ActorType.Agent, TestActorIdentity.NonHuman());
 
             await Assert.ThrowsAsync<BusinessRuleViolationException>(
                 () => scope.ServiceProvider
@@ -212,7 +212,7 @@ public sealed class SignOutIntegrationTests
 
         scope.ServiceProvider
             .GetRequiredService<IExecutionContextInitializer>()
-            .Establish(caller, ActorType.Human);
+            .Establish(caller, ActorType.Human, TestActorIdentity.Human());
 
         return await scope.ServiceProvider
             .GetRequiredService<ICommandDispatcher>()

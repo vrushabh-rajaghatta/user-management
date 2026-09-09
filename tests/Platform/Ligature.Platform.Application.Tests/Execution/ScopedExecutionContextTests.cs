@@ -49,7 +49,7 @@ public sealed class ScopedExecutionContextTests
         var context = new ScopedExecutionContext();
         var userId = UserId.New();
 
-        context.Establish(userId, ActorType.Human);
+        context.Establish(userId, ActorType.Human, TestActorIdentity.Human());
 
         Assert.True(context.IsAuthenticated);
         Assert.Equal(userId, context.UserId);
@@ -61,7 +61,7 @@ public sealed class ScopedExecutionContextTests
     {
         var context = new ScopedExecutionContext();
 
-        context.Establish(UserId.New(), ActorType.Agent);
+        context.Establish(UserId.New(), ActorType.Agent, TestActorIdentity.NonHuman());
 
         Assert.Equal(ActorType.Agent, context.ActorType);
     }
@@ -78,7 +78,7 @@ public sealed class ScopedExecutionContextTests
         var context = new ScopedExecutionContext();
 
         var failure = Assert.Throws<DomainException>(
-            () => context.Establish(User.SystemUserId, ActorType.System));
+            () => context.Establish(User.SystemUserId, ActorType.System, TestActorIdentity.NonHuman()));
 
         Assert.Contains("cannot authenticate", failure.Message);
 
@@ -93,7 +93,7 @@ public sealed class ScopedExecutionContextTests
         var context = new ScopedExecutionContext();
 
         Assert.Throws<ArgumentNullException>(
-            () => context.Establish(null!, ActorType.Human));
+            () => context.Establish(null!, ActorType.Human, TestActorIdentity.Human()));
 
         Assert.False(context.IsAuthenticated);
     }
@@ -109,10 +109,11 @@ public sealed class ScopedExecutionContextTests
         var context = new ScopedExecutionContext();
         var original = UserId.New();
 
-        context.Establish(original, ActorType.Human);
+        context.Establish(original, ActorType.Human, TestActorIdentity.Human());
 
         Assert.Throws<InvalidOperationException>(
-            () => context.Establish(UserId.New(), ActorType.Human));
+            () => context.Establish(
+                UserId.New(), ActorType.Human, TestActorIdentity.Human()));
 
         Assert.Equal(original, context.UserId);
     }
@@ -129,8 +130,15 @@ public sealed class ScopedExecutionContextTests
     {
         var properties = typeof(IExecutionContext).GetProperties();
 
+        // Identity and Authority were added for the actor snapshot. Both are
+        // reads, so the property this test guards is unchanged — but the list
+        // is deliberately exhaustive rather than a subset, so that adding a
+        // member has to be a decision someone makes here.
         Assert.Equal(
-            new[] { "ActorType", "IsAuthenticated", "UserId" },
+            new[]
+            {
+                "ActorType", "Authority", "Identity", "IsAuthenticated", "UserId",
+            },
             properties
                 .Select(x => x.Name)
                 .OrderBy(x => x, StringComparer.Ordinal));
@@ -142,7 +150,7 @@ public sealed class ScopedExecutionContextTests
                 $"IExecutionContext.{p.Name} is settable, so any injected "
                 + "consumer could rewrite the calling identity."));
 
-        // Only the three property getters — no Establish, Set, Clear or
+        // Only property getters — no Establish, Set, Clear or
         // Impersonate hiding as a method.
         var methods = typeof(IExecutionContext)
             .GetMethods()
@@ -177,7 +185,7 @@ public sealed class ScopedExecutionContextTests
         Assert.Same(read, write);
 
         var userId = UserId.New();
-        write.Establish(userId, ActorType.Human);
+        write.Establish(userId, ActorType.Human, TestActorIdentity.Human());
 
         Assert.True(read.IsAuthenticated);
         Assert.Equal(userId, read.UserId);
@@ -194,7 +202,7 @@ public sealed class ScopedExecutionContextTests
         {
             first.ServiceProvider
                 .GetRequiredService<IExecutionContextInitializer>()
-                .Establish(UserId.New(), ActorType.Human);
+                .Establish(UserId.New(), ActorType.Human, TestActorIdentity.Human());
         }
 
         using var second = provider.CreateScope();
@@ -224,5 +232,152 @@ public sealed class ScopedExecutionContextTests
             scope.ServiceProvider
                 .GetRequiredService<IExecutionContext>()
                 .IsAuthenticated);
+    }
+
+    // --------------------------------------------------------- authority
+
+    private static AuthorizingAssignment SomeAuthority()
+        => new(
+            RoleId.New(),
+            "Reviewer",
+            ScopeType.Global,
+            null,
+            UserRoleId.New());
+
+    [Fact]
+    public void Authority_is_absent_until_a_command_is_authorised()
+    {
+        var context = new ScopedExecutionContext();
+
+        context.Establish(
+            UserId.New(), ActorType.Human, TestActorIdentity.Human());
+
+        // Not an error state. Sign-in, self-service and token-bearer commands
+        // are authenticated and authorised by no role at all (AUD-D28).
+        Assert.Null(context.Authority);
+    }
+
+    [Fact]
+    public void Authority_is_visible_while_its_command_runs()
+    {
+        var context = new ScopedExecutionContext();
+        var authority = SomeAuthority();
+
+        context.Establish(
+            UserId.New(), ActorType.Human, TestActorIdentity.Human());
+
+        using (context.EstablishAuthority(authority))
+        {
+            Assert.Same(authority, context.Authority);
+        }
+    }
+
+    /// <summary>
+    /// A DI scope may dispatch several commands, so authority must not outlive
+    /// the one that established it. If it did, the next command would be
+    /// recorded under the previous command's authorising assignment — a false
+    /// audit record, which is worse than none.
+    /// </summary>
+    [Fact]
+    public void Authority_does_not_outlive_the_command_that_established_it()
+    {
+        var context = new ScopedExecutionContext();
+
+        context.Establish(
+            UserId.New(), ActorType.Human, TestActorIdentity.Human());
+
+        using (context.EstablishAuthority(SomeAuthority()))
+        {
+        }
+
+        Assert.Null(context.Authority);
+    }
+
+    [Fact]
+    public void A_later_command_in_the_same_scope_establishes_its_own_authority()
+    {
+        var context = new ScopedExecutionContext();
+
+        context.Establish(
+            UserId.New(), ActorType.Human, TestActorIdentity.Human());
+
+        var first = SomeAuthority();
+        var second = SomeAuthority();
+
+        using (context.EstablishAuthority(first))
+        {
+            Assert.Same(first, context.Authority);
+        }
+
+        using (context.EstablishAuthority(second))
+        {
+            Assert.Same(second, context.Authority);
+        }
+    }
+
+    /// <summary>
+    /// Sequential commands are ordinary; a NESTED establishment is a defect,
+    /// because whichever answer were kept would attribute one command's act to
+    /// the other's authority.
+    /// </summary>
+    [Fact]
+    public void Authority_cannot_be_nested()
+    {
+        var context = new ScopedExecutionContext();
+
+        context.Establish(
+            UserId.New(), ActorType.Human, TestActorIdentity.Human());
+
+        using var outer = context.EstablishAuthority(SomeAuthority());
+
+        Assert.Throws<InvalidOperationException>(
+            () => context.EstablishAuthority(SomeAuthority()));
+    }
+
+    [Fact]
+    public void Authority_cannot_be_established_without_a_caller()
+    {
+        var context = new ScopedExecutionContext();
+
+        Assert.Throws<InvalidOperationException>(
+            () => context.EstablishAuthority(SomeAuthority()));
+    }
+
+    // ---------------------------------------------------------- identity
+
+    [Fact]
+    public void The_identity_snapshot_is_returned_as_captured()
+    {
+        var context = new ScopedExecutionContext();
+        var identity = TestActorIdentity.Human("Ada Lovelace");
+
+        context.Establish(UserId.New(), ActorType.Human, identity);
+
+        Assert.Same(identity, context.Identity);
+    }
+
+    [Fact]
+    public void An_unestablished_context_has_no_identity()
+    {
+        var context = new ScopedExecutionContext();
+
+        Assert.Throws<InvalidOperationException>(() => context.Identity);
+    }
+
+    /// <summary>
+    /// AR11 makes this a database CHECK on the audit record. Refusing it here
+    /// means the contradiction surfaces where the value was built, rather than
+    /// as a constraint violation on a later audit write.
+    /// </summary>
+    [Fact]
+    public void A_non_human_actor_cannot_carry_an_email()
+    {
+        var context = new ScopedExecutionContext();
+
+        Assert.Throws<DomainException>(
+            () => context.Establish(
+                UserId.New(),
+                ActorType.Agent,
+                TestActorIdentity.Human()));
     }
 }

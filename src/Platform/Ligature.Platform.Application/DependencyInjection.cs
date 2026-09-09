@@ -31,6 +31,12 @@ public static class DependencyInjection
         services.AddScoped<IExecutionContextInitializer>(
             sp => sp.GetRequiredService<ScopedExecutionContext>());
 
+        // The authority seam resolves to that same instance for the same
+        // reason: the authorisation behaviour writes what the handler and the
+        // eventual audit emission read.
+        services.AddScoped<IAuthorityInitializer>(
+            sp => sp.GetRequiredService<ScopedExecutionContext>());
+
         services.AddScoped<CommandPipeline>();
         services.AddScoped<ICommandDispatcher, CommandDispatcher>();
 

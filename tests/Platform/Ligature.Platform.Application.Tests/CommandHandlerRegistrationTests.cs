@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Application.Dispatching;
 using Ligature.Platform.Application.Execution;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
@@ -181,9 +182,16 @@ public sealed class CommandHandlerRegistrationTests
 
     private sealed class StubAuthorizationService : IAuthorizationService
     {
-        public Task<bool> IsAllowedAsync(
+        public Task<AuthorizationResult> IsAllowedAsync(
             AuthorizationRequest request, CancellationToken cancellationToken)
-            => Task.FromResult(true);
+            => Task.FromResult(
+                AuthorizationResult.Allowed(
+                    new AuthorizingAssignment(
+                        RoleId.New(),
+                        "Test Role",
+                        ScopeType.Global,
+                        null,
+                        UserRoleId.New())));
     }
 
     private sealed class StubPasswordHasher : IPasswordHasher

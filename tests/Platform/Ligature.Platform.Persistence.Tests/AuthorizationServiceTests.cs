@@ -33,7 +33,7 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.True(await service.IsAllowedAsync(
+            Assert.True(await IsAllowedAsync(service, 
                 fixture.Request(), CancellationToken.None));
         });
     }
@@ -43,7 +43,7 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.False(await service.IsAllowedAsync(
+            Assert.False(await IsAllowedAsync(service, 
                 fixture.Request() with { UserId = UserId.New() },
                 CancellationToken.None));
         });
@@ -67,12 +67,12 @@ public sealed class AuthorizationServiceTests
             try
             {
                 Assert.True(
-                    await service.IsAllowedAsync(
+                    await IsAllowedAsync(service, 
                         fixture.Request(), CancellationToken.None),
                     "The assignment holder is allowed.");
 
                 Assert.False(
-                    await service.IsAllowedAsync(
+                    await IsAllowedAsync(service, 
                         fixture.Request() with { UserId = bystanderId },
                         CancellationToken.None),
                     "A user holding no assignment must not borrow one.");
@@ -96,14 +96,14 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.True(await service.IsAllowedAsync(
+            Assert.True(await IsAllowedAsync(service, 
                 fixture.Request(), CancellationToken.None));
 
             await ExecuteAsync(
                 "UPDATE app_user SET status = 'Inactive' WHERE id = @id",
                 fixture.UserId.Value);
 
-            Assert.False(await service.IsAllowedAsync(
+            Assert.False(await IsAllowedAsync(service, 
                 fixture.Request(), CancellationToken.None));
         });
     }
@@ -115,14 +115,14 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.True(await service.IsAllowedAsync(
+            Assert.True(await IsAllowedAsync(service, 
                 fixture.Request(), CancellationToken.None));
 
             await ExecuteAsync(
                 "UPDATE user_identity SET status = 'Inactive' WHERE user_id = @id",
                 fixture.UserId.Value);
 
-            Assert.False(await service.IsAllowedAsync(
+            Assert.False(await IsAllowedAsync(service, 
                 fixture.Request(), CancellationToken.None));
         });
     }
@@ -139,10 +139,10 @@ public sealed class AuthorizationServiceTests
                 At = fixture.EffectiveFrom.AddSeconds(-1),
             };
 
-            Assert.False(await service.IsAllowedAsync(
+            Assert.False(await IsAllowedAsync(service, 
                 request, CancellationToken.None));
 
-            Assert.True(await service.IsAllowedAsync(
+            Assert.True(await IsAllowedAsync(service, 
                 request with { At = fixture.EffectiveFrom },
                 CancellationToken.None));
         });
@@ -160,16 +160,16 @@ public sealed class AuthorizationServiceTests
                 fixture.AssignmentId.Value,
                 expiry);
 
-            Assert.True(await service.IsAllowedAsync(
+            Assert.True(await IsAllowedAsync(service, 
                 fixture.Request() with { At = expiry.AddSeconds(-1) },
                 CancellationToken.None));
 
             // Half-open interval: the end instant is already outside.
-            Assert.False(await service.IsAllowedAsync(
+            Assert.False(await IsAllowedAsync(service, 
                 fixture.Request() with { At = expiry },
                 CancellationToken.None));
 
-            Assert.False(await service.IsAllowedAsync(
+            Assert.False(await IsAllowedAsync(service, 
                 fixture.Request() with { At = expiry.AddSeconds(1) },
                 CancellationToken.None));
         });
@@ -188,7 +188,7 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.True(await service.IsAllowedAsync(
+            Assert.True(await IsAllowedAsync(service, 
                 fixture.Request(), CancellationToken.None));
 
             await ExecuteAsync(
@@ -204,7 +204,7 @@ public sealed class AuthorizationServiceTests
                 Now,
                 extra: (User.SystemUserId.Value, Now.AddYears(5)));
 
-            Assert.False(await service.IsAllowedAsync(
+            Assert.False(await IsAllowedAsync(service, 
                 fixture.Request(), CancellationToken.None));
         });
     }
@@ -214,7 +214,7 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.True(await service.IsAllowedAsync(
+            Assert.True(await IsAllowedAsync(service, 
                 fixture.Request(), CancellationToken.None));
 
             await ExecuteAsync(
@@ -227,7 +227,7 @@ public sealed class AuthorizationServiceTests
                 Now,
                 extra: (User.SystemUserId.Value, (object?)null));
 
-            Assert.False(await service.IsAllowedAsync(
+            Assert.False(await IsAllowedAsync(service, 
                 fixture.Request(), CancellationToken.None));
         });
     }
@@ -239,7 +239,7 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.False(await service.IsAllowedAsync(
+            Assert.False(await IsAllowedAsync(service, 
                 fixture.Request() with { ScopeType = "Product" },
                 CancellationToken.None));
         });
@@ -255,7 +255,7 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.False(await service.IsAllowedAsync(
+            Assert.False(await IsAllowedAsync(service, 
                 fixture.Request() with { ScopeId = Guid.NewGuid() },
                 CancellationToken.None));
         });
@@ -268,14 +268,14 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.True(await service.IsAllowedAsync(
+            Assert.True(await IsAllowedAsync(service, 
                 fixture.Request(), CancellationToken.None));
 
             await ExecuteAsync(
                 "UPDATE permission SET is_active = false WHERE id = @id",
                 fixture.PermissionId.Value);
 
-            Assert.False(await service.IsAllowedAsync(
+            Assert.False(await IsAllowedAsync(service, 
                 fixture.Request(), CancellationToken.None));
         });
     }
@@ -285,7 +285,7 @@ public sealed class AuthorizationServiceTests
     {
         await RunAsync(async (context, service, fixture) =>
         {
-            Assert.False(await service.IsAllowedAsync(
+            Assert.False(await IsAllowedAsync(service, 
                 fixture.Request() with { PermissionCode = "some.other.permission" },
                 CancellationToken.None));
         });
@@ -313,10 +313,10 @@ public sealed class AuthorizationServiceTests
                 {
                     // The human holder of the very same role is allowed, so the
                     // denial below is about the actor and nothing else.
-                    Assert.True(await service.IsAllowedAsync(
+                    Assert.True(await IsAllowedAsync(service, 
                         fixture.Request(), CancellationToken.None));
 
-                    Assert.False(await service.IsAllowedAsync(
+                    Assert.False(await IsAllowedAsync(service, 
                         fixture.Request() with { UserId = agentId },
                         CancellationToken.None));
                 }
@@ -338,7 +338,7 @@ public sealed class AuthorizationServiceTests
 
                 try
                 {
-                    Assert.True(await service.IsAllowedAsync(
+                    Assert.True(await IsAllowedAsync(service, 
                         fixture.Request() with { UserId = agentId },
                         CancellationToken.None));
                 }
@@ -368,13 +368,201 @@ public sealed class AuthorizationServiceTests
                 fixture.RoleId.Value);
 
             Assert.True(
-                await service.IsAllowedAsync(
+                await IsAllowedAsync(service, 
                     fixture.Request(), CancellationToken.None),
                 "Deactivating a role must not strand its existing holders.");
         });
     }
 
     // ------------------------------------------------------------- fixtures
+
+
+    // ------------------------------------- which assignment is reported
+
+    /// <summary>
+    /// A single eligible assignment is reported, with the role's name as it
+    /// stands, and the assignment id that closes AUD-O1.
+    /// </summary>
+    [Fact]
+    public async Task An_authorised_act_names_the_assignment_that_permitted_it()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            var result = await service.IsAllowedAsync(
+                fixture.Request(), CancellationToken.None);
+
+            Assert.True(result.IsAllowed);
+            Assert.NotNull(result.Authority);
+            Assert.Equal(fixture.AssignmentId, result.Authority!.AssignmentId);
+            Assert.Equal(fixture.RoleId, result.Authority.RoleId);
+            Assert.Equal(ScopeType.Global, result.Authority.ScopeType);
+            Assert.Null(result.Authority.ScopeId);
+            Assert.False(string.IsNullOrWhiteSpace(result.Authority.RoleName));
+        });
+    }
+
+    /// <summary>
+    /// THE POINT OF THE TIE-BREAK. Holding two roles that both carry a
+    /// permission is an ordinary configuration, not a conflict, so the
+    /// DECISION must be unchanged — still allowed — while exactly one
+    /// assignment is reported. Earliest EffectiveFrom wins.
+    ///
+    /// The second assignment is seeded with a LATER EffectiveFrom, so a naive
+    /// implementation returning whichever row the planner reached first would
+    /// fail this intermittently rather than never.
+    /// </summary>
+    [Fact]
+    public async Task The_earliest_effective_assignment_is_the_one_reported()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            var later = await SeedSecondAssignmentAsync(
+                context, fixture, fixture.EffectiveFrom.AddHours(1));
+
+            try
+            {
+                var result = await service.IsAllowedAsync(
+                    fixture.Request(), CancellationToken.None);
+
+                Assert.True(result.IsAllowed);
+
+                Assert.Equal(
+                    fixture.AssignmentId, result.Authority!.AssignmentId);
+
+                Assert.NotEqual(later.AssignmentId, result.Authority.AssignmentId);
+            }
+            finally
+            {
+                await RemoveRoleAsync(later.RoleId);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Determinism is the property REV-Q6 depends on: asking again must give
+    /// the same answer, or a point-in-time reconstruction would disagree with
+    /// the record it is reconstructing.
+    /// </summary>
+    [Fact]
+    public async Task The_reported_assignment_is_stable_across_repeated_asks()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            var other = await SeedSecondAssignmentAsync(
+                context, fixture, fixture.EffectiveFrom);
+
+            try
+            {
+                var first = await service.IsAllowedAsync(
+                    fixture.Request(), CancellationToken.None);
+
+                var second = await service.IsAllowedAsync(
+                    fixture.Request(), CancellationToken.None);
+
+                // Same EffectiveFrom on both, so the assignment id breaks the
+                // tie — and must break it the same way twice.
+                Assert.Equal(
+                    first.Authority!.AssignmentId,
+                    second.Authority!.AssignmentId);
+            }
+            finally
+            {
+                await RemoveRoleAsync(other.RoleId);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task A_refused_act_reports_no_assignment()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            var result = await service.IsAllowedAsync(
+                fixture.Request() with { UserId = UserId.New() },
+                CancellationToken.None);
+
+            Assert.False(result.IsAllowed);
+            Assert.Null(result.Authority);
+        });
+    }
+
+    /// <summary>
+    /// A second role granting the same permission to the same user. Created
+    /// through the domain so the assignment is a real one, subject to the same
+    /// constraints as any other.
+    /// </summary>
+    private static async Task<(UserRoleId AssignmentId, RoleId RoleId)>
+        SeedSecondAssignmentAsync(
+        LigatureDbContext context,
+        Fixture fixture,
+        DateTimeOffset effectiveFrom)
+    {
+        var discriminator = Guid.NewGuid().ToString("N");
+
+        var role = Role.Create(
+            RoleId.New(),
+            $"Second Authorization Role {discriminator[..8]}",
+            $"authz-role2-{discriminator[..12]}",
+            "Created by AuthorizationServiceTests.",
+            isSystemRole: false,
+            Now,
+            User.SystemUserId);
+
+        var grant = RolePermission.Create(
+            RolePermissionId.New(),
+            role.Id,
+            fixture.PermissionId,
+            Now,
+            User.SystemUserId);
+
+        var assignment = UserRole.Create(
+            UserRoleId.New(),
+            fixture.UserId,
+            ActorType.Human,
+            role.Id,
+            ScopeType.Global,
+            scopeId: null,
+            effectiveFrom: effectiveFrom,
+            effectiveTo: null,
+            assignedAt: Now,
+            assignedBy: User.SystemUserId,
+            assignmentReason: "Second assignment for selection tests.",
+            createdAt: Now,
+            createdBy: User.SystemUserId);
+
+        context.AddRange(role, grant, assignment);
+        await context.SaveChangesAsync(CancellationToken.None);
+        context.ChangeTracker.Clear();
+
+        return (assignment.Id, role.Id);
+    }
+
+    /// <summary>
+    /// The fixture's own teardown deletes role_permission by ITS role id and
+    /// then the permission, so a second role granting the same permission
+    /// leaves a row that makes the permission undeletable. Removed here rather
+    /// than by widening CleanUpAsync, which would then have to know about rows
+    /// only two tests create.
+    /// </summary>
+    private static async Task RemoveRoleAsync(RoleId roleId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        foreach (var sql in new[]
+        {
+            "DELETE FROM user_role WHERE role_id = @role",
+            "DELETE FROM role_permission WHERE role_id = @role",
+            "DELETE FROM role WHERE id = @role",
+        })
+        {
+            await using var command = new NpgsqlCommand(sql, connection);
+
+            command.Parameters.AddWithValue("role", roleId.Value);
+
+            await command.ExecuteNonQueryAsync();
+        }
+    }
 
     private sealed record Fixture(
         UserId UserId,
@@ -719,4 +907,20 @@ public sealed class AuthorizationServiceTests
 
         public DateTimeOffset UtcNow { get; }
     }
+
+    /// <summary>
+    /// Every assertion in this class is about the DECISION, which is what they
+    /// have always asserted and what must not change: the service now also
+    /// reports WHICH assignment decided, and that selection is tested
+    /// separately in the selection tests above.
+    ///
+    /// Routing them through here rather than editing each call keeps the
+    /// regression value intact — including the deliberate role.IsActive
+    /// omission that one of these tests exists to pin.
+    /// </summary>
+    private static async Task<bool> IsAllowedAsync(
+        IAuthorizationService service,
+        AuthorizationRequest request,
+        CancellationToken cancellationToken)
+        => (await service.IsAllowedAsync(request, cancellationToken)).IsAllowed;
 }
