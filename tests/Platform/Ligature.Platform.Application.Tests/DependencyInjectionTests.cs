@@ -18,16 +18,29 @@ public sealed class DependencyInjectionTests
 
         public bool IsAuthenticated
             => true;
+
+        public ActorIdentity Identity
+            => TestActorIdentity.Human();
+
+        public AuthorizingAssignment? Authority
+            => null;
     }
 
     private sealed class FakeAuthorizationService
         : IAuthorizationService
     {
-        public Task<bool> IsAllowedAsync(
+        public Task<AuthorizationResult> IsAllowedAsync(
             AuthorizationRequest request,
             CancellationToken cancellationToken)
         {
-            return Task.FromResult(true);
+            return Task.FromResult(
+                AuthorizationResult.Allowed(
+                    new AuthorizingAssignment(
+                        RoleId.New(),
+                        "Test Role",
+                        ScopeType.Global,
+                        null,
+                        UserRoleId.New())));
         }
     }
 

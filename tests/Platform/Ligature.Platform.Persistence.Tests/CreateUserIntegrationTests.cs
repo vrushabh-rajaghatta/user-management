@@ -347,7 +347,7 @@ public sealed class CreateUserIntegrationTests
 
             scope.ServiceProvider
                 .GetRequiredService<IExecutionContextInitializer>()
-                .Establish(administrator, ActorType.Human);
+                .Establish(administrator, ActorType.Human, TestActorIdentity.Human());
 
             await body(
                 scope.ServiceProvider.GetRequiredService<ICommandDispatcher>(),

@@ -115,8 +115,19 @@ public sealed class CallerEstablisher : ICallerEstablisher
         // session would resurrect itself simply by making one more request —
         // the idle check reads last_activity_at, so writing it first would
         // always satisfy the check that was meant to reject.
+        // The identity snapshot comes from rows this method already read.
+        // Nothing is re-fetched, and nothing may be refreshed later: an audit
+        // record must state who the actor was when they acted, including a
+        // display name that has since changed (AUD-1).
         _executionContextInitializer.Establish(
-            snapshot.UserId, snapshot.ActorType);
+            snapshot.UserId,
+            snapshot.ActorType,
+            new ActorIdentity(
+                snapshot.DisplayName,
+                snapshot.Username,
+                snapshot.Email,
+                snapshot.IdentityProvider,
+                snapshot.SubjectId));
 
         await _userSessionRepository.RecordActivityAsync(
             sessionId, now, ActivityStaleness, cancellationToken);
@@ -153,20 +164,35 @@ public sealed class CallerEstablisher : ICallerEstablisher
                 identity.Status,
                 user.Status,
                 user.Id,
-                user.ActorType))
+                user.ActorType,
+                user.DisplayName,
+                identity.Username,
+                user.Email,
+                identity.IdentityProvider,
+                identity.SubjectId))
             .FirstOrDefaultAsync(cancellationToken);
     }
 
     /// <summary>
-    /// The session plus the two statuses that make it usable. An inner join is
-    /// correct rather than convenient: a session whose identity or user row is
-    /// missing is not a session anyone may act under, and it collapses into the
-    /// same "no snapshot" rejection.
+    /// The session, the two statuses that make it usable, and the actor
+    /// snapshot the audit trail will carry. The snapshot fields are projected
+    /// from rows this query already joins — widening it costs no extra
+    /// round trip, and reading them separately later would risk reading them
+    /// after they changed.
+    ///
+    /// An inner join is correct rather than convenient: a session whose
+    /// identity or user row is missing is not a session anyone may act under,
+    /// and it collapses into the same "no snapshot" rejection.
     /// </summary>
     private sealed record Snapshot(
         UserSession Session,
         UserStatus IdentityStatus,
         UserStatus UserStatus,
         UserId UserId,
-        ActorType ActorType);
+        ActorType ActorType,
+        string DisplayName,
+        string? Username,
+        EmailAddress? Email,
+        IdentityProvider IdentityProvider,
+        string SubjectId);
 }

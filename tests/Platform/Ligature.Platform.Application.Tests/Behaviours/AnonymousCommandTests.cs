@@ -44,7 +44,7 @@ public sealed class AnonymousCommandTests
     public async Task An_anonymous_command_also_runs_with_a_caller_established()
     {
         var context = new ScopedExecutionContext();
-        context.Establish(UserId.New(), ActorType.Human);
+        context.Establish(UserId.New(), ActorType.Human, TestActorIdentity.Human());
 
         var behavior = Behavior<AnonymousCmd>(context);
 

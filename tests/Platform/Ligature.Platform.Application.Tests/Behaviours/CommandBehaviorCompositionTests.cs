@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Execution;
 using Ligature.Platform.Application.Behaviors;
 using Ligature.Platform.Application.Dispatching;
 using Ligature.Platform.Domain.Users;
@@ -47,6 +48,7 @@ public sealed class CommandBehaviorCompositionTests
             new AuthorizationBehavior<TestCommand, TestResult>(
                 executionContext,
                 authorizationService,
+                new RecordingAuthorityInitializer(),
                 clock);
 
         var pipeline = new CommandPipeline();
@@ -119,6 +121,7 @@ public sealed class CommandBehaviorCompositionTests
                 TestResult>(
                 executionContext,
                 authorizationService,
+                new RecordingAuthorityInitializer(),
                 clock);
 
         var pipeline = new CommandPipeline();
@@ -179,6 +182,7 @@ public sealed class CommandBehaviorCompositionTests
                 TestResult>(
                 executionContext,
                 authorizationService,
+                new RecordingAuthorityInitializer(),
                 clock);
 
         var pipeline = new CommandPipeline();
@@ -239,6 +243,7 @@ public sealed class CommandBehaviorCompositionTests
                 TestResult>(
                 executionContext,
                 authorizationService,
+                new RecordingAuthorityInitializer(),
                 clock);
 
         var pipeline = new CommandPipeline();
@@ -269,6 +274,133 @@ public sealed class CommandBehaviorCompositionTests
         public string RequiredPermission => "test.permission";
     }
 
+
+    // ------------------------------------------------- authority lifetime
+
+    /// <summary>
+    /// THE CONTRACT THIS PROVES is not "the context clears on Dispose" — that
+    /// is ScopedExecutionContext's own test. It is that AuthorizationBehavior
+    /// does not leak an assignment into the next command when the handler
+    /// fails.
+    ///
+    /// A DI scope dispatches several commands. If a failing command left its
+    /// authority behind, the next one would execute — and be recorded — under
+    /// an authorising assignment that permitted something else. A false audit
+    /// record is worse than none, so the release has to survive the exception
+    /// path, not merely the happy one.
+    /// </summary>
+    [Fact]
+    public async Task Authority_is_released_when_the_handler_throws()
+    {
+        var executionContext = new FakeExecutionContext
+        {
+            IsAuthenticated = true,
+            ActorType = ActorType.Human
+        };
+
+        var authorizationService = new FakeAuthorizationService
+        {
+            IsAllowed = true
+        };
+
+        var authorityInitializer = new RecordingAuthorityInitializer();
+
+        var behavior =
+            new AuthorizationBehavior<TestCommand, TestResult>(
+                executionContext,
+                authorizationService,
+                authorityInitializer,
+                Clock());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => behavior.Handle(
+                new TestCommand(),
+                CancellationToken.None,
+                _ => throw new InvalidOperationException("handler failed")));
+
+        // It WAS established — otherwise this test would pass for the wrong
+        // reason, proving only that nothing was ever recorded.
+        Assert.NotNull(authorityInitializer.Recorded);
+
+        Assert.False(
+            authorityInitializer.Held,
+            "The handler threw, so the authority must have been released "
+            + "before the exception left AuthorizationBehavior.");
+    }
+
+    [Fact]
+    public async Task Authority_is_released_when_the_handler_succeeds()
+    {
+        var executionContext = new FakeExecutionContext
+        {
+            IsAuthenticated = true,
+            ActorType = ActorType.Human
+        };
+
+        var authorizationService = new FakeAuthorizationService
+        {
+            IsAllowed = true
+        };
+
+        var authorityInitializer = new RecordingAuthorityInitializer();
+
+        var behavior =
+            new AuthorizationBehavior<TestCommand, TestResult>(
+                executionContext,
+                authorizationService,
+                authorityInitializer,
+                Clock());
+
+        await behavior.Handle(
+            new TestCommand(),
+            CancellationToken.None,
+            _ => Task.FromResult(new TestResult("success")));
+
+        Assert.NotNull(authorityInitializer.Recorded);
+        Assert.False(authorityInitializer.Held);
+    }
+
+    /// <summary>
+    /// A refused command establishes no authority at all, so the eventual
+    /// audit record for the refusal carries an identity and no authorising
+    /// role — which is exactly what a refusal record should say.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_command_establishes_no_authority()
+    {
+        var executionContext = new FakeExecutionContext
+        {
+            IsAuthenticated = true,
+            ActorType = ActorType.Human
+        };
+
+        var authorizationService = new FakeAuthorizationService
+        {
+            IsAllowed = false
+        };
+
+        var authorityInitializer = new RecordingAuthorityInitializer();
+
+        var behavior =
+            new AuthorizationBehavior<TestCommand, TestResult>(
+                executionContext,
+                authorizationService,
+                authorityInitializer,
+                Clock());
+
+        await Assert.ThrowsAsync<BusinessRuleViolationException>(
+            () => behavior.Handle(
+                new TestCommand(),
+                CancellationToken.None,
+                _ => Task.FromResult(new TestResult("unreachable"))));
+
+        Assert.Null(authorityInitializer.Recorded);
+        Assert.False(authorityInitializer.Held);
+    }
+
+    private static FakeClock Clock()
+        => new(new DateTimeOffset(2026, 9, 3, 10, 0, 0, TimeSpan.Zero));
+
     private sealed record TestResult(string Value);
 
     private sealed class FakeHandler
@@ -287,6 +419,37 @@ public sealed class CommandBehaviorCompositionTests
         }
     }
 
+    /// <summary>
+    /// Accepts the authority the behaviour records and remembers it, so a test
+    /// can assert that an authorised command captured one and a refused
+    /// command did not.
+    /// </summary>
+    private sealed class RecordingAuthorityInitializer : IAuthorityInitializer
+    {
+        public AuthorizingAssignment? Recorded { get; private set; }
+
+        /// <summary>True while the command that established it is running.</summary>
+        public bool Held { get; private set; }
+
+        public IDisposable EstablishAuthority(AuthorizingAssignment authority)
+        {
+            Recorded = authority;
+            Held = true;
+
+            return new Release(this);
+        }
+
+        private sealed class Release : IDisposable
+        {
+            private readonly RecordingAuthorityInitializer _owner;
+
+            internal Release(RecordingAuthorityInitializer owner)
+                => _owner = owner;
+
+            public void Dispose() => _owner.Held = false;
+        }
+    }
+
     private sealed class FakeExecutionContext
         : IExecutionContext
     {
@@ -295,6 +458,10 @@ public sealed class CommandBehaviorCompositionTests
         public ActorType ActorType { get; init; }
 
         public bool IsAuthenticated { get; init; }
+
+        public ActorIdentity Identity { get; } = TestActorIdentity.Human();
+
+        public AuthorizingAssignment? Authority => null;
     }
 
     private sealed class FakeAuthorizationService
@@ -304,13 +471,22 @@ public sealed class CommandBehaviorCompositionTests
 
         public AuthorizationRequest? LastRequest { get; private set; }
 
-        public Task<bool> IsAllowedAsync(
+        public Task<AuthorizationResult> IsAllowedAsync(
             AuthorizationRequest request,
             CancellationToken cancellationToken)
         {
             LastRequest = request;
 
-            return Task.FromResult(IsAllowed);
+            return Task.FromResult(
+                IsAllowed
+                    ? AuthorizationResult.Allowed(
+                        new AuthorizingAssignment(
+                            RoleId.New(),
+                            "Test Role",
+                            ScopeType.Global,
+                            null,
+                            UserRoleId.New()))
+                    : AuthorizationResult.Denied);
         }
     }
 
