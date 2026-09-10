@@ -219,6 +219,29 @@ permanently as those suites run.
 
 **Deferred to:** the Audit capability (`docs/architecture.md` §6).
 
+## AUD-S12 — the canonical form is not what the database stores
+
+**State:** `CanonicalJson` produces the RFC 8785 form of a record's content
+(IMPL-03), and that is what the writer sends. The `before`, `after` and
+`payload` columns are `jsonb`, which stores a normalised representation of its
+own: reading a record back returns PostgreSQL's key order and spacing, not the
+canonical bytes that were written. Both forms are deterministic; they are not
+the same form.
+
+**Not a defect, and nothing in E2a depends on it.** Canonicalisation earns its
+place on the input side, where it makes the same semantic value produce the
+same bytes regardless of how a handler happened to build the object. The
+observation was made while asserting a record's content in a test, which had to
+compare parsed fields rather than text for exactly this reason.
+
+**What it constrains:** any future integrity or hash mechanism must state which
+representation it hashes — the canonical form computed before the write, or
+what `jsonb` returns on read — and compute it the same way every time. A
+verifier that canonicalises on the way in and re-reads on the way out would
+compare two different normal forms and report tampering that did not happen.
+That decision belongs to AUD-S12's reconciliation work, not to an emission
+story.
+
 ## Activation does not check identity or user status — User Management
 
 **State:** `UserTokenRepository.TryConsumeAsync` decides whether an activation
