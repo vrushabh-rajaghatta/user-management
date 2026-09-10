@@ -96,7 +96,13 @@ internal sealed class ProvisioningDatabase : IAsyncDisposable
             }
 
             if (auditDeployed)
+            {
                 await new AuditSchemaDeployer(target).DeployAsync();
+
+                // Deployment phase, as Ligature.AuditSchema performs it: the
+                // catalogue exists before anything provisions or starts.
+                await new AuditCatalogueDeployer(target).DeployAsync();
+            }
         }
         catch
         {
@@ -118,6 +124,21 @@ internal sealed class ProvisioningDatabase : IAsyncDisposable
             .Options;
 
         return new LigatureDbContext(options);
+    }
+
+    /// <summary>
+    /// Runs arbitrary SQL against the target, for tests that need to put the
+    /// database into a state the application cannot reach on its own.
+    /// </summary>
+    internal async Task ExecuteAsync(string sql)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand(sql, connection);
+
+        await command.ExecuteNonQueryAsync();
     }
 
     internal async Task<long> CountAsync(string sql)

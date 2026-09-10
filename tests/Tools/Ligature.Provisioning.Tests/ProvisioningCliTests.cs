@@ -282,6 +282,58 @@ public sealed class ProvisioningCliTests : IDisposable
         "--activation-token-out", tokenPath,
     ];
 
+    /// <summary>
+    /// The defect this asserts against was real, and its failure MODE was
+    /// worse than its cause.
+    ///
+    /// Provisioning hit a missing privilege and raised a raw
+    /// PostgresException. Only ProvisioningException was caught, so it escaped
+    /// Main as an unhandled exception: the operator got a stack trace, and the
+    /// container stayed up. bootstrap.sh never got its shell back, so a plain
+    /// error looked like a hang.
+    ///
+    /// The trigger below reproduces the SHAPE of that failure rather than its
+    /// cause — an unanticipated database error raised from inside the audit
+    /// write — because the fix must hold for every such error, not just for
+    /// the one privilege that was missing.
+    ///
+    /// That this test RETURNS at all is half of what it proves.
+    /// </summary>
+    [Fact]
+    public async Task An_unanticipated_database_failure_returns_a_code_rather_than_escaping()
+    {
+        await using var database = await ProvisioningDatabase.CreateAsync(migrated: true);
+
+        await database.ExecuteAsync(
+            """
+            CREATE FUNCTION audit.refuse_for_test() RETURNS trigger AS $$
+            BEGIN
+                RAISE EXCEPTION 'audit write refused by test';
+            END;
+            $$ LANGUAGE plpgsql;
+
+            CREATE TRIGGER refuse_writes_for_test
+                BEFORE INSERT ON audit.audit_record
+                FOR EACH ROW EXECUTE FUNCTION audit.refuse_for_test();
+            """);
+
+        var tokenPath = Path.Combine(_workspace, "unanticipated.token");
+
+        var run = await RunAsync(database, tokenPath);
+
+        Assert.Equal(Program.ProvisioningFailed, run.ExitCode);
+
+        // Says what happened to the database, because the operator's next
+        // question is whether it is safe to re-run.
+        Assert.Contains("rolled back", run.Error);
+
+        // And nothing was committed, including the token.
+        Assert.False(File.Exists(tokenPath));
+        Assert.Equal(0, await database.CountAsync("SELECT count(*) FROM app_user"));
+        Assert.Equal(0, await database.CountAsync(
+            "SELECT count(*) FROM audit.audit_retention_policy"));
+    }
+
     private static async Task<Run> RunAsync(
         ProvisioningDatabase database, string tokenPath)
     {

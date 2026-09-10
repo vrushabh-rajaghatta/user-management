@@ -5,14 +5,18 @@ using Npgsql;
 namespace Ligature.Platform.Persistence.Audit;
 
 /// <summary>
-/// Builds the in-memory catalogue (IMPL-08) from one of its two sources.
+/// Builds the in-memory catalogue (IMPL-08) from the database.
 ///
-/// At process start, from the database: the host resolves the catalogue
-/// once, before serving, and verifies the compiled declarations against it.
-/// During provisioning, from the release seed: AUD-C4 has written the rows
-/// but not committed them, and no process could have loaded a catalogue it
-/// is still creating, so TenantProvisioned is validated against the same
-/// definitions the seeder just wrote.
+/// Both readers now read the SAME deployed rows. The host loads them at
+/// process start and verifies its compiled declarations against them.
+/// Provisioning loads them on its own transaction to validate
+/// TenantProvisioned, because the catalogue is deployed by
+/// Ligature.AuditSchema BEFORE either process runs.
+///
+/// <see cref="FromSeeds"/> survives for tests that need a snapshot with no
+/// database behind it. Production paths must not use it: a snapshot built
+/// from the compiled seed would agree with the handlers by construction,
+/// which is precisely the disagreement IMPL-08 exists to detect.
 /// </summary>
 internal static class AuditEventCatalogueLoader
 {
@@ -30,11 +34,34 @@ internal static class AuditEventCatalogueLoader
         using var connection = new NpgsqlConnection(connectionString);
         connection.Open();
 
+        return Read(connection, transaction: null);
+    }
+
+    /// <summary>
+    /// Reads on a connection and transaction the caller already holds, so
+    /// provisioning sees the catalogue from inside its own transaction rather
+    /// than opening a second connection mid-procedure.
+    /// </summary>
+    public static AuditEventCatalogueSnapshot Load(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+
+        return Read(connection, transaction);
+    }
+
+    private static AuditEventCatalogueSnapshot Read(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction)
+    {
         var origins = new Dictionary<(string, int), Dictionary<string, bool>>();
 
         using (var command = new NpgsqlCommand(
             "SELECT code, version, origin_kind, is_active FROM audit.audit_event_origin",
-            connection))
+            connection,
+            transaction))
         using (var reader = command.ExecuteReader())
         {
             while (reader.Read())
@@ -57,7 +84,7 @@ internal static class AuditEventCatalogueLoader
                    primary_entity_required, entity_ref_roles::text, pii_paths::text,
                    is_active
             FROM audit.audit_event_type
-            """, connection))
+            """, connection, transaction))
         using (var reader = command.ExecuteReader())
         {
             while (reader.Read())

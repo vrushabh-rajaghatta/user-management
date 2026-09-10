@@ -83,7 +83,15 @@ internal sealed class ThrowawayDatabase : IAsyncDisposable
             // Provisioning verifies it before seeding, so a fixture without
             // it would refuse to provision anything.
             if (auditDeployed)
+            {
                 await new AuditSchemaDeployer(target).DeployAsync();
+
+                // The catalogue is part of DEPLOYMENT now, not provisioning,
+                // so an installed-but-unprovisioned database has it. Tests
+                // that skip this would be testing a state a real deployment
+                // cannot reach.
+                await new AuditCatalogueDeployer(target).DeployAsync();
+            }
         }
         catch
         {

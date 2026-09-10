@@ -3,7 +3,11 @@
 Identity and access for a regulated system: user accounts, credentials,
 server-side sessions, roles and permissions.
 
-The current scope is **User Management**, inside the Platform module. Audit,
+The current scope is **User Management** and **Audit**, inside the Platform
+module. Audit is database-owned: its tables live in their own schema, owned by
+a role that cannot log in, and the application appends to a trail it cannot
+amend.
+
 Notifications, Logging, tenancy and the business domains described in the
 architecture are target state and do not exist yet.
 

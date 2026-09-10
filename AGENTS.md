@@ -175,6 +175,17 @@ privileged connection that becomes `audit_owner` first. It runs **after** the
 migrator, because the Audit foreign keys reference `app_user`, `role` and
 `user_role`.
 
+`Ligature.AuditSchema` also deploys the **audit event catalogue**, in the same
+step and before the host starts. The catalogue is release infrastructure, not
+tenant seed data: `AuditDeclarations` is verified against it at host start-up
+(IMPL-08), so a host on a database whose catalogue had not been deployed would
+refuse to start. It reconciles rather than inserts, so it is safe to re-run;
+entries a release no longer declares become inactive and are never deleted.
+
+Retention v1 is **not** part of that step. `RT5` makes its `created_by` a
+foreign key to the System actor, which provisioning creates, so it stays with
+`Ligature.Provisioning` below.
+
 ```bash
 export LIGATURE_CONNECTION="Host=localhost;Port=5432;Database=ligature;Username=migration_role;Password=..."
 dotnet ef database update --project src/Platform/Ligature.Platform.Persistence
@@ -224,8 +235,11 @@ A clean clone to a running system, in one command:
 ```
 
 That starts PostgreSQL, creates the database roles, applies migrations,
-deploys the Audit schema and starts the host, in that order, each step waiting
-for the previous one rather than sleeping. The host is on
+deploys the Audit schema **and the audit event catalogue**, then starts the
+host, in that order, each step waiting for the previous one rather than
+sleeping. The catalogue is in that list deliberately: the host verifies its
+compiled declarations against it and refuses to start otherwise, so `./up.sh`
+would not produce a running host without it. The host is on
 `http://localhost:8080`, the API reference on `/scalar`, and the container
 database is published on **55432** so it cannot collide with a PostgreSQL
 running natively on 5432 — which is the one the test suites use.

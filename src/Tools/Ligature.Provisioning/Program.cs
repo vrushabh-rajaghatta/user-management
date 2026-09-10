@@ -85,6 +85,31 @@ public static class Program
 
             return ProvisioningFailed;
         }
+        catch (Exception failure)
+        {
+            // Everything else, and the reason this catch exists at all.
+            //
+            // Only ProvisioningException was caught before, so a raw
+            // PostgresException — a missing privilege, say — escaped Main as
+            // an unhandled exception. The stack trace reached the operator,
+            // but the CONTAINER STAYED UP, so bootstrap.sh never got its
+            // shell back and the failure looked like a hang instead of an
+            // error.
+            //
+            // A failure that cannot be waited on is worse than a loud one.
+            // This is not a retry and not a health check: it reports, and it
+            // returns a non-zero code so the process ends and the caller can
+            // act on it.
+            error.WriteLine(
+                "Provisioning failed. The transaction was rolled back, so the "
+                + "database is unchanged and this can be re-run once the cause "
+                + "is fixed.");
+
+            error.WriteLine();
+            error.WriteLine(failure.ToString());
+
+            return ProvisioningFailed;
+        }
     }
 
     private static async Task<int> ProvisionAsync(
