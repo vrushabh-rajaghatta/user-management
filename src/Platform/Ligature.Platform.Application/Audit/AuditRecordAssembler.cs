@@ -54,7 +54,7 @@ public static class AuditRecordAssembler
     private static AuditRecordRow Resolve(
         AuditEventDeclaration declaration,
         AuditDeclaration permitted,
-        ActorSnapshot actor,
+        ActorSnapshot commandActor,
         IAuditEventCatalogue catalogue,
         string emissionPath,
         Guid operationId,
@@ -62,6 +62,14 @@ public static class AuditRecordAssembler
         DateTimeOffset capturedAt)
     {
         var failures = new List<string>();
+
+        // One command may produce events with different actors, so the actor
+        // is resolved per declaration rather than per command. System is the
+        // only override a handler may ask for (AuditEventDeclaration.AsSystem),
+        // and the origin rule below still has to permit it.
+        var actor = declaration.AttributedToSystem
+            ? ActorSnapshot.System(capturedAt)
+            : commandActor;
 
         // Behaviour 13 — resolve, and refuse what cannot be resolved.
         var type = catalogue.Find(declaration.Code, declaration.Version);
@@ -167,10 +175,17 @@ public static class AuditRecordAssembler
         if (type.ReasonRequired && string.IsNullOrWhiteSpace(declaration.Reason))
             failures.Add("a reason is required and none was supplied (AR9)");
 
-        // Content: canonical form (IMPL-03) and the secret scan
-        var before = Canonical(declaration.Before, "Before", failures);
-        var after = Canonical(declaration.After, "After", failures);
-        var payload = Canonical(declaration.Payload, "Payload", failures);
+        // Content: canonical form (IMPL-03) and the secret scan. The scan is
+        // told which paths this event type declares as PII: those carry
+        // personal data by design, so their VALUES are not judged by shape
+        // (E2b). Names are still judged, everywhere.
+        var declaredPii = type.PiiPaths
+            .Select(x => x.Path)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var before = Canonical(declaration.Before, "Before", declaredPii, failures);
+        var after = Canonical(declaration.After, "After", declaredPii, failures);
+        var payload = Canonical(declaration.Payload, "Payload", declaredPii, failures);
 
         if (failures.Count > 0)
             throw Defect(declaration, failures);
@@ -196,7 +211,11 @@ public static class AuditRecordAssembler
             declaration.References);
     }
 
-    private static string? Canonical(object? content, string name, List<string> failures)
+    private static string? Canonical(
+        object? content,
+        string name,
+        IReadOnlySet<string> declaredPii,
+        List<string> failures)
     {
         if (content is null)
             return null;
@@ -205,7 +224,7 @@ public static class AuditRecordAssembler
         {
             var element = CanonicalJson.ToElement(content);
 
-            foreach (var finding in SecretScan.Scan(element, name))
+            foreach (var finding in SecretScan.Scan(element, name, declaredPii))
                 failures.Add($"{finding} (behaviour 14 secret scan)");
 
             return CanonicalJson.Canonicalize(element);

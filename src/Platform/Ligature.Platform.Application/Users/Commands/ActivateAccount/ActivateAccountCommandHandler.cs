@@ -32,7 +32,7 @@ public sealed class ActivateAccountCommandHandler
     private readonly IPasswordHasher _passwordHasher;
     private readonly ICredentialRepository _credentialRepository;
     private readonly IPasswordHistoryRepository _passwordHistoryRepository;
-    private readonly ITokenBearerEstablisher _tokenBearerEstablisher;
+    private readonly IBearerActorEstablisher _bearerActorEstablisher;
     private readonly IExecutionContext _executionContext;
     private readonly IAuditEvents _auditEvents;
 
@@ -45,7 +45,7 @@ public sealed class ActivateAccountCommandHandler
         IPasswordHasher passwordHasher,
         ICredentialRepository credentialRepository,
         IPasswordHistoryRepository passwordHistoryRepository,
-        ITokenBearerEstablisher tokenBearerEstablisher,
+        IBearerActorEstablisher bearerActorEstablisher,
         IExecutionContext executionContext,
         IAuditEvents auditEvents)
     {
@@ -57,7 +57,7 @@ public sealed class ActivateAccountCommandHandler
         _passwordHasher = passwordHasher;
         _credentialRepository = credentialRepository;
         _passwordHistoryRepository = passwordHistoryRepository;
-        _tokenBearerEstablisher = tokenBearerEstablisher;
+        _bearerActorEstablisher = bearerActorEstablisher;
         _executionContext = executionContext;
         _auditEvents = auditEvents;
     }
@@ -72,8 +72,18 @@ public sealed class ActivateAccountCommandHandler
 
         // A malformed token is just another invalid token: same message, so the
         // shape of what was submitted is not reflected back either.
-        var presented = _userTokenService.Parse(command.TokenPlainText)
-            ?? throw new BusinessRuleViolationException(InvalidToken);
+        //
+        // It is still recorded. TokenRejected is autonomous, so it survives the
+        // rollback this throw causes — which is the point, since a rejection is
+        // precisely a thing that leaves no other trace.
+        var presented = _userTokenService.Parse(command.TokenPlainText);
+
+        if (presented is null)
+        {
+            DeclareRejection(tokenId: null, "Malformed");
+
+            throw new BusinessRuleViolationException(InvalidToken);
+        }
 
         return await _unitOfWork.ExecuteInTransactionAsync(
             async ct =>
@@ -90,7 +100,15 @@ public sealed class ActivateAccountCommandHandler
                     ct);
 
                 if (identityId is null)
+                {
+                    // Unknown id, wrong secret, already used, invalidated or
+                    // expired: the caller cannot tell these apart and neither
+                    // can this. The trail records that the token named was
+                    // refused, which is what a reviewer needs.
+                    DeclareRejection(presented.TokenId, "NotUsable");
+
                     throw new BusinessRuleViolationException(InvalidToken);
+                }
 
                 // Step 1b. The consumption above is the authentication: it
                 // proved the bearer holds a live token for THIS identity. The
@@ -106,7 +124,7 @@ public sealed class ActivateAccountCommandHandler
                 // its user has gone missing inside this very transaction, so
                 // it collapses into the same opaque rejection as every other
                 // invalid activation.
-                if (!await _tokenBearerEstablisher.EstablishAsync(identityId, ct))
+                if (!await _bearerActorEstablisher.EstablishAsync(identityId, ct))
                     throw new BusinessRuleViolationException(InvalidToken);
 
                 // Read back rather than derived: the Subject ref must be the
@@ -206,5 +224,33 @@ public sealed class ActivateAccountCommandHandler
                 return new ActivateAccountResult(identityId);
             },
             cancellationToken);
+    }
+
+    /// <summary>
+    /// The record of a refused activation.
+    ///
+    /// Autonomous: the command throws, its transaction rolls back, and the
+    /// token stays usable — deliberately, so a rejected password does not burn
+    /// an activation. A transactional record of the rejection would roll back
+    /// with it and leave nothing at all, which is the outcome the autonomous
+    /// path exists to prevent.
+    ///
+    /// Anonymous: no caller was established, because nothing authenticated.
+    /// The bearer failed to prove anything, so there is nobody to name.
+    ///
+    /// The token's plaintext and its secret never appear. The id does: it
+    /// identifies the row, and the catalogue makes Token the primary entity of
+    /// this event. Where the token did not even parse there is no id to give,
+    /// and the catalogue does not require one.
+    /// </summary>
+    private void DeclareRejection(UserTokenId? tokenId, string reason)
+    {
+        var declaration = _auditEvents.Emit("TokenRejected", version: 1)
+            .WithPayload(new { Reason = reason });
+
+        if (tokenId is null)
+            declaration.Primary("Token");
+        else
+            declaration.Primary("Token", tokenId.Value);
     }
 }

@@ -1,5 +1,6 @@
 using Ligature.Platform.Application;
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Persistence.Database;
@@ -359,13 +360,14 @@ public sealed class ActivateAccountIntegrationTests
     }
 
     /// <summary>
-    /// An invalid token is not recorded at all yet. TokenRejected is autonomous
-    /// — it describes a FAILURE, so it cannot be written on the transaction
-    /// that failed — and the autonomous writer arrives with the next story.
-    /// Asserted rather than assumed, so the gap is visible and dated.
+    /// The autonomous path, proved where it matters: the command threw, its
+    /// transaction rolled back — the token is deliberately left usable — and
+    /// the record of the rejection is still there. A transactional record
+    /// would have gone with the rollback, leaving a refused activation with no
+    /// trace at all.
     /// </summary>
     [Fact]
-    public async Task An_invalid_token_records_nothing_until_the_autonomous_writer_exists()
+    public async Task A_rejected_token_is_recorded_even_though_the_command_rolled_back()
     {
         await RunAsync(async (dispatcher, fixture) =>
         {
@@ -374,7 +376,78 @@ public sealed class ActivateAccountIntegrationTests
                     new ActivateAccountCommand(fixture.TokenPlainText + "x", GoodPassword),
                     CancellationToken.None));
 
-            Assert.Empty(await ReadTrailAsync(fixture));
+            // The command wrote nothing: the token is untouched and no
+            // credential exists.
+            Assert.Null(await ReadTokenUsedAtAsync(fixture.TokenId));
+            Assert.Equal(0, await CountCredentialsAsync(fixture.IdentityId));
+
+            var record = Assert.Single(await ReadRejectionsAsync(fixture.TokenId.Value));
+
+            Assert.Equal("Autonomous", record.WritePath);
+            Assert.Equal("Anonymous", record.OriginKind);
+            Assert.Null(record.ActorUserId);
+            Assert.Equal("Token", record.EntityType);
+            Assert.Contains("NotUsable", record.Payload);
+
+            // Neither the secret nor the plaintext went anywhere near it.
+            Assert.DoesNotContain(fixture.Secret, record.Payload!, StringComparison.Ordinal);
+        });
+    }
+
+    /// <summary>
+    /// A token that does not even parse has no id to name, which is why the
+    /// catalogue does not require a primary entity id for this event.
+    /// </summary>
+    [Fact]
+    public async Task A_malformed_token_is_recorded_without_one()
+    {
+        await RunAsync(async (dispatcher, _) =>
+        {
+            // A malformed rejection names no token, so there is no id to find
+            // it by. The class owns this database and runs its tests in order,
+            // so "written after this point" identifies it exactly.
+            var before = await ReadLastSequenceAsync();
+
+            await Assert.ThrowsAsync<BusinessRuleViolationException>(
+                () => dispatcher.SendAsync<ActivateAccountCommand, ActivateAccountResult>(
+                    new ActivateAccountCommand("not-a-token", GoodPassword),
+                    CancellationToken.None));
+
+            var record = Assert.Single(await ReadRejectionsAsync(tokenId: null, after: before));
+
+            Assert.Null(record.EntityId);
+            Assert.Contains("Malformed", record.Payload);
+        });
+    }
+
+    /// <summary>
+    /// The frozen failure semantics, on the path where the command FAILS. The
+    /// caller broke a rule; that is what explains the request and that is what
+    /// they are told. An audit failure must not replace it — a 400 becoming a
+    /// 500 would tell the caller their token was fine.
+    /// </summary>
+    [Fact]
+    public async Task A_failed_autonomous_write_does_not_mask_the_commands_own_failure()
+    {
+        await RunAsync(async (_, fixture) =>
+        {
+            await using var broken = BuildProvider(autonomousWriterThrows: true);
+            using var scope = broken.CreateScope();
+
+            var failure = await Assert.ThrowsAsync<BusinessRuleViolationException>(
+                () => scope.ServiceProvider
+                    .GetRequiredService<ICommandDispatcher>()
+                    .SendAsync<ActivateAccountCommand, ActivateAccountResult>(
+                        new ActivateAccountCommand(fixture.TokenPlainText + "x", GoodPassword),
+                        CancellationToken.None));
+
+            Assert.Equal("The activation token is not valid.", failure.Message);
+
+            // Lost to nobody: it travels with the exception that won, and the
+            // host logs it from there.
+            Assert.Contains(
+                "The autonomous writer is broken.",
+                Assert.IsType<string>(failure.Data["Ligature.AutonomousAuditFailure"]));
         });
     }
 
@@ -466,6 +539,68 @@ public sealed class ActivateAccountIntegrationTests
         return records;
     }
 
+    /// <summary>
+    /// Rejections stand alone: the command that caused them rolled back, so
+    /// there is no other record of that operation to find them by.
+    /// </summary>
+    private async Task<IReadOnlyList<TrailRecord>> ReadRejectionsAsync(
+        Guid? tokenId, long after = 0)
+    {
+        await using var connection = await _database.OpenAsync();
+
+        await using var command = new NpgsqlCommand(
+            $"""
+            SELECT audit_id, event_type, write_path, origin_kind, actor_user_id,
+                   actor_type, authorizing_role_id, authorizing_assignment_id,
+                   entity_type, entity_id, operation_id, causation_id,
+                   before::text, after::text, payload::text
+            FROM audit.audit_record
+            WHERE event_type = 'TokenRejected'
+              AND sequence > @after
+              AND entity_id IS {(tokenId is null ? "NULL" : "NOT DISTINCT FROM @tokenId")}
+            ORDER BY sequence
+            """, connection);
+
+        command.Parameters.AddWithValue("after", after);
+
+        if (tokenId is not null)
+            command.Parameters.AddWithValue("tokenId", tokenId.Value);
+
+        var records = new List<TrailRecord>();
+
+        await using var reader = await command.ExecuteReaderAsync();
+
+        while (await reader.ReadAsync())
+        {
+            records.Add(new TrailRecord(
+                reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
+                reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetGuid(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetGuid(6),
+                reader.IsDBNull(7) ? null : reader.GetGuid(7),
+                reader.GetString(8),
+                reader.IsDBNull(9) ? null : reader.GetGuid(9),
+                reader.GetGuid(10),
+                reader.IsDBNull(11) ? null : reader.GetGuid(11),
+                reader.IsDBNull(12) ? null : reader.GetString(12),
+                reader.IsDBNull(13) ? null : reader.GetString(13),
+                reader.IsDBNull(14) ? null : reader.GetString(14)));
+        }
+
+        return records;
+    }
+
+    private async Task<long> ReadLastSequenceAsync()
+    {
+        await using var connection = await _database.OpenAsync();
+
+        await using var command = new NpgsqlCommand(
+            "SELECT coalesce(max(sequence), 0) FROM audit.audit_record", connection);
+
+        return Convert.ToInt64(await command.ExecuteScalarAsync());
+    }
+
     private async Task<IReadOnlyList<string>> ReadReferencesAsync(Guid auditId)
     {
         await using var connection = await _database.OpenAsync();
@@ -538,10 +673,26 @@ public sealed class ActivateAccountIntegrationTests
     }
 
     private ServiceProvider BuildProvider()
-        => new ServiceCollection()
+        => BuildProvider(autonomousWriterThrows: false);
+
+    private ServiceProvider BuildProvider(bool autonomousWriterThrows)
+    {
+        var services = new ServiceCollection()
             .AddPlatformApplication()
-            .AddPlatformPersistence(_database.ConnectionString)
-            .BuildServiceProvider(validateScopes: true);
+            .AddPlatformPersistence(_database.ConnectionString);
+
+        if (autonomousWriterThrows)
+            services.AddSingleton<IAutonomousAuditRecordWriter>(new ThrowingAutonomousWriter());
+
+        return services.BuildServiceProvider(validateScopes: true);
+    }
+
+    private sealed class ThrowingAutonomousWriter : IAutonomousAuditRecordWriter
+    {
+        public Task WriteAsync(
+            IReadOnlyList<AuditRecordRow> rows, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("The autonomous writer is broken.");
+    }
 
     /// <summary>
     /// A user with a local identity and no credential — exactly the state

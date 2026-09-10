@@ -1,5 +1,6 @@
 using System.Net;
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Domain.Users;
 using Ligature.SharedKernel.Abstractions;
 using Ligature.SharedKernel.Exceptions;
@@ -33,6 +34,8 @@ public sealed class SignInCommandHandler
     private readonly IUserSessionRepository _userSessionRepository;
     private readonly ISecurityPolicyResolver _securityPolicyResolver;
     private readonly IPasswordHasher _passwordHasher;
+    private readonly IBearerActorEstablisher _bearerActorEstablisher;
+    private readonly IAuditEvents _auditEvents;
 
     public SignInCommandHandler(
         IClock clock,
@@ -42,7 +45,9 @@ public sealed class SignInCommandHandler
         ICredentialRepository credentialRepository,
         IUserSessionRepository userSessionRepository,
         ISecurityPolicyResolver securityPolicyResolver,
-        IPasswordHasher passwordHasher)
+        IPasswordHasher passwordHasher,
+        IBearerActorEstablisher bearerActorEstablisher,
+        IAuditEvents auditEvents)
     {
         _clock = clock;
         _unitOfWork = unitOfWork;
@@ -52,6 +57,8 @@ public sealed class SignInCommandHandler
         _userSessionRepository = userSessionRepository;
         _securityPolicyResolver = securityPolicyResolver;
         _passwordHasher = passwordHasher;
+        _bearerActorEstablisher = bearerActorEstablisher;
+        _auditEvents = auditEvents;
     }
 
     public async Task<SignInResult> Handle(
@@ -77,6 +84,11 @@ public sealed class SignInCommandHandler
                 {
                     _passwordHasher.VerifyDecoy(command.Password);
 
+                    // No identity to name: the catalogue does not require one
+                    // for this event, precisely so an attempt against a
+                    // username nobody holds is still recorded.
+                    DeclareFailure(command, identity: null, "IdentityNotUsable");
+
                     return SignInResult.Failure();
                 }
 
@@ -88,6 +100,8 @@ public sealed class SignInCommandHandler
                 if (credential.LockedUntil is { } lockedUntil && lockedUntil > now)
                 {
                     _passwordHasher.VerifyDecoy(command.Password);
+
+                    DeclareFailure(command, resolved.Identity, "AccountLocked");
 
                     return SignInResult.Failure();
                 }
@@ -110,12 +124,45 @@ public sealed class SignInCommandHandler
 
                 if (!verification.IsValid)
                 {
+                    var attemptsBefore = credential.FailedAttemptCount;
+
                     credential.RecordFailedAttempt();
+
+                    DeclareFailure(command, resolved.Identity, "CredentialsRejected");
 
                     // MaxFailedLoginAttempts is a CAP and LockoutDuration a
                     // FLOOR, both resolved from the effective policy.
                     if (credential.FailedAttemptCount >= policy.MaxFailedLoginAttempts)
+                    {
                         credential.Lock(now + policy.LockoutDuration);
+
+                        // The system locked the account, not the person who
+                        // mistyped their password: nobody asked for this, a
+                        // policy threshold was crossed. Attributing it to the
+                        // caller would say they locked themselves out, and
+                        // this attempt has no authenticated caller to blame in
+                        // any case (AsSystem, and the catalogue permits only a
+                        // System origin here).
+                        //
+                        // Transactional, unlike the attempt above: the lock IS
+                        // a state change on the credential row, and the record
+                        // of it belongs with the change it describes.
+                        _auditEvents.Emit("AccountLocked", version: 1)
+                            .AsSystem()
+                            .Primary("Credential", credential.Id.Value)
+                            .Ref("Identity", resolved.Identity.Id.Value, role: "Target")
+                            .Ref("User", resolved.Identity.UserId.Value, role: "Subject")
+                            .WithBefore(new
+                            {
+                                FailedAttemptCount = attemptsBefore,
+                                LockedUntil = (DateTimeOffset?)null,
+                            })
+                            .WithAfter(new
+                            {
+                                FailedAttemptCount = credential.FailedAttemptCount,
+                                LockedUntil = (DateTimeOffset?)credential.LockedUntil,
+                            });
+                    }
 
                     return SignInResult.Failure();
                 }
@@ -132,21 +179,66 @@ public sealed class SignInCommandHandler
                 // Step 6. Clears FailedAttemptCount and LockedUntil together.
                 credential.Unlock();
 
-                // TODO — SES-C1 step 9. Declare SignInSucceeded, SignInFailed
-                // or AccountLocked through IAuditEvents, and register the
-                // command in AuditDeclarations; the pipeline writes them
-                // inside this transaction (docs/architecture.md section 11).
-                // SignInFailed and AccountLocked must be emitted
-                // even though no session exists, and the reason is known at
-                // each return above even though SignInResult deliberately
-                // withholds it from the caller.
+                // The password verified, so this caller IS authenticated, and
+                // the record of it must say who by name. The identity is the
+                // one whose credential just verified — passed through, never
+                // looked up again (AUD-D28).
+                if (!await _bearerActorEstablisher.EstablishAsync(resolved.Identity.Id, ct))
+                    return SignInResult.Failure();
 
                 var sessionId = await CreateSessionAsync(
                     resolved.Identity, command, now, policy, ct);
 
+                _auditEvents.Emit("SignInSucceeded", version: 1)
+                    .Primary("Session", sessionId.Value)
+                    .Ref("Identity", resolved.Identity.Id.Value, role: "Target")
+                    .Ref("User", resolved.Identity.UserId.Value, role: "Subject")
+                    .WithPayload(new { IpAddress = command.IpAddress });
+
                 return SignInResult.Success(sessionId);
             },
             cancellationToken);
+    }
+
+    /// <summary>
+    /// The record of a refused attempt.
+    ///
+    /// Autonomous, and that is the whole reason this event exists separately:
+    /// it describes a failure, so it cannot ride the transaction that failed.
+    /// It survives whatever the command does afterwards.
+    ///
+    /// Anonymous by definition — nobody authenticated — which is the only
+    /// origin the catalogue permits for it.
+    ///
+    /// The attempted identifier is recorded as it was typed. It is declared
+    /// PII by the catalogue, so the secret scan does not judge it by shape
+    /// (E2b): whether an attempt can be recorded must not depend on how long
+    /// somebody's username happens to be.
+    ///
+    /// The failure category is recorded even though SignInResult withholds it
+    /// from the caller. The trail is where the difference between "no such
+    /// username" and "wrong password" is allowed to exist; the response is
+    /// where it is not.
+    /// </summary>
+    private void DeclareFailure(
+        SignInCommand command,
+        UserIdentity? identity,
+        string category)
+    {
+        var declaration = _auditEvents.Emit("SignInFailed", version: 1)
+            .WithPayload(new
+            {
+                AttemptedIdentifier = command.Username,
+                IpAddress = command.IpAddress,
+                FailureCategory = category,
+            });
+
+        // The identity when one was resolved, as the primary rather than as a
+        // ref: naming it in both places would repeat the primary entity (AE4).
+        if (identity is null)
+            declaration.Primary("Identity");
+        else
+            declaration.Primary("Identity", identity.Id.Value);
     }
 
     /// <summary>

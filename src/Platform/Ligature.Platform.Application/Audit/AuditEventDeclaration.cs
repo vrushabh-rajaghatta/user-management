@@ -61,6 +61,38 @@ public sealed class AuditEventDeclaration
     public Guid? CausationId { get; private set; }
 
     /// <summary>
+    /// Whether this event is attributed to the System actor rather than to
+    /// the command's caller. See <see cref="AsSystem"/>.
+    /// </summary>
+    public bool AttributedToSystem { get; private set; }
+
+    /// <summary>
+    /// Attribute this ONE event to the System actor.
+    ///
+    /// An attribution override, not an impersonation mechanism. Frozen
+    /// (E2b): the only actor a declaration may name is System, and there is
+    /// deliberately no As(userId) beside it — a handler that could name any
+    /// actor could write a record blaming somebody.
+    ///
+    /// It exists because a single command can produce events with different
+    /// actors. A failing sign-in that crosses the lockout threshold produces
+    /// two: the attempt, which nobody authenticated and which is therefore
+    /// anonymous, and the lock, which the system imposed by policy and which
+    /// no caller asked for. Attributing the lock to the person who mistyped
+    /// their password would say they locked their own account; attributing it
+    /// to nobody would lose who did.
+    ///
+    /// The catalogue is the second line of defence: the origin rule refuses
+    /// this wherever System is not a permitted origin for the event type.
+    /// </summary>
+    public AuditEventDeclaration AsSystem()
+    {
+        AttributedToSystem = true;
+
+        return this;
+    }
+
+    /// <summary>
     /// The record whose state this event asserts (AUD-D27). The id may be
     /// omitted only for event types the catalogue marks as not requiring one
     /// — tenant- and catalogue-level events; behaviour 14 checks.

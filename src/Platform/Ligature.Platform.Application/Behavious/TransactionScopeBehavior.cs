@@ -5,9 +5,14 @@ using Ligature.SharedKernel.Abstractions;
 namespace Ligature.Platform.Application.Behaviors;
 
 /// <summary>
-/// Behaviour 6 — transaction scope. Opens the command's transaction, mints
-/// its OperationId, fixes its clock, and commits when everything inside has
-/// returned.
+/// Behaviour 6 — transaction scope. Opens the command's transaction and
+/// commits when everything inside has returned.
+///
+/// The OperationId and the command clock are NOT minted here. They belong to
+/// the command rather than to this transaction, and they have to outlive it:
+/// autonomous records are written after this behaviour has committed, and
+/// they carry the same operation. AuditCommandScopeBehavior owns them, and
+/// sits outside this.
 ///
 /// This is what lets behaviour 7 write inside the command's transaction
 /// without any handler changing. Handlers still call
@@ -34,31 +39,15 @@ internal sealed class TransactionScopeBehavior<TCommand, TResult>
     where TCommand : ICommand<TResult>
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IAuditEmissionScope _scope;
-    private readonly IClock _clock;
 
-    public TransactionScopeBehavior(
-        IUnitOfWork unitOfWork,
-        IAuditEmissionScope scope,
-        IClock clock)
-    {
-        _unitOfWork = unitOfWork;
-        _scope = scope;
-        _clock = clock;
-    }
+    public TransactionScopeBehavior(IUnitOfWork unitOfWork)
+        => _unitOfWork = unitOfWork;
 
     public async Task<TResult> Handle(
         TCommand command,
         CancellationToken cancellationToken,
         Func<CancellationToken, Task<TResult>> next)
     {
-        // Once per dispatch, outside the retryable unit: a retried attempt
-        // is the same command, and every record it eventually commits shares
-        // one OperationId (AR15).
-        using var open = _scope.BeginCommand(
-            operationId: Guid.CreateVersion7(),
-            occurredAt: _clock.UtcNow);
-
         return await _unitOfWork.ExecuteInTransactionAsync(
             ct => next(ct),
             cancellationToken);

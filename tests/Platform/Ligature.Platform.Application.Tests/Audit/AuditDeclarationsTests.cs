@@ -1,6 +1,7 @@
 using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
 
 namespace Ligature.Platform.Application.Tests.Audit;
@@ -31,13 +32,35 @@ public sealed class AuditDeclarationsTests
         Assert.Equal(["SignedOut"], declaration.Codes);
     }
 
+    /// <summary>
+    /// Three for the bearer who activates, and one for the bearer who does
+    /// not: a rejected token is the same command's other outcome.
+    /// </summary>
     [Fact]
-    public void CRD_C1_declares_the_bearers_three_events()
+    public void CRD_C1_declares_both_outcomes()
     {
         var declaration = AuditDeclarations.For(typeof(ActivateAccountCommand));
 
         Assert.Equal("UserManagement", declaration!.OwningContext);
-        Assert.Equal(["TokenConsumed", "PasswordSet", "AccountActivated"], declaration.Codes);
+
+        Assert.Equal(
+            ["TokenConsumed", "PasswordSet", "AccountActivated", "TokenRejected"],
+            declaration.Codes);
+    }
+
+    /// <summary>
+    /// SES-C1 is the command that needs both write paths and both actors.
+    /// </summary>
+    [Fact]
+    public void SES_C1_declares_the_success_the_lock_and_the_failure()
+    {
+        var declaration = AuditDeclarations.For(typeof(SignInCommand));
+
+        Assert.Equal("UserManagement", declaration!.OwningContext);
+
+        Assert.Equal(
+            ["SignInSucceeded", "AccountLocked", "SignInFailed"],
+            declaration.Codes);
     }
 
     [Fact]
@@ -56,7 +79,8 @@ public sealed class AuditDeclarationsTests
         => [.. new[]
             {
                 typeof(CreateUserCommand), typeof(SignOutCommand),
-                typeof(ActivateAccountCommand), typeof(PlatformProvisioning),
+                typeof(ActivateAccountCommand), typeof(SignInCommand),
+                typeof(PlatformProvisioning),
             }
             .SelectMany(x => AuditDeclarations.For(x)!.Codes)
             .Distinct()];

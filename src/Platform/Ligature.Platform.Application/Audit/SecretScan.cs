@@ -23,6 +23,19 @@ namespace Ligature.Platform.Application.Audit;
 /// A match is a defect (section 15.1): the command fails, nothing is
 /// written, and the message names the path so the payload can be fixed at
 /// its source.
+///
+/// VALUE-SHAPE RULES DO NOT APPLY TO A PATH THE CATALOGUE DECLARES AS PII.
+/// Frozen (E2b). Such a path is known personal data, declared in advance and
+/// governed by the anonymisation model; the scan exists to catch secrets
+/// nobody declared, not to re-litigate data the catalogue already accounts
+/// for. Without the exemption, whether a failed sign-in could be recorded
+/// would depend on the length and character composition of whatever was
+/// typed into the username box: a long alphanumeric identifier is
+/// indistinguishable in shape from an encoded secret, so a legitimate
+/// attempt would become an emission defect, and the caller would see a 500
+/// where a plain failure belonged. Name-based detection stays mandatory
+/// everywhere, so a property called `password` is refused whatever the
+/// catalogue says about it.
 /// </summary>
 public static partial class SecretScan
 {
@@ -43,16 +56,30 @@ public static partial class SecretScan
     private static partial Regex Base64Like();
 
     /// <summary>Returns the JSON paths that look like secrets; empty when clean.</summary>
-    public static IReadOnlyList<string> Scan(JsonElement content, string root)
+    /// <param name="declaredPiiPaths">
+    /// The paths this event's catalogue entry declares as PII. Value-shape
+    /// detection is not applied to them; name-based detection still is.
+    /// </param>
+    public static IReadOnlyList<string> Scan(
+        JsonElement content,
+        string root,
+        IReadOnlySet<string>? declaredPiiPaths = null)
     {
         var findings = new List<string>();
 
-        Walk(content, root, findings);
+        Walk(content, root, findings, declaredPiiPaths ?? EmptyPaths);
 
         return findings;
     }
 
-    private static void Walk(JsonElement element, string path, List<string> findings)
+    private static readonly IReadOnlySet<string> EmptyPaths =
+        new HashSet<string>(StringComparer.Ordinal);
+
+    private static void Walk(
+        JsonElement element,
+        string path,
+        List<string> findings,
+        IReadOnlySet<string> declaredPiiPaths)
     {
         switch (element.ValueKind)
         {
@@ -68,18 +95,18 @@ public static partial class SecretScan
                         findings.Add($"{childPath} is named like a secret");
                     }
 
-                    Walk(property.Value, childPath, findings);
+                    Walk(property.Value, childPath, findings, declaredPiiPaths);
                 }
                 break;
 
             case JsonValueKind.Array:
                 var index = 0;
                 foreach (var item in element.EnumerateArray())
-                    Walk(item, $"{path}[{index++}]", findings);
+                    Walk(item, $"{path}[{index++}]", findings, declaredPiiPaths);
                 break;
 
             case JsonValueKind.String:
-                if (LooksLikeSecret(element.GetString()!))
+                if (!declaredPiiPaths.Contains(path) && LooksLikeSecret(element.GetString()!))
                     findings.Add($"{path} is shaped like a secret");
                 break;
         }

@@ -1,5 +1,6 @@
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
 
 namespace Ligature.Platform.Application.Audit;
@@ -53,7 +54,16 @@ public static class AuditDeclarations
             // arrives with E2b.
             [typeof(ActivateAccountCommand)] = new(
                 "UserManagement",
-                ["TokenConsumed", "PasswordSet", "AccountActivated"]),
+                ["TokenConsumed", "PasswordSet", "AccountActivated", "TokenRejected"]),
+
+            // SES-C1 — one command, three events, two write paths and two
+            // actors. The attempt is anonymous and autonomous, because it
+            // records a failure and must outlive the transaction that failed;
+            // the lock is the system's own act on the command's transaction;
+            // the success is the caller's.
+            [typeof(SignInCommand)] = new(
+                "UserManagement",
+                ["SignInSucceeded", "AccountLocked", "SignInFailed"]),
 
             // PRV-C1 — the tenant's first record, emitted by provisioning
             // rather than by a command. Listed so the start-time check covers

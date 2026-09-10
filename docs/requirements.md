@@ -144,7 +144,7 @@ non-decisions; reopening one is an architectural change, not an implementation
 detail.
 
 
-## Audit emission is implemented for the transactional commands only
+## Audit emission covers every implemented command
 
 **State:** the pipeline emits. `TransactionScopeBehavior` opens the command's
 transaction and `AuditEmissionBehavior` writes inside it; `AuditRecordAssembler`
@@ -157,18 +157,17 @@ SES-C2 (`SignedOut`), CRD-C1 (`TokenConsumed`, `PasswordSet`,
 `AccountActivated`) and provisioning's own `TenantProvisioned`, which is the
 tenant's Sequence 1.
 
-**What is not:** every event whose catalogue write path is `Autonomous` —
-`SignInFailed`, `TokenRejected`, `AuthorisationDenied` and the rest. Those
-describe failures, so they cannot be written on the transaction that failed,
-and the writer that commits independently of the command does not exist yet.
-Until it does, declaring one is refused as an emission defect rather than
-written transactionally. SES-C1's events wait on that writer, and on an actor
-per declaration: `AccountLocked` is a System-origin event emitted during a
-command whose own caller is anonymous.
+SES-C1 (`SignInSucceeded`, `AccountLocked`, `SignInFailed`) and CRD-C1's
+rejection (`TokenRejected`) joined in E2b, with them the autonomous write path
+and the System attribution override. All four commands now record both their
+outcomes.
 
-The consequences of that gap are visible and deliberate. An invalid activation
-token and a failed sign-in currently leave no trace, and an attempt to sign out
-of somebody else's session is refused silently rather than recorded.
+**What is not:** the three autonomous events owned by the Audit context —
+`AuthorisationDenied`, `CommandRejected` and `AuditInspected`. The first two
+cannot be written at all as catalogued (see below); the third belongs with the
+query work, since reading the trail is what it records. So a command refused by
+authorisation still leaves no trace, including an attempt to sign out of
+somebody else's session.
 
 **There is deliberately no `IAuditWriter`.** An earlier version of this entry
 and of `docs/architecture.md` §6 described one as the intended contract; the
@@ -218,6 +217,28 @@ for that reason; a shared development database also accumulates audit records
 permanently as those suites run.
 
 **Deferred to:** the Audit capability (`docs/architecture.md` §6).
+
+## AuthorisationDenied and CommandRejected have no writable form — catalogue correction
+
+**State:** both are active event types whose `primary_entity_type` is null,
+which the catalogue permits. `audit.audit_record.entity_type` is `NOT NULL`.
+There is therefore no record either event could produce: the table requires an
+entity type and the catalogue supplies none.
+
+**A contradiction between two frozen artefacts, not a bug in either.** Nothing
+declares these events yet, so nothing fails today. E2b found it while planning
+the autonomous writer and deliberately did not resolve it: inventing a
+synthetic entity type to satisfy the column would put a fiction in every such
+record, and amending the catalogue casually inside an emission story is exactly
+what release control exists to prevent.
+
+**How it must be taken:** as a catalogue correction in a new release script,
+under the existing rules — the deployed catalogue is immutable once shipped, so
+the fix ships as a new version rather than an edit. Whoever takes it decides
+what these events name as their entity, or whether the column's constraint is
+the thing that is wrong. Until then, the pipeline's refusal is honest: a
+declaration of either would fail the primary-entity rule rather than write
+something untrue.
 
 ## AUD-S12 — the canonical form is not what the database stores
 
