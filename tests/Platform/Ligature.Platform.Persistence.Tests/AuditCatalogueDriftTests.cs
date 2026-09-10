@@ -5,12 +5,17 @@ using Npgsql;
 namespace Ligature.Platform.Persistence.Tests;
 
 /// <summary>
-/// AUD-C4 seeds the event catalogue once and then no-ops forever, so a
-/// provisioned database silently keeps the rows it was seeded with. Editing
-/// AuditEventCatalogue in code therefore causes drift that nothing else
-/// reports — the same hazard CatalogueDriftTests covers for permissions, and
-/// the same remedy: read the deployed rows and compare them to what the code
-/// would seed today, field for field.
+/// The event catalogue is reconciled by Ligature.AuditSchema on every
+/// deployment, so editing AuditEventCatalogue in code and re-deploying now
+/// updates a database rather than silently leaving it behind. This still reads
+/// the deployed rows and compares them to what the code would seed today,
+/// field for field, because "the deployment reconciles it" is a claim worth
+/// checking rather than assuming — a database that missed a deployment, or a
+/// reconcile that skipped a column, both show up here.
+///
+/// Note the asymmetry: the PERMISSION catalogue is NOT reconciled. PRV-C2 is
+/// still unimplemented, so adding a permission changes nothing for an existing
+/// database, and CatalogueDriftTests covers that hazard for real.
 ///
 /// A drift here is more than a stale row. The catalogue is what AR4 and AR5
 /// resolve against and what behaviour 13 will copy onto every record, so a
