@@ -32,6 +32,7 @@ public static class AuditRecordAssembler
         AuditDeclaration permitted,
         ActorSnapshot actor,
         IAuditEventCatalogue catalogue,
+        string emissionPath,
         Guid operationId,
         DateTimeOffset occurredAt,
         DateTimeOffset capturedAt)
@@ -44,7 +45,7 @@ public static class AuditRecordAssembler
         ValidateSnapshot(actor);
 
         var rows = declarations
-            .Select(d => Resolve(d, permitted, actor, catalogue, operationId, occurredAt, capturedAt))
+            .Select(d => Resolve(d, permitted, actor, catalogue, emissionPath, operationId, occurredAt, capturedAt))
             .ToList();
 
         return OrderCausally(rows);
@@ -55,6 +56,7 @@ public static class AuditRecordAssembler
         AuditDeclaration permitted,
         ActorSnapshot actor,
         IAuditEventCatalogue catalogue,
+        string emissionPath,
         Guid operationId,
         DateTimeOffset occurredAt,
         DateTimeOffset capturedAt)
@@ -75,6 +77,20 @@ public static class AuditRecordAssembler
 
         if (type.OwningContext != permitted.OwningContext)
             failures.Add($"'{declaration.Code}' is owned by {type.OwningContext}; this emitter is {permitted.OwningContext}");
+
+        // ET6 — the catalogue decides how a record reaches the trail, and an
+        // emission path may only write what it can honour. A transactional
+        // path writing an autonomous event would tie a record of a FAILURE to
+        // the commit of the thing that failed, so it would be rolled back
+        // precisely when it was needed. The comparison is against the path
+        // passed in rather than a hard-coded refusal, so the autonomous
+        // writer, when it exists, reuses this rule instead of escaping it.
+        if (type.WritePath != emissionPath)
+        {
+            failures.Add(
+                $"'{declaration.Code}' is declared {type.WritePath} in the "
+                + $"catalogue but this is the {emissionPath} emission path (ET6)");
+        }
 
         // Behaviour 14 — origin (AR5, AR6, EO7)
         var origin = actor.OriginKind;

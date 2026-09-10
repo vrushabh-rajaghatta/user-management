@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Domain.Users;
 using Ligature.SharedKernel.Abstractions;
 using Ligature.SharedKernel.Exceptions;
@@ -31,6 +32,9 @@ public sealed class ActivateAccountCommandHandler
     private readonly IPasswordHasher _passwordHasher;
     private readonly ICredentialRepository _credentialRepository;
     private readonly IPasswordHistoryRepository _passwordHistoryRepository;
+    private readonly ITokenBearerEstablisher _tokenBearerEstablisher;
+    private readonly IExecutionContext _executionContext;
+    private readonly IAuditEvents _auditEvents;
 
     public ActivateAccountCommandHandler(
         IClock clock,
@@ -40,7 +44,10 @@ public sealed class ActivateAccountCommandHandler
         ISecurityPolicyResolver securityPolicyResolver,
         IPasswordHasher passwordHasher,
         ICredentialRepository credentialRepository,
-        IPasswordHistoryRepository passwordHistoryRepository)
+        IPasswordHistoryRepository passwordHistoryRepository,
+        ITokenBearerEstablisher tokenBearerEstablisher,
+        IExecutionContext executionContext,
+        IAuditEvents auditEvents)
     {
         _clock = clock;
         _unitOfWork = unitOfWork;
@@ -50,6 +57,9 @@ public sealed class ActivateAccountCommandHandler
         _passwordHasher = passwordHasher;
         _credentialRepository = credentialRepository;
         _passwordHistoryRepository = passwordHistoryRepository;
+        _tokenBearerEstablisher = tokenBearerEstablisher;
+        _executionContext = executionContext;
+        _auditEvents = auditEvents;
     }
 
     public async Task<ActivateAccountResult> Handle(
@@ -82,6 +92,41 @@ public sealed class ActivateAccountCommandHandler
                 if (identityId is null)
                     throw new BusinessRuleViolationException(InvalidToken);
 
+                // Step 1b. The consumption above is the authentication: it
+                // proved the bearer holds a live token for THIS identity. The
+                // identity it returned is therefore the sole authority for who
+                // is acting, and it is passed straight through. Resolving the
+                // actor any other way — a second token read, a walk from the
+                // user back to an identity — would let the actor drift from
+                // the bearer that was actually authenticated (AUD-D28).
+                //
+                // Everything after this point runs under an established
+                // caller, which is what lets the three records below carry an
+                // authenticated origin. A false result means the identity or
+                // its user has gone missing inside this very transaction, so
+                // it collapses into the same opaque rejection as every other
+                // invalid activation.
+                if (!await _tokenBearerEstablisher.EstablishAsync(identityId, ct))
+                    throw new BusinessRuleViolationException(InvalidToken);
+
+                // Read back rather than derived: the Subject ref must be the
+                // user of the established actor, not a second lookup.
+                var subject = _executionContext.UserId;
+
+                _auditEvents.Emit("TokenConsumed", version: 1)
+                    .Primary("Token", presented.TokenId.Value)
+                    .Ref("Identity", identityId.Value, role: "Target")
+                    .Ref("User", subject.Value, role: "Subject")
+                    .WithPayload(new
+                    {
+                        // What consumed it, not what it claimed to be: the
+                        // consumption query matches on id, secret and
+                        // liveness, so the token's own type is not something
+                        // this command has verified.
+                        consumedBy = "Activation",
+                        consumedAt = now,
+                    });
+
                 // Step 2. PasswordMinLength is a FLOOR — max(tenant, baseline)
                 // — resolved at evaluation time, so a tightened baseline
                 // applies immediately (inv. 30, 31).
@@ -111,9 +156,13 @@ public sealed class ActivateAccountCommandHandler
                 // activated would assert an authentication that did not happen;
                 // that this person set their own password is an audit fact, not
                 // a provenance column.
+                // Hoisted so the record can name the row it describes; the
+                // catalogue makes Credential the primary entity of PasswordSet.
+                var credentialId = CredentialId.New();
+
                 await _credentialRepository.AddAsync(
                     Credential.Create(
-                        CredentialId.New(),
+                        credentialId,
                         identityId,
                         IdentityType.Local,
                         hashed.Hash,
@@ -133,12 +182,26 @@ public sealed class ActivateAccountCommandHandler
                         createdAt: now),
                     ct);
 
-                // TODO — CRD-C1 step 7. Declare TokenConsumed, PasswordSet
-                // and AccountActivated through IAuditEvents, and register the
-                // command in AuditDeclarations. The pipeline writes them
-                // inside this transaction (docs/architecture.md section 11).
-                // This command has no established caller yet, which is the
-                // token-bearer path that story also has to build.
+                // The hash is the one thing that must never appear. The
+                // algorithm marker is a version label, and whether a password
+                // change is forced is a fact a reviewer needs.
+                _auditEvents.Emit("PasswordSet", version: 1)
+                    .Primary("Credential", credentialId.Value)
+                    .Ref("Identity", identityId.Value, role: "Target")
+                    .Ref("User", subject.Value, role: "Subject")
+                    .WithPayload(new
+                    {
+                        algorithm = hashed.Algorithm,
+                        mustChangePassword = false,
+                        setBy = "Activation",
+                    });
+
+                // Shape None in the catalogue: the fact that it happened, to
+                // whom, and by whom is the whole record. There is no state to
+                // describe that the other two have not already described.
+                _auditEvents.Emit("AccountActivated", version: 1)
+                    .Primary("Identity", identityId.Value)
+                    .Ref("User", subject.Value, role: "Subject");
 
                 return new ActivateAccountResult(identityId);
             },

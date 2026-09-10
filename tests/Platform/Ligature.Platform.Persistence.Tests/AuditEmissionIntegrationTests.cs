@@ -371,8 +371,8 @@ public sealed class AuditEmissionIntegrationTests
     {
         await TestDatabase.EnsureProvisionedAsync();
 
-        var administrator = await PermanentTestCaller.EnsureAsync(
-            ConnectionString, roleCode);
+        var administrator = (await PermanentTestCaller.EnsureAsync(
+            ConnectionString, roleCode)).UserId;
 
         await using var provider = new ServiceCollection()
             .AddPlatformApplication()

@@ -35,17 +35,26 @@ internal static class PermanentTestCaller
     /// <summary>
     /// Ensures the caller for this role exists, and returns it. Idempotent:
     /// on the second and later runs every statement is a no-op.
+    ///
+    /// Distinct per role: a caller holding access-reviewer must not be the
+    /// caller holding user-administrator, or a test proving that the pipeline
+    /// checks the SPECIFIC permission would prove nothing.
     /// </summary>
     /// <param name="roleCode">
     /// The seeded role the caller holds, or null for a caller holding none.
     /// </param>
-    internal static async Task<UserId> EnsureAsync(
+    internal static Task<PermanentCaller> EnsureAsync(
         string connectionString, string? roleCode)
+        => EnsureAsync(connectionString, roleCode ?? "unprivileged", roleCode);
+
+    /// <summary>
+    /// The same, for callers a test distinguishes by purpose rather than by
+    /// role — two role-less callers where one must not be the other.
+    /// </summary>
+    internal static async Task<PermanentCaller> EnsureAsync(
+        string connectionString, string label, string? roleCode)
     {
-        // Distinct per role: a caller holding access-reviewer must not be the
-        // caller holding user-administrator, or a test proving that the
-        // pipeline checks the SPECIFIC permission would prove nothing.
-        var label = roleCode ?? "unprivileged";
+        ArgumentException.ThrowIfNullOrWhiteSpace(label);
 
         var userId = new UserId(Derive("user", label));
         var identityId = Derive("identity", label);
@@ -132,7 +141,7 @@ internal static class PermanentTestCaller
 
         await transaction.CommitAsync();
 
-        return userId;
+        return new PermanentCaller(userId, new UserIdentityId(identityId));
     }
 
     /// <summary>
@@ -155,3 +164,10 @@ internal static class PermanentTestCaller
         return new Guid(bytes, bigEndian: true);
     }
 }
+
+/// <summary>
+/// A caller that outlives the test. Both identifiers are stable across runs,
+/// which is the point: the rows an audit record refers to cannot be removed,
+/// so they are reused rather than recreated.
+/// </summary>
+internal sealed record PermanentCaller(UserId UserId, UserIdentityId IdentityId);

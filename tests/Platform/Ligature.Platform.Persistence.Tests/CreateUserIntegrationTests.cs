@@ -341,8 +341,8 @@ public sealed class CreateUserIntegrationTests
         // Seeded once and left in place: USR-C1 is audited, so the caller and
         // the assignment that authorised it are referenced by rows nobody can
         // delete. See PermanentTestCaller.
-        var administrator = await PermanentTestCaller.EnsureAsync(
-            ConnectionString, roleCode);
+        var administrator = (await PermanentTestCaller.EnsureAsync(
+            ConnectionString, roleCode)).UserId;
 
         await using var provider = BuildProvider();
         using var scope = provider.CreateScope();

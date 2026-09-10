@@ -697,6 +697,26 @@ public sealed class AuthenticationEndToEndTests
         string Username,
         string Token);
 
+    /// <summary>
+    /// Fixed identifiers, because this suite's actor cannot be thrown away any
+    /// more. Activating and signing out are both audited, so the user and the
+    /// identity are referenced by records no role may delete. Everything that
+    /// makes the actor PENDING again — its credential, its history, its
+    /// sessions and its tokens — is deleted and recreated per run, and the two
+    /// pinned rows are reused rather than multiplied.
+    ///
+    /// One actor for the whole class: xUnit runs the tests within a class
+    /// sequentially, and each run starts from the state the reset establishes
+    /// rather than from whatever the previous test left.
+    /// </summary>
+    private static readonly Guid PendingUser =
+        Guid.Parse("6a1d0f74-3c2b-4a51-9e77-0f4c1b8d2a90");
+
+    private static readonly Guid PendingIdentity =
+        Guid.Parse("9c84b2e6-57af-4d03-8b19-6e2f7a5c4d11");
+
+    private const string PendingUsername = "permanent-auth-pending";
+
     private static async Task RunAsync(Func<HttpClient, Actor, Task> body)
     {
         await TestDatabase.EnsureProvisionedAsync();
@@ -711,31 +731,67 @@ public sealed class AuthenticationEndToEndTests
         }
         finally
         {
-            await DeleteActorAsync(actor.UserId);
+            // The actor's own rows stay. What made this run distinct does not.
+            await ResetPendingAsync();
         }
     }
 
     /// <summary>
-    /// A user with an identity and an activation token, and deliberately NO
-    /// credential — inv. 15, the pending-activation state, which exists as the
-    /// absence of a row rather than as a status that could drift out of step
-    /// with reality.
+    /// The actor, in the pending-activation state: an identity with an
+    /// activation token and deliberately NO credential — inv. 15, which exists
+    /// as the absence of a row rather than as a status that could drift out of
+    /// step with reality.
+    ///
+    /// Idempotent. The two pinned rows are created once and thereafter only
+    /// reset: both statuses go back to Active, because tests here deactivate
+    /// them, and a deactivated actor left behind would break the next run.
     /// </summary>
     private static async Task<Actor> SeedPendingAsync()
     {
-        var discriminator = Guid.NewGuid().ToString("N");
         var now = DateTimeOffset.UtcNow;
 
-        var user = User.CreateHuman(
-            UserId.New(), "Host", "Tester",
-            $"Host Tester {discriminator[..8]}",
-            $"host-{discriminator}@example.test", now, User.SystemUserId);
+        await ResetPendingAsync();
 
-        var username = $"host-{discriminator[..12]}";
+        await using (var connection = await TestDatabase.OpenAsync())
+        {
+            await using (var user = new NpgsqlCommand(
+                """
+                INSERT INTO app_user
+                    (id, actor_type, first_name, last_name, display_name, email,
+                     status, created_at, created_by, updated_at, updated_by)
+                VALUES
+                    (@id, 'Human', 'Host', 'Tester', 'Host Tester',
+                     'permanent-auth-pending@example.test',
+                     'Active', @now, @system, @now, @system)
+                ON CONFLICT (id) DO UPDATE SET status = 'Active'
+                """, connection))
+            {
+                user.Parameters.AddWithValue("id", PendingUser);
+                user.Parameters.AddWithValue("now", now);
+                user.Parameters.AddWithValue("system", User.SystemUserId.Value);
 
-        var identity = UserIdentity.CreateLocal(
-            UserIdentityId.New(), user.Id, ActorType.Human,
-            username, now, User.SystemUserId);
+                await user.ExecuteNonQueryAsync();
+            }
+
+            await using var identity = new NpgsqlCommand(
+                """
+                INSERT INTO user_identity
+                    (id, user_id, actor_type, identity_type, identity_provider,
+                     subject_id, username, status, created_at, created_by)
+                VALUES
+                    (@id, @user, 'Human', 'Local', 'Application',
+                     @username, @username, 'Active', @now, @system)
+                ON CONFLICT (id) DO UPDATE SET status = 'Active'
+                """, connection);
+
+            identity.Parameters.AddWithValue("id", PendingIdentity);
+            identity.Parameters.AddWithValue("user", PendingUser);
+            identity.Parameters.AddWithValue("username", PendingUsername);
+            identity.Parameters.AddWithValue("now", now);
+            identity.Parameters.AddWithValue("system", User.SystemUserId.Value);
+
+            await identity.ExecuteNonQueryAsync();
+        }
 
         // The real token service, so the stored hash is the one the real
         // consumption path will recompute.
@@ -743,17 +799,40 @@ public sealed class AuthenticationEndToEndTests
         var tokenId = UserTokenId.New();
         var material = tokenService.Generate(tokenId);
 
-        var token = UserToken.Create(
-            tokenId, identity.Id, TokenType.Activation, material.Hash,
-            now, now.AddHours(72), User.SystemUserId);
+        await using (var context = CreateContext())
+        {
+            context.Add(UserToken.Create(
+                tokenId, new UserIdentityId(PendingIdentity), TokenType.Activation,
+                material.Hash, now, now.AddHours(72), User.SystemUserId));
 
-        await using var context = CreateContext();
+            await context.SaveChangesAsync(CancellationToken.None);
+        }
 
-        context.AddRange(user, identity, token);
+        return new Actor(
+            new UserId(PendingUser), new UserIdentityId(PendingIdentity),
+            PendingUsername, material.PlainText);
+    }
 
-        await context.SaveChangesAsync(CancellationToken.None);
+    /// <summary>
+    /// Everything the actor accumulated, without touching the actor. These are
+    /// the rows the trail does not point at, so they are the rows that may go.
+    /// </summary>
+    private static async Task ResetPendingAsync()
+    {
+        await using var connection = await TestDatabase.OpenAsync();
 
-        return new Actor(user.Id, identity.Id, username, material.PlainText);
+        foreach (var sql in new[]
+        {
+            "DELETE FROM password_history WHERE user_identity_id = @id",
+            "DELETE FROM credential WHERE user_identity_id = @id",
+            "DELETE FROM user_token WHERE user_identity_id = @id",
+            "DELETE FROM user_session WHERE user_identity_id = @id",
+        })
+        {
+            await using var command = new NpgsqlCommand(sql, connection);
+            command.Parameters.AddWithValue("id", PendingIdentity);
+            await command.ExecuteNonQueryAsync();
+        }
     }
 
     private static LigatureDbContext CreateContext()

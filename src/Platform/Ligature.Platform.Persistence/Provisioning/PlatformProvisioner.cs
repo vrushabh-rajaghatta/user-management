@@ -225,6 +225,7 @@ public sealed class PlatformProvisioner
             AuditDeclarations.For(typeof(PlatformProvisioning))!,
             ActorSnapshot.System(executionTimestamp),
             AuditEventCatalogueLoader.FromSeeds(),
+            AuditWritePath.Transactional,
             operationId: Guid.CreateVersion7(),
             occurredAt: executionTimestamp,
             capturedAt: executionTimestamp);

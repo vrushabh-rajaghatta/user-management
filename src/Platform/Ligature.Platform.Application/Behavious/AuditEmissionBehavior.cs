@@ -81,6 +81,7 @@ internal sealed class AuditEmissionBehavior<TCommand, TResult>
             permitted,
             ActorSnapshot.FromContext(_executionContext),
             _catalogue,
+            AuditWritePath.Transactional,
             _scope.OperationId,
             _scope.OccurredAt,
             capturedAt: _clock.UtcNow);

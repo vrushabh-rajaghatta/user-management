@@ -71,6 +71,11 @@ public static class DependencyInjection
         services.AddSingleton<IAuditEventCatalogue>(
             _ => new LazyAuditEventCatalogue(connectionString));
 
+        // AUD-D28's establishment path: the caller of a token-bearer command,
+        // established from the identity their token's consumption returned.
+        // Scoped, like the context it writes into.
+        services.AddScoped<ITokenBearerEstablisher, TokenBearerEstablisher>();
+
         // The User Management side of the section 17 ownership boundary. The
         // Host extracts a SessionId and asks this; it does not decide session
         // validity itself.

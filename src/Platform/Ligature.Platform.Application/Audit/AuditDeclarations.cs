@@ -1,4 +1,6 @@
+using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.SignOut;
 
 namespace Ligature.Platform.Application.Audit;
 
@@ -34,6 +36,24 @@ public static class AuditDeclarations
             [typeof(CreateUserCommand)] = new(
                 "UserManagement",
                 ["UserCreated", "IdentityCreated", "TokenIssued"]),
+
+            // SES-C2 — one record, and only when a session actually changed
+            // state. The no-op outcomes declare nothing: a record of a
+            // revocation that did not happen would be false, and the refusal
+            // of an attempt against someone else's session is AuthorisationDenied,
+            // which is autonomous and arrives with E2b.
+            [typeof(SignOutCommand)] = new(
+                "UserManagement",
+                ["SignedOut"]),
+
+            // CRD-C1 — the bearer's own three. All require an authenticated
+            // origin, which is why this command establishes its actor from
+            // the identity its token consumption returned (AUD-D28). A
+            // rejected token emits TokenRejected, which is autonomous and
+            // arrives with E2b.
+            [typeof(ActivateAccountCommand)] = new(
+                "UserManagement",
+                ["TokenConsumed", "PasswordSet", "AccountActivated"]),
 
             // PRV-C1 — the tenant's first record, emitted by provisioning
             // rather than by a command. Listed so the start-time check covers

@@ -13,14 +13,25 @@ using Npgsql;
 namespace Ligature.Platform.Persistence.Tests;
 
 /// <summary>
-/// CRD-C1 end to end: no authenticated caller, a real token, the real adapters,
-/// dispatch through the pipeline, and the rows read back from PostgreSQL.
+/// CRD-C1 end to end: a real token, the real adapters, dispatch through the
+/// pipeline, and the rows read back from PostgreSQL.
 ///
-/// Target database comes from LIGATURE_CONNECTION. These tests FAIL rather
-/// than skip when PostgreSQL is unreachable — see TestDatabase.
+/// The caller is no longer nobody. Consuming the token establishes the bearer
+/// as the actor (AUD-D28), which is what lets the three records this command
+/// now writes carry an authenticated origin.
+///
+/// Runs against its own provisioned database rather than the shared one, for
+/// the reason ActivationDatabase explains: an activated user is permanently
+/// referenced by the trail and cannot be cleaned up afterwards.
 /// </summary>
 public sealed class ActivateAccountIntegrationTests
+    : IClassFixture<ActivationDatabase>
 {
+    private readonly ActivationDatabase _database;
+
+    public ActivateAccountIntegrationTests(ActivationDatabase database)
+        => _database = database;
+
     private static readonly DateTimeOffset Now =
         new(2026, 9, 8, 9, 0, 0, TimeSpan.Zero);
 
@@ -218,6 +229,284 @@ public sealed class ActivateAccountIntegrationTests
         });
     }
 
+    // ------------------------------------------------------------ the trail
+
+    /// <summary>
+    /// CRD-C1's three records. The bearer proved possession of a token, which
+    /// is the whole of their authentication, and the records that follow are
+    /// attributed to them: the trail's answer to "who set this password" is
+    /// the person who set it, not the System actor that owns the provenance
+    /// columns on the credential row.
+    /// </summary>
+    [Fact]
+    public async Task Activation_records_the_bearers_three_events_under_one_operation()
+    {
+        await RunAsync(async (dispatcher, fixture) =>
+        {
+            await dispatcher.SendAsync<ActivateAccountCommand, ActivateAccountResult>(
+                new ActivateAccountCommand(fixture.TokenPlainText, GoodPassword),
+                CancellationToken.None);
+
+            var records = await ReadTrailAsync(fixture);
+
+            Assert.Equal(
+                ["TokenConsumed", "PasswordSet", "AccountActivated"],
+                records.Select(x => x.EventType));
+
+            // AR15 — one command, one operation. AR16 stays empty: these three
+            // are members of the same act, not causes of one another.
+            Assert.Single(records.Select(x => x.OperationId).Distinct());
+            Assert.All(records, x => Assert.Null(x.CausationId));
+
+            Assert.All(records, x =>
+            {
+                Assert.Equal("Transactional", x.WritePath);
+                Assert.Equal("Authenticated", x.OriginKind);
+                Assert.Equal(fixture.UserId.Value, x.ActorUserId);
+                Assert.Equal("Human", x.ActorType);
+
+                // Nobody granted the bearer anything. Possession of a token is
+                // not a role, and AR12's columns say so by staying empty.
+                Assert.Null(x.AuthorizingRoleId);
+                Assert.Null(x.AuthorizingAssignmentId);
+            });
+
+            var consumed = records[0];
+            var passwordSet = records[1];
+            var activated = records[2];
+
+            Assert.Equal("Token", consumed.EntityType);
+            Assert.Equal(fixture.TokenId.Value, consumed.EntityId);
+
+            Assert.Equal("Credential", passwordSet.EntityType);
+            Assert.Equal("Identity", activated.EntityType);
+            Assert.Equal(fixture.IdentityId.Value, activated.EntityId);
+
+            // Shape None: the fact IS the record.
+            Assert.Null(activated.Payload);
+            Assert.Null(activated.Before);
+            Assert.Null(activated.After);
+
+            Assert.Equal(
+                [$"Identity/{fixture.IdentityId.Value}/Target",
+                 $"User/{fixture.UserId.Value}/Subject"],
+                await ReadReferencesAsync(consumed.AuditId));
+
+            Assert.Equal(
+                [$"Identity/{fixture.IdentityId.Value}/Target",
+                 $"User/{fixture.UserId.Value}/Subject"],
+                await ReadReferencesAsync(passwordSet.AuditId));
+
+            Assert.Equal(
+                [$"User/{fixture.UserId.Value}/Subject"],
+                await ReadReferencesAsync(activated.AuditId));
+        });
+    }
+
+    /// <summary>
+    /// AUD-D28's chain, asserted end to end: the actor on the records is the
+    /// user that owns the identity the CONSUMPTION returned, not one resolved
+    /// some other way.
+    ///
+    /// The fixture seeds a second user with an identity of their own, so a
+    /// resolution that wandered — by username, by "the most recent identity",
+    /// by anything but the consumed id — would have another candidate to land
+    /// on and this assertion would catch it.
+    /// </summary>
+    [Fact]
+    public async Task The_actor_is_the_user_that_owns_the_consumed_identity()
+    {
+        await RunAsync(async (dispatcher, fixture) =>
+        {
+            var bystander = await SeedAsync();
+
+            await dispatcher.SendAsync<ActivateAccountCommand, ActivateAccountResult>(
+                new ActivateAccountCommand(fixture.TokenPlainText, GoodPassword),
+                CancellationToken.None);
+
+            var records = await ReadTrailAsync(fixture);
+
+            Assert.NotEmpty(records);
+
+            Assert.All(records, x =>
+            {
+                Assert.Equal(fixture.UserId.Value, x.ActorUserId);
+                Assert.NotEqual(bystander.UserId.Value, x.ActorUserId);
+            });
+
+            // And the subject the records name is that same person.
+            Assert.All(
+                await ReadReferencesAsync(records[0].AuditId),
+                x => Assert.DoesNotContain(bystander.UserId.Value.ToString(), x));
+        });
+    }
+
+    [Fact]
+    public async Task A_rejected_password_records_nothing()
+    {
+        await RunAsync(async (dispatcher, fixture) =>
+        {
+            await Assert.ThrowsAsync<BusinessRuleViolationException>(
+                () => dispatcher.SendAsync<ActivateAccountCommand, ActivateAccountResult>(
+                    new ActivateAccountCommand(fixture.TokenPlainText, "short"),
+                    CancellationToken.None));
+
+            // The token consumption, the establishment and the three
+            // declarations all happened. None of it was written, because the
+            // command they belonged to did not commit (invariant 16).
+            Assert.Empty(await ReadTrailAsync(fixture));
+        });
+    }
+
+    /// <summary>
+    /// An invalid token is not recorded at all yet. TokenRejected is autonomous
+    /// — it describes a FAILURE, so it cannot be written on the transaction
+    /// that failed — and the autonomous writer arrives with the next story.
+    /// Asserted rather than assumed, so the gap is visible and dated.
+    /// </summary>
+    [Fact]
+    public async Task An_invalid_token_records_nothing_until_the_autonomous_writer_exists()
+    {
+        await RunAsync(async (dispatcher, fixture) =>
+        {
+            await Assert.ThrowsAsync<BusinessRuleViolationException>(
+                () => dispatcher.SendAsync<ActivateAccountCommand, ActivateAccountResult>(
+                    new ActivateAccountCommand(fixture.TokenPlainText + "x", GoodPassword),
+                    CancellationToken.None));
+
+            Assert.Empty(await ReadTrailAsync(fixture));
+        });
+    }
+
+    /// <summary>
+    /// Behaviour 14's secret scan is a safety net, not the design. The design
+    /// is that neither the token the bearer presented nor the hash of the
+    /// password they chose is ever put into a declaration.
+    /// </summary>
+    [Fact]
+    public async Task Neither_the_token_nor_the_password_hash_reaches_the_trail()
+    {
+        await RunAsync(async (dispatcher, fixture) =>
+        {
+            await dispatcher.SendAsync<ActivateAccountCommand, ActivateAccountResult>(
+                new ActivateAccountCommand(fixture.TokenPlainText, GoodPassword),
+                CancellationToken.None);
+
+            var trail = await DumpTrailAsync();
+
+            Assert.DoesNotContain(fixture.TokenPlainText, trail, StringComparison.Ordinal);
+            Assert.DoesNotContain(fixture.Secret, trail, StringComparison.Ordinal);
+            Assert.DoesNotContain(GoodPassword, trail, StringComparison.Ordinal);
+
+            var credential = await ReadCredentialAsync(fixture.IdentityId);
+
+            Assert.DoesNotContain(credential.PasswordHash, trail, StringComparison.Ordinal);
+        });
+    }
+
+    // ------------------------------------------------------- trail readers
+
+    private sealed record TrailRecord(
+        Guid AuditId, string EventType, string WritePath, string OriginKind,
+        Guid? ActorUserId, string? ActorType, Guid? AuthorizingRoleId,
+        Guid? AuthorizingAssignmentId, string EntityType, Guid? EntityId,
+        Guid OperationId, Guid? CausationId, string? Before, string? After,
+        string? Payload);
+
+    /// <summary>
+    /// The records of THIS activation, in sequence order.
+    ///
+    /// The database belongs to the class rather than to one test, so the trail
+    /// also holds what the other tests did. The operation is located from the
+    /// one record whose subject this test knows — the token it presented — and
+    /// an activation that wrote nothing simply finds no operation, which is
+    /// what the "records nothing" tests assert.
+    /// </summary>
+    private async Task<IReadOnlyList<TrailRecord>> ReadTrailAsync(Fixture fixture)
+    {
+        await using var connection = await _database.OpenAsync();
+
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT audit_id, event_type, write_path, origin_kind, actor_user_id,
+                   actor_type, authorizing_role_id, authorizing_assignment_id,
+                   entity_type, entity_id, operation_id, causation_id,
+                   before::text, after::text, payload::text
+            FROM audit.audit_record
+            WHERE operation_id = (
+                SELECT operation_id FROM audit.audit_record
+                WHERE event_type = 'TokenConsumed' AND entity_id = @tokenId)
+            ORDER BY sequence
+            """, connection);
+
+        command.Parameters.AddWithValue("tokenId", fixture.TokenId.Value);
+
+        var records = new List<TrailRecord>();
+
+        await using var reader = await command.ExecuteReaderAsync();
+
+        while (await reader.ReadAsync())
+        {
+            records.Add(new TrailRecord(
+                reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
+                reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetGuid(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetGuid(6),
+                reader.IsDBNull(7) ? null : reader.GetGuid(7),
+                reader.GetString(8),
+                reader.IsDBNull(9) ? null : reader.GetGuid(9),
+                reader.GetGuid(10),
+                reader.IsDBNull(11) ? null : reader.GetGuid(11),
+                reader.IsDBNull(12) ? null : reader.GetString(12),
+                reader.IsDBNull(13) ? null : reader.GetString(13),
+                reader.IsDBNull(14) ? null : reader.GetString(14)));
+        }
+
+        return records;
+    }
+
+    private async Task<IReadOnlyList<string>> ReadReferencesAsync(Guid auditId)
+    {
+        await using var connection = await _database.OpenAsync();
+
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT entity_type || '/' || entity_id || '/' || ref_role
+            FROM audit.audit_entity_ref
+            WHERE audit_id = @id
+            ORDER BY entity_type, ref_role
+            """, connection);
+
+        command.Parameters.AddWithValue("id", auditId);
+
+        var refs = new List<string>();
+
+        await using var reader = await command.ExecuteReaderAsync();
+
+        while (await reader.ReadAsync())
+            refs.Add(reader.GetString(0));
+
+        return refs;
+    }
+
+    /// <summary>Every record and every ref as text, for the absence checks.</summary>
+    private async Task<string> DumpTrailAsync()
+    {
+        await using var connection = await _database.OpenAsync();
+
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT coalesce(string_agg(to_jsonb(r)::text, ' '), '')
+                   || ' '
+                   || coalesce((SELECT string_agg(to_jsonb(e)::text, ' ')
+                                FROM audit.audit_entity_ref e), '')
+            FROM audit.audit_record r
+            """, connection);
+
+        return (string)(await command.ExecuteScalarAsync())!;
+    }
+
     // ------------------------------------------------------------- harness
 
     private sealed record Fixture(
@@ -227,41 +516,38 @@ public sealed class ActivateAccountIntegrationTests
         string Secret,
         string TokenPlainText);
 
-    private static async Task RunAsync(
+    private async Task RunAsync(
         Func<ICommandDispatcher, Fixture, Task> body)
     {
-        await TestDatabase.EnsureProvisionedAsync();
-
         var fixture = await SeedAsync();
 
-        try
-        {
-            await using var provider = BuildProvider();
-            using var scope = provider.CreateScope();
+        await using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
 
-            // Deliberately NO execution context is established: CRD-C1 runs
-            // anonymously, and the pipeline must let it through.
-            await body(
-                scope.ServiceProvider.GetRequiredService<ICommandDispatcher>(),
-                fixture);
-        }
-        finally
-        {
-            await DeleteActorAsync(fixture.UserId);
-        }
+        // Deliberately NO execution context is established here: CRD-C1 is an
+        // anonymous command, the pipeline must let it through, and the caller
+        // it ends up acting as is the one its own token consumption
+        // established.
+        //
+        // Nothing is deleted afterwards. The user this seeded is an audit
+        // actor by the time the command returns, and the database is thrown
+        // away with the class instead.
+        await body(
+            scope.ServiceProvider.GetRequiredService<ICommandDispatcher>(),
+            fixture);
     }
 
-    private static ServiceProvider BuildProvider()
+    private ServiceProvider BuildProvider()
         => new ServiceCollection()
             .AddPlatformApplication()
-            .AddPlatformPersistence(TestDatabase.ConnectionString)
+            .AddPlatformPersistence(_database.ConnectionString)
             .BuildServiceProvider(validateScopes: true);
 
     /// <summary>
     /// A user with a local identity and no credential — exactly the state
     /// USR-C1 leaves behind (inv. 15).
     /// </summary>
-    private static async Task<Fixture> SeedAsync()
+    private async Task<Fixture> SeedAsync()
     {
         var discriminator = Guid.NewGuid().ToString("N");
 
@@ -312,7 +598,7 @@ public sealed class ActivateAccountIntegrationTests
     /// Issues an extra token in a chosen terminal state, returning its
     /// delivered form.
     /// </summary>
-    private static async Task<string> IssueTokenAsync(
+    private async Task<string> IssueTokenAsync(
         UserIdentityId identityId,
         DateTimeOffset? expiresAt = null,
         DateTimeOffset? invalidatedAt = null,
@@ -321,7 +607,7 @@ public sealed class ActivateAccountIntegrationTests
         var tokenId = UserTokenId.New();
         var material = new UserTokenService().Generate(tokenId);
 
-        await using var connection = await TestDatabase.OpenAsync();
+        await using var connection = await _database.OpenAsync();
 
         await using var command = new NpgsqlCommand(
             """
@@ -347,10 +633,10 @@ public sealed class ActivateAccountIntegrationTests
         return material.PlainText;
     }
 
-    private static LigatureDbContext CreateContext()
+    private LigatureDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<LigatureDbContext>()
-            .UseNpgsql(TestDatabase.ConnectionString)
+            .UseNpgsql(_database.ConnectionString)
             .AddInterceptors(
                 new ProvenanceStampingInterceptor(
                     new FixedClock(Now), executionContext: null))
@@ -366,10 +652,10 @@ public sealed class ActivateAccountIntegrationTests
         bool MustChangePassword, int FailedAttemptCount,
         DateTimeOffset? LockedUntil, Guid CreatedBy);
 
-    private static async Task<CredentialRow> ReadCredentialAsync(
+    private async Task<CredentialRow> ReadCredentialAsync(
         UserIdentityId identityId)
     {
-        await using var connection = await TestDatabase.OpenAsync();
+        await using var connection = await _database.OpenAsync();
 
         await using var command = new NpgsqlCommand(
             """
@@ -394,9 +680,9 @@ public sealed class ActivateAccountIntegrationTests
 
     private sealed record HistoryRow(string PasswordHash, string PasswordAlgorithm);
 
-    private static async Task<HistoryRow> ReadHistoryAsync(UserIdentityId identityId)
+    private async Task<HistoryRow> ReadHistoryAsync(UserIdentityId identityId)
     {
-        await using var connection = await TestDatabase.OpenAsync();
+        await using var connection = await _database.OpenAsync();
 
         await using var command = new NpgsqlCommand(
             """
@@ -413,9 +699,9 @@ public sealed class ActivateAccountIntegrationTests
         return new HistoryRow(reader.GetString(0), reader.GetString(1));
     }
 
-    private static async Task<DateTimeOffset?> ReadTokenUsedAtAsync(UserTokenId id)
+    private async Task<DateTimeOffset?> ReadTokenUsedAtAsync(UserTokenId id)
     {
-        await using var connection = await TestDatabase.OpenAsync();
+        await using var connection = await _database.OpenAsync();
 
         await using var command = new NpgsqlCommand(
             "SELECT used_at FROM user_token WHERE id = @id", connection);
@@ -435,10 +721,10 @@ public sealed class ActivateAccountIntegrationTests
         };
     }
 
-    private static async Task<string> DumpRowAsync(
+    private async Task<string> DumpRowAsync(
         string table, UserIdentityId identityId)
     {
-        await using var connection = await TestDatabase.OpenAsync();
+        await using var connection = await _database.OpenAsync();
 
         await using var command = new NpgsqlCommand(
             $"SELECT {table}::text FROM {table} WHERE user_identity_id = @id",
@@ -449,16 +735,16 @@ public sealed class ActivateAccountIntegrationTests
         return (string)(await command.ExecuteScalarAsync())!;
     }
 
-    private static Task<int> CountCredentialsAsync(UserIdentityId identityId)
+    private Task<int> CountCredentialsAsync(UserIdentityId identityId)
         => CountAsync("credential", identityId);
 
-    private static Task<int> CountHistoryAsync(UserIdentityId identityId)
+    private Task<int> CountHistoryAsync(UserIdentityId identityId)
         => CountAsync("password_history", identityId);
 
-    private static async Task<int> CountAsync(
+    private async Task<int> CountAsync(
         string table, UserIdentityId identityId)
     {
-        await using var connection = await TestDatabase.OpenAsync();
+        await using var connection = await _database.OpenAsync();
 
         await using var command = new NpgsqlCommand(
             $"SELECT count(*) FROM {table} WHERE user_identity_id = @id",
@@ -469,33 +755,6 @@ public sealed class ActivateAccountIntegrationTests
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
-    private static async Task DeleteActorAsync(UserId userId)
-    {
-        await using var connection = await TestDatabase.OpenAsync();
-
-        foreach (var sql in new[]
-        {
-            """
-            DELETE FROM password_history WHERE user_identity_id IN (
-                SELECT id FROM user_identity WHERE user_id = @id)
-            """,
-            """
-            DELETE FROM credential WHERE user_identity_id IN (
-                SELECT id FROM user_identity WHERE user_id = @id)
-            """,
-            """
-            DELETE FROM user_token WHERE user_identity_id IN (
-                SELECT id FROM user_identity WHERE user_id = @id)
-            """,
-            "DELETE FROM user_identity WHERE user_id = @id",
-            "DELETE FROM app_user WHERE id = @id",
-        })
-        {
-            await using var command = new NpgsqlCommand(sql, connection);
-            command.Parameters.AddWithValue("id", userId.Value);
-            await command.ExecuteNonQueryAsync();
-        }
-    }
 
     private sealed class FixedClock : IClock
     {
