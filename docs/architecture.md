@@ -234,6 +234,12 @@ Absent authority is a real answer, not a half-built context: sign-in, self-servi
 
 There are two write seams, `IExecutionContextInitializer` (identity) and `IAuthorityInitializer` (authority), kept separate so the component that records authority cannot rewrite who the caller is.
 
+**Token-bearer commands establish their identity later, and that is the rule, not an exception. Frozen (E2a).** For a token-bearer command, actor identity may be established inside the handler after successful bearer validation or consumption. Once established it is atomic and immutable for the remainder of the command execution, exactly as it is on the normal path. This does not loosen the rule above: it is a second establishment path, anticipated by AUD-D28, for commands that carry their credential in their payload. Which identity the token belongs to is not knowable before the conditional update that consumes it has run, so establishing earlier would mean either resolving the identity twice or trusting something the bearer supplied.
+
+The consumed identity is the sole authority for who is acting. `ITokenBearerEstablisher` therefore takes a `UserIdentityId` rather than resolving one, and it must be the exact value the consumption returned. No second token lookup, no walk from the user back to an identity, no fallback to `ICallerEstablisher`. The chain is: token, conditional consume, that identity, the establisher, the execution context, and the refs on the records. Any other route lets the actor drift from the bearer who was actually authenticated, and a drifted actor is indistinguishable in the trail from a correct one.
+
+The establisher adds no eligibility rules. Whether a deactivated user may still activate an account is a User Management question, recorded as an open requirement, and answering it inside an audit story would turn an audit change into an authentication-policy change.
+
 **Not decided:** the context assumes one command at a time within a scope. Its guards are check-then-set, which is correct for the sequential pipeline but is not a synchronisation primitive; a scope driven concurrently by several commands is outside the model, not something the guards make safe. Supporting that is an explicit decision, not an implementation detail to be added by whoever first needs it.
 
 ### Queries
@@ -263,6 +269,8 @@ Three things follow, and each is load-bearing:
 
   **Frozen (E1).** A dedicated `AuditEmissionDefect` was considered and rejected: the platform's exception vocabulary is three types, and widening it for one capability is a larger decision than this story. Every emission failure therefore opens its message with `Audit emission defect`, which is what identifies it in a log when the response carries no detail. Keep that phrase; a new emission failure that does not use it is a defect in the defect.
 - **Which command may emit which codes is a static registry**, `AuditDeclarations`, verified against the deployed catalogue at start-up in `Program.cs`. A release whose handlers declare an event the database has not seeded refuses to start, rather than failing on the first request that reaches it.
+
+**The catalogue decides the write path, and the validator enforces it. Frozen (E2a).** Every emission path states which write path it can honour, and `AuditRecordAssembler` refuses a declaration whose catalogue entry says the other one. Behaviour 7 passes `Transactional`; the autonomous writer will pass `Autonomous` and reuse the same rule rather than escape it. This is a comparison, not a ban on one value, so neither path can quietly write the other's events. It matters most in the direction that is currently possible: an autonomous event describes a FAILURE, and writing it on the command's transaction would roll it back precisely when it was needed.
 
 **`CausationId` is null within a command. Frozen (E1).** `OperationId` already groups the records of one command, and causation names the record that *caused* another. Declaring it between USR-C1's three events would assert a dependency the handler does not have, and would make the trail claim something about causality that nobody established. Causation is for a cause that is genuinely a different act; use it there, and nowhere else, and do not backfill it into a command's own events.
 

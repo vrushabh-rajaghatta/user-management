@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Audit;
 using Ligature.SharedKernel.Abstractions;
 
 namespace Ligature.Platform.Application.Users.Commands.SignOut;
@@ -34,19 +35,22 @@ public sealed class SignOutCommandHandler
     private readonly IUnitOfWork _unitOfWork;
     private readonly IUserSessionRepository _userSessionRepository;
     private readonly IUserIdentityRepository _userIdentityRepository;
+    private readonly IAuditEvents _auditEvents;
 
     public SignOutCommandHandler(
         IClock clock,
         IExecutionContext executionContext,
         IUnitOfWork unitOfWork,
         IUserSessionRepository userSessionRepository,
-        IUserIdentityRepository userIdentityRepository)
+        IUserIdentityRepository userIdentityRepository,
+        IAuditEvents auditEvents)
     {
         _clock = clock;
         _executionContext = executionContext;
         _unitOfWork = unitOfWork;
         _userSessionRepository = userSessionRepository;
         _userIdentityRepository = userIdentityRepository;
+        _auditEvents = auditEvents;
     }
 
     public async Task<SignOutResult> Handle(
@@ -78,22 +82,39 @@ public sealed class SignOutCommandHandler
                 if (identity is null || identity.UserId != caller)
                     return new SignOutResult();
 
-                // Returns false when the session was already revoked. Ignored
-                // deliberately: a double sign-out is idempotent, not an error,
-                // and the first revocation's actor, reason and instant are
-                // write-once and must survive.
+                // Returns false when the session was already revoked. A double
+                // sign-out is idempotent, not an error, and the first
+                // revocation's actor, reason and instant are write-once and
+                // must survive.
                 //
                 // An expired session is still revocable — expiry is derived
                 // from timestamps rather than stored, so there is no state to
                 // conflict with.
-                _ = session.Revoke(now, caller, LogoutReason);
+                //
+                // The result is no longer discarded, because it decides
+                // whether there is anything to record. A second SignedOut
+                // would describe a state change that did not happen, and a
+                // trail that says a session was revoked twice is a trail that
+                // has to be explained away.
+                var revoked = session.Revoke(now, caller, LogoutReason);
 
-                // TODO — SES-C2. Declare SignedOut through IAuditEvents, and
-                // register the command in AuditDeclarations; the pipeline
-                // writes it inside this transaction (docs/architecture.md
-                // section 11). Note that the audit event
-                // is where an attempt against someone else's session becomes
-                // visible: this command deliberately tells the caller nothing.
+                if (revoked)
+                {
+                    _auditEvents.Emit("SignedOut", version: 1)
+                        .Primary("Session", session.Id.Value)
+                        .WithBefore(new
+                        {
+                            RevokedAt = (DateTimeOffset?)null,
+                            RevokedBy = (Guid?)null,
+                            RevocationReason = (string?)null,
+                        })
+                        .WithAfter(new
+                        {
+                            RevokedAt = (DateTimeOffset?)now,
+                            RevokedBy = (Guid?)caller.Value,
+                            RevocationReason = (string?)LogoutReason,
+                        });
+                }
 
                 return new SignOutResult();
             },

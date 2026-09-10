@@ -67,7 +67,7 @@ public sealed class AuditRecordAssemblerTests
         var failure = Assert.Throws<InvalidOperationException>(() =>
             AuditRecordAssembler.Assemble(
                 [declaration], new AuditDeclaration("UserManagement", ["SomethingElse"]),
-                Human(), Catalogue(), Guid.NewGuid(), Now, Now));
+                Human(), Catalogue(), AuditWritePath.Transactional, Guid.NewGuid(), Now, Now));
 
         Assert.Contains("not among the codes this command is registered to emit (IMPL-08)", failure.Message);
     }
@@ -86,11 +86,66 @@ public sealed class AuditRecordAssemblerTests
     public void An_anonymous_actor_is_accepted_where_the_catalogue_declares_it()
     {
         var rows = Assemble(
-            [new AuditEventDeclaration("SignInFailed", 1).Primary("Identity").WithPayload(new { failureCategory = "CredentialsRejected" })],
-            ActorSnapshot.Anonymous);
+            [SignInFailed()],
+            ActorSnapshot.Anonymous,
+            AuditWritePath.Autonomous);
 
         Assert.Equal("Anonymous", Assert.Single(rows).Actor.OriginKind);
     }
+
+    // ------------------------------------------------------------- ET6
+
+    /// <summary>
+    /// The write path is the catalogue's decision, and an emission path may
+    /// write only what it can honour. SignInFailed is declared Autonomous
+    /// because it records a FAILURE: written on the command's transaction it
+    /// would be rolled back with the failure it describes, which is the one
+    /// outcome that must never happen to it.
+    ///
+    /// Until the autonomous writer exists this refusal is the only thing
+    /// standing between a catalogue that says Autonomous and a pipeline that
+    /// would quietly write it transactionally.
+    /// </summary>
+    [Fact]
+    public void An_autonomous_event_is_refused_on_the_transactional_path()
+    {
+        var failure = Assert.Throws<InvalidOperationException>(
+            () => Assemble([SignInFailed()], ActorSnapshot.Anonymous, AuditWritePath.Transactional));
+
+        Assert.StartsWith("Audit emission defect", failure.Message);
+
+        Assert.Contains(
+            "'SignInFailed' is declared Autonomous in the catalogue but this is the Transactional emission path (ET6)",
+            failure.Message);
+
+        Assert.Equal(1, CountFailures(failure));
+    }
+
+    /// <summary>
+    /// And the mirror, so the rule is a comparison rather than a ban on one
+    /// value: a transactional event is equally refused on the autonomous path,
+    /// which is what E2b will be handed.
+    /// </summary>
+    [Fact]
+    public void A_transactional_event_is_refused_on_the_autonomous_path()
+    {
+        var failure = Assert.Throws<InvalidOperationException>(
+            () => Assemble(
+                [new AuditEventDeclaration("UserCreated", 1).Primary("User", Guid.NewGuid()).WithAfter(new { })],
+                Human(),
+                AuditWritePath.Autonomous));
+
+        Assert.Contains(
+            "'UserCreated' is declared Transactional in the catalogue but this is the Autonomous emission path (ET6)",
+            failure.Message);
+
+        Assert.Equal(1, CountFailures(failure));
+    }
+
+    private static AuditEventDeclaration SignInFailed()
+        => new AuditEventDeclaration("SignInFailed", 1)
+            .Primary("Identity")
+            .WithPayload(new { failureCategory = "CredentialsRejected" });
 
     [Fact]
     public void A_payload_on_a_BeforeAfter_event_is_a_defect()
@@ -282,8 +337,10 @@ public sealed class AuditRecordAssemblerTests
 
     private static IReadOnlyList<AuditRecordRow> Assemble(
         IReadOnlyList<AuditEventDeclaration> declarations,
-        ActorSnapshot actor)
-        => AuditRecordAssembler.Assemble(declarations, Permitted, actor, Catalogue(), Guid.NewGuid(), Now, Now);
+        ActorSnapshot actor,
+        string emissionPath = AuditWritePath.Transactional)
+        => AuditRecordAssembler.Assemble(
+            declarations, Permitted, actor, Catalogue(), emissionPath, Guid.NewGuid(), Now, Now);
 
     /// <summary>
     /// Every refusal is an InvalidOperationException whose message opens with

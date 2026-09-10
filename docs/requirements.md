@@ -144,7 +144,7 @@ non-decisions; reopening one is an architectural change, not an implementation
 detail.
 
 
-## Audit emission is implemented for USR-C1 only
+## Audit emission is implemented for the transactional commands only
 
 **State:** the pipeline emits. `TransactionScopeBehavior` opens the command's
 transaction and `AuditEmissionBehavior` writes inside it; `AuditRecordAssembler`
@@ -152,10 +152,23 @@ resolves each declared event against the deployed catalogue and validates it;
 `AuditRecordWriter` inserts on the ambient transaction. `docs/architecture.md`
 §11 records the pattern.
 
-**What is wired:** USR-C1 (`UserCreated`, `IdentityCreated`, `TokenIssued`) and
-provisioning's own `TenantProvisioned`, which is the tenant's Sequence 1.
-Everything else in the 49-row catalogue is declared by no command yet, including
-the events of the other implemented commands.
+**What is wired:** USR-C1 (`UserCreated`, `IdentityCreated`, `TokenIssued`),
+SES-C2 (`SignedOut`), CRD-C1 (`TokenConsumed`, `PasswordSet`,
+`AccountActivated`) and provisioning's own `TenantProvisioned`, which is the
+tenant's Sequence 1.
+
+**What is not:** every event whose catalogue write path is `Autonomous` —
+`SignInFailed`, `TokenRejected`, `AuthorisationDenied` and the rest. Those
+describe failures, so they cannot be written on the transaction that failed,
+and the writer that commits independently of the command does not exist yet.
+Until it does, declaring one is refused as an emission defect rather than
+written transactionally. SES-C1's events wait on that writer, and on an actor
+per declaration: `AccountLocked` is a System-origin event emitted during a
+command whose own caller is anonymous.
+
+The consequences of that gap are visible and deliberate. An invalid activation
+token and a failed sign-in currently leave no trace, and an attempt to sign out
+of somebody else's session is refused silently rather than recorded.
 
 **There is deliberately no `IAuditWriter`.** An earlier version of this entry
 and of `docs/architecture.md` §6 described one as the intended contract; the
@@ -205,6 +218,29 @@ for that reason; a shared development database also accumulates audit records
 permanently as those suites run.
 
 **Deferred to:** the Audit capability (`docs/architecture.md` §6).
+
+## Activation does not check identity or user status — User Management
+
+**State:** `UserTokenRepository.TryConsumeAsync` decides whether an activation
+token may be used by looking at the token row alone: the id, the secret hash,
+and whether it is unused, uninvalidated and unexpired. It does not join the
+identity or the user, so a token belonging to a deactivated identity, or to an
+identity whose user has been deactivated, still activates the account.
+
+**Not introduced by the audit work, and deliberately not fixed by it.**
+E2a added `ITokenBearerEstablisher`, which loads the identity and its user to
+build the actor snapshot and therefore has both statuses in hand. It ignores
+them on purpose. Refusing an activation on that basis would change what the
+command accepts, and eligibility for activation is a User Management decision
+about authentication policy, not something an audit story should settle as a
+side effect. The establisher's own comment says so, so the next reader does not
+mistake the omission for an oversight.
+
+**Whoever takes it** should decide it for the whole token-bearer family rather
+than for activation alone: CRD-C3's password reset consumes a token the same
+way. A second question sits next to it — `TryConsumeAsync` does not check the
+token's TYPE either, so the activation endpoint will consume a password-reset
+token that matches on id and secret.
 
 ## Authorization failures are not distinguishable from validation failures
 

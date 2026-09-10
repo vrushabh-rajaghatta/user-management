@@ -225,8 +225,12 @@ public sealed class SignOutIntegrationTests
     {
         await TestDatabase.EnsureProvisionedAsync();
 
-        var owner = await SeedActorAsync();
-        var stranger = await SeedActorAsync();
+        // Two permanent callers, distinguished by purpose rather than by role:
+        // signing out is now audited, so an owner who signs out is the actor of
+        // a record and their rows can never be deleted. The SESSIONS are fresh
+        // every run, which is what each test actually needs; the people are not.
+        var owner = await SeedActorAsync("signout-owner");
+        var stranger = await SeedActorAsync("signout-stranger");
 
         try
         {
@@ -236,8 +240,8 @@ public sealed class SignOutIntegrationTests
         }
         finally
         {
-            await DeleteActorAsync(owner.UserId);
-            await DeleteActorAsync(stranger.UserId);
+            await DeleteSessionAsync(owner.SessionId);
+            await DeleteSessionAsync(stranger.SessionId);
         }
     }
 
@@ -252,29 +256,36 @@ public sealed class SignOutIntegrationTests
         return services.BuildServiceProvider(validateScopes: true);
     }
 
-    private static async Task<Actor> SeedActorAsync()
+    /// <summary>
+    /// The permanent caller for this purpose, plus a session of this run's own.
+    /// </summary>
+    private static async Task<Actor> SeedActorAsync(string label)
     {
-        var discriminator = Guid.NewGuid().ToString("N");
-
-        var user = User.CreateHuman(
-            UserId.New(), "Signed", "Out",
-            $"Signed Out {discriminator[..8]}",
-            $"signout-{discriminator}@example.test", Now, User.SystemUserId);
-
-        var identity = UserIdentity.CreateLocal(
-            UserIdentityId.New(), user.Id, ActorType.Human,
-            $"signout-{discriminator[..12]}", Now, User.SystemUserId);
+        var caller = await PermanentTestCaller.EnsureAsync(
+            TestDatabase.ConnectionString, label, roleCode: null);
 
         var session = UserSession.Create(
-            UserSessionId.New(), identity.Id, Now,
+            UserSessionId.New(), caller.IdentityId, Now,
             Now + SecurityBaseline.Current.SessionAbsoluteTimeout,
             ipAddress: null, userAgent: "signout-tests/1.0");
 
         await using var context = CreateContext();
-        context.AddRange(user, identity, session);
+        context.Add(session);
         await context.SaveChangesAsync(CancellationToken.None);
 
-        return new Actor(user.Id, identity.Id, session.Id);
+        return new Actor(caller.UserId, caller.IdentityId, session.Id);
+    }
+
+    private static async Task DeleteSessionAsync(UserSessionId sessionId)
+    {
+        await using var connection = await TestDatabase.OpenAsync();
+
+        await using var command = new NpgsqlCommand(
+            "DELETE FROM user_session WHERE id = @id", connection);
+
+        command.Parameters.AddWithValue("id", sessionId.Value);
+
+        await command.ExecuteNonQueryAsync();
     }
 
     private static LigatureDbContext CreateContext()
@@ -347,25 +358,6 @@ public sealed class SignOutIntegrationTests
         await command.ExecuteNonQueryAsync();
     }
 
-    private static async Task DeleteActorAsync(UserId userId)
-    {
-        await using var connection = await TestDatabase.OpenAsync();
-
-        foreach (var sql in new[]
-        {
-            """
-            DELETE FROM user_session WHERE user_identity_id IN (
-                SELECT id FROM user_identity WHERE user_id = @id)
-            """,
-            "DELETE FROM user_identity WHERE user_id = @id",
-            "DELETE FROM app_user WHERE id = @id",
-        })
-        {
-            await using var command = new NpgsqlCommand(sql, connection);
-            command.Parameters.AddWithValue("id", userId.Value);
-            await command.ExecuteNonQueryAsync();
-        }
-    }
 
     private sealed class FixedClock : IClock
     {
