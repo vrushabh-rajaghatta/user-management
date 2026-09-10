@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Domain.Users;
 
@@ -44,7 +45,35 @@ public sealed class SignInDecoyTests
             new EmptyCredentialRepository(),
             new NullSessionRepository(),
             new BaselinePolicyResolver(),
-            hasher);
+            hasher,
+            new UnusedEstablisher(),
+            OpenCommand());
+
+    /// <summary>
+    /// This suite is about the decoy, and the decoy paths never authenticate,
+    /// so nothing here should ever establish a caller. Refusing outright is
+    /// what makes that an assertion rather than an assumption.
+    /// </summary>
+    private sealed class UnusedEstablisher : IBearerActorEstablisher
+    {
+        public Task<bool> EstablishAsync(
+            UserIdentityId identityId, CancellationToken cancellationToken)
+            => throw new InvalidOperationException(
+                "A failed sign-in must not establish a caller.");
+    }
+
+    /// <summary>
+    /// A collector with a command open, because the handler declares
+    /// SignInFailed on the paths this suite drives.
+    /// </summary>
+    private static IAuditEvents OpenCommand()
+    {
+        var events = new ScopedAuditEvents();
+
+        ((IAuditEmissionScope)events).BeginCommand(Guid.NewGuid(), DateTimeOffset.UtcNow);
+
+        return events;
+    }
 
     private sealed class SpyPasswordHasher : IPasswordHasher
     {

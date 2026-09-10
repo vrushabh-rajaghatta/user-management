@@ -23,14 +23,14 @@ namespace Ligature.Platform.Persistence.Services;
 /// anonymous command, so the authorisation behaviour never runs and there is
 /// no authority to carry even if one existed.
 /// </summary>
-public sealed class TokenBearerEstablisher : ITokenBearerEstablisher
+public sealed class BearerActorEstablisher : IBearerActorEstablisher
 {
     private readonly LigatureDbContext _dbContext;
     private readonly IExecutionContext _executionContext;
     private readonly IExecutionContextInitializer _executionContextInitializer;
     private readonly IClock _clock;
 
-    public TokenBearerEstablisher(
+    public BearerActorEstablisher(
         LigatureDbContext dbContext,
         IExecutionContext executionContext,
         IExecutionContextInitializer executionContextInitializer,

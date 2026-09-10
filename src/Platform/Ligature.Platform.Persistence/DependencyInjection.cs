@@ -65,6 +65,13 @@ public static class DependencyInjection
         // an internal interface — handlers have no public seam to it (IMPL-02).
         services.AddScoped<IAuditRecordWriter, AuditRecordWriter>();
 
+        // The autonomous writer holds no scoped state — it opens and closes
+        // its own connection per call — so a singleton is honest about what
+        // it is. It deliberately does NOT take the DbContext: sharing that
+        // connection is exactly what it exists not to do.
+        services.AddSingleton<IAutonomousAuditRecordWriter>(
+            _ => new AutonomousAuditRecordWriter(connectionString));
+
         // The catalogue: one per process, loaded on first access. The host
         // forces that access at start and verifies its declarations against
         // it; everything else simply reads (IMPL-08).
@@ -74,7 +81,7 @@ public static class DependencyInjection
         // AUD-D28's establishment path: the caller of a token-bearer command,
         // established from the identity their token's consumption returned.
         // Scoped, like the context it writes into.
-        services.AddScoped<ITokenBearerEstablisher, TokenBearerEstablisher>();
+        services.AddScoped<IBearerActorEstablisher, BearerActorEstablisher>();
 
         // The User Management side of the section 17 ownership boundary. The
         // Host extracts a SessionId and asks this; it does not decide session

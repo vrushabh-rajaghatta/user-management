@@ -45,6 +45,13 @@ public sealed class DependencyInjectionTests
         }
     }
 
+    private sealed class FakeAutonomousWriter : IAutonomousAuditRecordWriter
+    {
+        public Task WriteAsync(
+            IReadOnlyList<AuditRecordRow> rows, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+    }
+
     private sealed class FakeClock : IClock
     {
         public DateTimeOffset UtcNow
@@ -111,6 +118,10 @@ public sealed class DependencyInjectionTests
             IAuditRecordWriter,
             FakeAuditRecordWriter>();
 
+        services.AddScoped<
+            IAutonomousAuditRecordWriter,
+            FakeAutonomousWriter>();
+
         using var provider = services.BuildServiceProvider();
 
         var pipeline =
@@ -150,6 +161,10 @@ public sealed class DependencyInjectionTests
             IAuditRecordWriter,
             FakeAuditRecordWriter>();
 
+        services.AddScoped<
+            IAutonomousAuditRecordWriter,
+            FakeAutonomousWriter>();
+
         using var provider = services.BuildServiceProvider();
 
         using var scope = provider.CreateScope();
@@ -176,9 +191,16 @@ public sealed class DependencyInjectionTests
                     AuthorizationBehavior<TestCommand, TestResult>>(
                     behavior),
 
-            // Behaviour 6 opens the transaction the emission writes inside,
-            // so it must wrap behaviour 7 — and both must sit inside
-            // authorisation, so a refused command never reaches either.
+            // The audit command scope wraps the transaction, because what it
+            // writes must outlive the transaction's fate. Behaviour 6 then
+            // opens the transaction that behaviour 7 writes inside, so it
+            // must wrap 7 — and all three sit inside authorisation, so a
+            // refused command never reaches any of them.
+            behavior =>
+                Assert.IsType<
+                    AuditCommandScopeBehavior<TestCommand, TestResult>>(
+                    behavior),
+
             behavior =>
                 Assert.IsType<
                     TransactionScopeBehavior<TestCommand, TestResult>>(

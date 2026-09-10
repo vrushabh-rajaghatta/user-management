@@ -76,9 +76,9 @@ public sealed class CommandHandlerRegistrationTests
             .GetServices<ICommandBehavior<CreateUserCommand, CreateUserResult>>()
             .ToList();
 
-        // Three authorisation-side behaviours, plus the transaction scope and
-        // the audit emission that writes inside it.
-        Assert.Equal(5, behaviors.Count);
+        // Three authorisation-side behaviours, plus the audit command scope,
+        // the transaction scope inside it, and the audit emission inside that.
+        Assert.Equal(6, behaviors.Count);
 
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<IExecutionContext>());
         Assert.NotNull(
@@ -110,6 +110,7 @@ public sealed class CommandHandlerRegistrationTests
         services.AddScoped<IUserSessionRepository, StubUserSessionRepository>();
         services.AddScoped<IAuditEventCatalogue, StubAuditEventCatalogue>();
         services.AddScoped<IAuditRecordWriter, StubAuditRecordWriter>();
+        services.AddScoped<IAutonomousAuditRecordWriter, StubAutonomousWriter>();
 
         return services.BuildServiceProvider(validateScopes: true);
     }
@@ -127,6 +128,13 @@ public sealed class CommandHandlerRegistrationTests
 
         public IReadOnlyCollection<AuditEventTypeDefinition> All
             => [];
+    }
+
+    private sealed class StubAutonomousWriter : IAutonomousAuditRecordWriter
+    {
+        public Task WriteAsync(
+            IReadOnlyList<AuditRecordRow> rows, CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 
     private sealed class StubAuditRecordWriter : IAuditRecordWriter

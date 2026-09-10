@@ -62,11 +62,19 @@ public static class DependencyInjection
         services.AddScoped<IAuditEmissionScope>(
             sp => sp.GetRequiredService<ScopedAuditEvents>());
 
-        // Registration order is execution order, outermost first. Behaviour
-        // 6 opens the transaction; behaviour 7 runs inside it and writes
-        // after the handler returns; 6 then commits (IMPL-05: 1 → 2 → 5 → 3
-        // → 4 → 6 → handler → 7, with 5 satisfied before the pipeline by
-        // CallerEstablisher).
+        // Registration order is execution order, outermost first.
+        //
+        // The audit command scope is outside the transaction: it owns the
+        // OperationId and the command clock, which belong to the command
+        // rather than to either transaction, and it writes the autonomous
+        // records once the transaction has finished, whichever way it
+        // finished. Behaviour 6 then opens the transaction, behaviour 7 runs
+        // inside it and writes the transactional records after the handler
+        // returns, and 6 commits (IMPL-05: 1 → 2 → 5 → 3 → 4 → 6 → handler
+        // → 7, with 5 satisfied before the pipeline by CallerEstablisher).
+        services.AddScoped(typeof(ICommandBehavior<,>),
+            typeof(AuditCommandScopeBehavior<,>));
+
         services.AddScoped(typeof(ICommandBehavior<,>),
             typeof(TransactionScopeBehavior<,>));
 

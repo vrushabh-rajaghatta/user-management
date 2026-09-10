@@ -14,9 +14,10 @@ namespace Ligature.Platform.Application.Behaviors;
 /// commits. No handler references an audit table, and this behaviour cannot
 /// be omitted by one.
 ///
-/// A command that declares nothing writes nothing. That is the case for
-/// every command not yet wired to its events and for commands whose events
-/// are all autonomous (Slice B); the pipeline does not invent a record.
+/// A command that declares nothing on this path writes nothing here. That is
+/// the case for every command not yet wired to its events, and for one whose
+/// events are all autonomous — those are written after the transaction, by
+/// AuditCommandScopeBehavior. The pipeline does not invent a record.
 ///
 /// Every refusal is a defect: the exception propagates, behaviour 6's unit
 /// of work rolls the transaction back, and the host answers with a
@@ -62,7 +63,14 @@ internal sealed class AuditEmissionBehavior<TCommand, TResult>
 
         var result = await next(cancellationToken);
 
-        var declarations = _scope.Declarations;
+        // Only what the catalogue says belongs on this path. Anything it
+        // marks Autonomous is written after the transaction, by the behaviour
+        // outside this one; a code the catalogue does not know stays here, so
+        // its defect is raised rather than the declaration disappearing
+        // between two writers.
+        var declarations = _scope.Declarations
+            .Where(x => _catalogue.Find(x.Code, x.Version)?.WritePath != AuditWritePath.Autonomous)
+            .ToList();
 
         if (declarations.Count == 0)
             return result;

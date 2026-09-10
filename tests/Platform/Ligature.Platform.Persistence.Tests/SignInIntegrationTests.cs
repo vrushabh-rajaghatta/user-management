@@ -385,7 +385,10 @@ public sealed class SignInIntegrationTests
         }
         finally
         {
-            await DeleteActorAsync(fixture.UserId);
+            // The person stays. A successful sign-in makes them the actor of a
+            // record, and an actor cannot be deleted; what this run gave them
+            // — a credential and any sessions — goes.
+            await ResetAsync(fixture.IdentityId);
         }
     }
 
@@ -409,24 +412,33 @@ public sealed class SignInIntegrationTests
     /// An active user with an active local identity and an activated
     /// credential — the state CRD-C1 leaves behind.
     /// </summary>
+    /// <summary>
+    /// A permanent person with a credential of this run's own.
+    ///
+    /// The person is permanent because SES-C1 now records a successful sign-in
+    /// and the actor of a record cannot be deleted. Everything that makes the
+    /// person signable-in-to is not: the credential is recreated each run, so
+    /// the lockout counters, the stored hash and the algorithm start where each
+    /// test expects them rather than where the last one left them. The ensure
+    /// also puts both statuses back to Active, which matters because tests here
+    /// deactivate them.
+    /// </summary>
     private static async Task<Fixture> SeedAsync()
     {
-        var discriminator = Guid.NewGuid().ToString("N");
-        var username = $"signin-{discriminator[..12]}";
-        var email = $"signin-{discriminator}@example.test";
+        const string label = "signin";
 
-        var user = User.CreateHuman(
-            UserId.New(), "Sign", "Inner",
-            $"Sign Inner {discriminator[..8]}", email, Now, User.SystemUserId);
+        var caller = await PermanentTestCaller.EnsureAsync(
+            TestDatabase.ConnectionString, label, roleCode: null);
 
-        var identity = UserIdentity.CreateLocal(
-            UserIdentityId.New(), user.Id, ActorType.Human,
-            username, Now, User.SystemUserId);
+        await ResetAsync(caller.IdentityId);
+
+        var username = $"permanent-{label}";
+        var email = $"permanent-{label}@example.test";
 
         var hashed = new PasswordHasher().Hash(GoodPassword);
 
         var credential = Credential.Create(
-            CredentialId.New(), identity.Id, IdentityType.Local,
+            CredentialId.New(), caller.IdentityId, IdentityType.Local,
             hashed.Hash, hashed.Algorithm,
             // Deliberately older than Now: if a rehash wrongly went through
             // ChangePassword, PasswordChangedAt would jump to the sign-in
@@ -435,10 +447,32 @@ public sealed class SignInIntegrationTests
             createdAt: Now, createdBy: User.SystemUserId);
 
         await using var context = CreateContext();
-        context.AddRange(user, identity, credential);
+        context.Add(credential);
         await context.SaveChangesAsync(CancellationToken.None);
 
-        return new Fixture(user.Id, identity.Id, username, email);
+        return new Fixture(caller.UserId, caller.IdentityId, username, email);
+    }
+
+    /// <summary>
+    /// The rows a run gives the fixture, and only those. Nothing here is
+    /// referenced by an audit record: a session is not an actor, and the
+    /// records of a sign-in point at the person, who stays.
+    /// </summary>
+    private static async Task ResetAsync(UserIdentityId identityId)
+    {
+        await using var connection = await TestDatabase.OpenAsync();
+
+        foreach (var sql in new[]
+        {
+            "DELETE FROM password_history WHERE user_identity_id = @id",
+            "DELETE FROM user_session WHERE user_identity_id = @id",
+            "DELETE FROM credential WHERE user_identity_id = @id",
+        })
+        {
+            await using var command = new NpgsqlCommand(sql, connection);
+            command.Parameters.AddWithValue("id", identityId.Value);
+            await command.ExecuteNonQueryAsync();
+        }
     }
 
     private static LigatureDbContext CreateContext()
@@ -598,37 +632,6 @@ public sealed class SignInIntegrationTests
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
-    private static async Task DeleteActorAsync(UserId userId)
-    {
-        await using var connection = await TestDatabase.OpenAsync();
-
-        foreach (var sql in new[]
-        {
-            """
-            DELETE FROM user_session WHERE user_identity_id IN (
-                SELECT id FROM user_identity WHERE user_id = @id)
-            """,
-            """
-            DELETE FROM password_history WHERE user_identity_id IN (
-                SELECT id FROM user_identity WHERE user_id = @id)
-            """,
-            """
-            DELETE FROM credential WHERE user_identity_id IN (
-                SELECT id FROM user_identity WHERE user_id = @id)
-            """,
-            """
-            DELETE FROM user_token WHERE user_identity_id IN (
-                SELECT id FROM user_identity WHERE user_id = @id)
-            """,
-            "DELETE FROM user_identity WHERE user_id = @id",
-            "DELETE FROM app_user WHERE id = @id",
-        })
-        {
-            await using var command = new NpgsqlCommand(sql, connection);
-            command.Parameters.AddWithValue("id", userId.Value);
-            await command.ExecuteNonQueryAsync();
-        }
-    }
 
     private sealed class FixedClock : IClock
     {

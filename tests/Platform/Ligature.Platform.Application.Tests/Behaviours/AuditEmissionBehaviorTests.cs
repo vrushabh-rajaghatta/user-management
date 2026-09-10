@@ -2,6 +2,7 @@ using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Behaviors;
 using Ligature.Platform.Application.Execution;
+using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Domain.Users;
 using Ligature.SharedKernel.Abstractions;
@@ -202,25 +203,24 @@ public sealed class AuditEmissionBehaviorTests
         Assert.Null(writer.Rows);
     }
 
-    // ------------------------------------------------------- behaviour 6
+    // --------------------------------------------- the audit command scope
 
     [Fact]
-    public async Task The_transaction_scope_opens_the_command_and_closes_it_again()
+    public async Task The_command_scope_opens_the_command_and_closes_it_again()
     {
         var events = new ScopedAuditEvents();
         var scope = (IAuditEmissionScope)events;
 
         Guid observed = default;
 
-        await new TransactionScopeBehavior<CreateUserCommand, CreateUserResult>(
-            new PassThroughUnitOfWork(), events, new FixedClock())
-            .Handle(Command(), CancellationToken.None, _ =>
+        await Scope(events, new RecordingAutonomousWriter())
+            .Handle(Activation(), CancellationToken.None, _ =>
             {
                 observed = scope.OperationId;
 
                 Assert.Equal(Now, scope.OccurredAt);
 
-                return Task.FromResult(Result());
+                return Task.FromResult(Activated());
             });
 
         Assert.NotEqual(default, observed);
@@ -231,18 +231,144 @@ public sealed class AuditEmissionBehaviorTests
     }
 
     [Fact]
-    public async Task The_transaction_scope_closes_the_command_even_when_it_fails()
+    public async Task The_command_scope_closes_the_command_even_when_it_fails()
     {
         var events = new ScopedAuditEvents();
 
         await Assert.ThrowsAsync<InvalidTimeZoneException>(
-            () => new TransactionScopeBehavior<CreateUserCommand, CreateUserResult>(
-                new PassThroughUnitOfWork(), events, new FixedClock())
-                .Handle(Command(), CancellationToken.None,
+            () => Scope(events, new RecordingAutonomousWriter())
+                .Handle(Activation(), CancellationToken.None,
                     _ => throw new InvalidTimeZoneException("the handler failed")));
 
         Assert.Throws<InvalidOperationException>(
             () => ((IAuditEmissionScope)events).OperationId);
+    }
+
+    /// <summary>
+    /// The property the whole autonomous path exists for. The command failed,
+    /// its transaction rolled back, and the record of that failure stands.
+    /// </summary>
+    [Fact]
+    public async Task An_autonomous_record_survives_a_command_that_failed()
+    {
+        var events = new ScopedAuditEvents();
+        var writer = new RecordingAutonomousWriter();
+
+        await Assert.ThrowsAsync<InvalidTimeZoneException>(
+            () => Scope(events, writer).Handle(
+                Activation(), CancellationToken.None,
+                _ =>
+                {
+                    DeclareRejection(events);
+
+                    throw new InvalidTimeZoneException("the handler failed");
+                }));
+
+        var row = Assert.Single(writer.Rows!);
+
+        Assert.Equal("TokenRejected", row.EventType);
+        Assert.Equal("Autonomous", row.WritePath);
+    }
+
+    /// <summary>
+    /// Routing is the catalogue's, not the handler's: this behaviour takes
+    /// only what the catalogue marks Autonomous, and leaves the rest to the
+    /// behaviour inside the transaction.
+    /// </summary>
+    [Fact]
+    public async Task The_command_scope_writes_only_the_autonomous_declarations()
+    {
+        var events = new ScopedAuditEvents();
+        var writer = new RecordingAutonomousWriter();
+
+        await Scope(events, writer).Handle(
+            Activation(), CancellationToken.None,
+            _ =>
+            {
+                ((IAuditEvents)events).Emit("AccountActivated", 1)
+                    .Primary("Identity", Guid.NewGuid());
+
+                DeclareRejection(events);
+
+                return Task.FromResult(Activated());
+            });
+
+        Assert.Equal(["TokenRejected"], writer.Rows!.Select(x => x.EventType));
+    }
+
+    [Fact]
+    public async Task A_command_declaring_nothing_autonomous_writes_nothing_here()
+    {
+        var events = new ScopedAuditEvents();
+        var writer = new RecordingAutonomousWriter();
+
+        await Scope(events, writer).Handle(
+            Activation(), CancellationToken.None,
+            _ =>
+            {
+                ((IAuditEvents)events).Emit("AccountActivated", 1)
+                    .Primary("Identity", Guid.NewGuid());
+
+                return Task.FromResult(Activated());
+            });
+
+        Assert.Null(writer.Rows);
+    }
+
+    // ------------------------------------------------- failure semantics
+
+    /// <summary>
+    /// The command succeeded and its change is committed; the record of it
+    /// could not be written. The request fails. Nobody is told an action was
+    /// recorded when it was not, and the operator learns immediately.
+    /// </summary>
+    [Fact]
+    public async Task A_failed_autonomous_write_fails_a_command_that_succeeded()
+    {
+        var events = new ScopedAuditEvents();
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => Scope(events, new ThrowingAutonomousWriter()).Handle(
+                Activation(), CancellationToken.None,
+                _ =>
+                {
+                    DeclareRejection(events);
+
+                    return Task.FromResult(Activated());
+                }));
+
+        Assert.Contains("could not be written", failure.Message);
+
+        Assert.Contains("the autonomous writer failed", failure.InnerException!.Message);
+    }
+
+    /// <summary>
+    /// The command failed and the audit write failed too. The command's own
+    /// exception is what explains the request, so it survives unchanged —
+    /// its type decides the response, and a 400 must not become a 500 because
+    /// the trail was unavailable. The audit failure travels with it.
+    /// </summary>
+    [Fact]
+    public async Task A_failed_autonomous_write_does_not_mask_the_commands_failure()
+    {
+        var events = new ScopedAuditEvents();
+
+        var failure = await Assert.ThrowsAsync<InvalidTimeZoneException>(
+            () => Scope(events, new ThrowingAutonomousWriter()).Handle(
+                Activation(), CancellationToken.None,
+                _ =>
+                {
+                    DeclareRejection(events);
+
+                    throw new InvalidTimeZoneException("the handler failed");
+                }));
+
+        Assert.Equal("the handler failed", failure.Message);
+
+        var attached = Assert.IsType<string>(
+            failure.Data[AuditCommandScopeBehavior<ActivateAccountCommand, ActivateAccountResult>.AuditFailureKey]);
+
+        Assert.Contains("the autonomous writer failed", attached);
     }
 
     // ---------------------------------------------------------- harness
@@ -252,6 +378,22 @@ public sealed class AuditEmissionBehaviorTests
     private static AuditEmissionBehavior<CreateUserCommand, CreateUserResult> Emission(
         ScopedAuditEvents events, IAuditRecordWriter writer)
         => new(events, Context(), Catalogue(), writer, new FixedClock());
+
+    private static AuditCommandScopeBehavior<ActivateAccountCommand, ActivateAccountResult> Scope(
+        ScopedAuditEvents events, IAutonomousAuditRecordWriter writer)
+        => new(events, Context(), Catalogue(), writer, new FixedClock());
+
+    private static ActivateAccountCommand Activation()
+        => new("token-plaintext", "a-sufficiently-long-password");
+
+    private static ActivateAccountResult Activated()
+        => new(UserIdentityId.New());
+
+    /// <summary>An autonomous, anonymous-origin declaration.</summary>
+    private static void DeclareRejection(ScopedAuditEvents events)
+        => ((IAuditEvents)events).Emit("TokenRejected", 1)
+            .Primary("Token", Guid.NewGuid())
+            .WithPayload(new { reason = "Invalid" });
 
     private static CreateUserCommand Command()
         => new("Grace", "Hopper", "Grace Hopper", "grace@example.test", "grace.hopper");
@@ -276,6 +418,18 @@ public sealed class AuditEmissionBehaviorTests
                 "Transactional", "BeforeAfter", "User", PrimaryEntityRequired: true,
                 [], [], IsActive: true,
                 new Dictionary<string, bool> { ["Authenticated"] = true }),
+
+            new AuditEventTypeDefinition(
+                "AccountActivated", 1, "UserManagement", "IdentityLifecycle", ReasonRequired: false,
+                "Transactional", "None", "Identity", PrimaryEntityRequired: true,
+                [], [], IsActive: true,
+                new Dictionary<string, bool> { ["Authenticated"] = true }),
+
+            new AuditEventTypeDefinition(
+                "TokenRejected", 1, "UserManagement", "SecurityEvent", ReasonRequired: false,
+                "Autonomous", "Payload", "Token", PrimaryEntityRequired: false,
+                [], [], IsActive: true,
+                new Dictionary<string, bool> { ["Authenticated"] = true, ["Anonymous"] = true }),
         ]);
 
     private sealed record UnregisteredCommand : ICommand<CreateUserResult>;
@@ -291,6 +445,27 @@ public sealed class AuditEmissionBehaviorTests
 
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class RecordingAutonomousWriter : IAutonomousAuditRecordWriter
+    {
+        public IReadOnlyList<AuditRecordRow>? Rows { get; private set; }
+
+        public Task WriteAsync(
+            IReadOnlyList<AuditRecordRow> rows, CancellationToken cancellationToken)
+        {
+            Rows = rows;
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ThrowingAutonomousWriter : IAutonomousAuditRecordWriter
+    {
+        public Task WriteAsync(
+            IReadOnlyList<AuditRecordRow> rows, CancellationToken cancellationToken)
+            => throw new InvalidOperationException(
+                "Audit emission defect — the autonomous writer failed.");
     }
 
     private sealed class PassThroughUnitOfWork : IUnitOfWork

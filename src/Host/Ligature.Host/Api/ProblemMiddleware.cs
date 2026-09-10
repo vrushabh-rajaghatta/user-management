@@ -63,19 +63,25 @@ public sealed class ProblemMiddleware : IMiddleware
         {
             await next(context);
         }
-        catch (AuthenticationFailedException)
+        catch (AuthenticationFailedException failure)
         {
+            LogAnyAuditFailure(context, failure);
+
             await WriteAsync(
                 context, StatusCodes.Status401Unauthorized,
                 AuthenticationRequired);
         }
         catch (BusinessRuleViolationException failure)
         {
+            LogAnyAuditFailure(context, failure);
+
             await WriteAsync(
                 context, StatusCodes.Status400BadRequest, failure.Message);
         }
         catch (DomainException failure)
         {
+            LogAnyAuditFailure(context, failure);
+
             await WriteAsync(
                 context, StatusCodes.Status400BadRequest, failure.Message);
         }
@@ -93,6 +99,38 @@ public sealed class ProblemMiddleware : IMiddleware
                 context, StatusCodes.Status500InternalServerError, Unexpected);
         }
     }
+
+    /// <summary>
+    /// An autonomous audit write that failed while the command was already
+    /// failing does not change the response: the command's own exception is
+    /// what explains the request, and a 400 must not become a 500 because the
+    /// trail was unavailable. But the audit failure must not vanish either, so
+    /// it is logged here, which is the only place that sees both.
+    ///
+    /// The mapped responses above are the ones that would otherwise swallow
+    /// it. The catch-all already logs its exception in full.
+    /// </summary>
+    private void LogAnyAuditFailure(HttpContext context, Exception failure)
+    {
+        if (failure.Data[AuditFailureKey] is not string detail)
+            return;
+
+        _logger.LogError(
+            "An autonomous audit record could not be written while serving "
+            + "{Method} {Path}; the command's own failure was returned to the "
+            + "caller. {Detail}",
+            context.Request.Method,
+            context.Request.Path,
+            detail);
+    }
+
+    /// <summary>
+    /// Matches AuditCommandScopeBehavior.AuditFailureKey. Duplicated rather
+    /// than referenced: the behaviour is internal to the Application assembly,
+    /// and the Host reaching into it to share a constant would be a worse
+    /// coupling than a string that a test holds to both.
+    /// </summary>
+    private const string AuditFailureKey = "Ligature.AutonomousAuditFailure";
 
     /// <summary>
     /// A response already begun cannot be replaced — the status line is gone.
