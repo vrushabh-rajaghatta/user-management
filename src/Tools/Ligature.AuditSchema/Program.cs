@@ -3,7 +3,8 @@ using Ligature.Platform.Persistence.Audit;
 namespace Ligature.AuditSchema;
 
 /// <summary>
-/// Deploys the Audit schema and its tamper boundary, then exits.
+/// Deploys the Audit schema, its tamper boundary and the release's event
+/// catalogue, then exits.
 ///
 /// A separate tool because it runs under a credential neither the migrator
 /// nor the provisioner may hold, and must be unreachable from the host — the
@@ -75,20 +76,42 @@ internal static class Program
                     "The Audit schema is already current. "
                     + $"{result.AlreadyCurrent.Count} script(s) previously "
                     + "applied; nothing changed.");
-
-                return Success;
             }
-
-            foreach (var script in result.Applied)
+            else
             {
-                Console.WriteLine($"applied  {script}");
+                foreach (var script in result.Applied)
+                {
+                    Console.WriteLine($"applied  {script}");
+                }
+
+                Console.WriteLine();
+                Console.WriteLine(
+                    $"Audit schema deployed. Objects in the '{AuditSchemaDeployer.Schema}' "
+                    + $"schema are owned by {AuditSchemaDeployer.OwnerRole}, which cannot "
+                    + "log in and has no members.");
             }
+
+            // Deliberately NOT inside the else, and deliberately not skipped
+            // when the schema was already current. The DDL and the catalogue
+            // version independently: a release can add an event type without
+            // touching a table. Returning early on "schema already current"
+            // would leave the catalogue at the previous release and the host
+            // would then refuse to start, which is the failure this whole
+            // change exists to remove.
+            var catalogue = await new AuditCatalogueDeployer(connectionString)
+                .DeployAsync();
 
             Console.WriteLine();
             Console.WriteLine(
-                $"Audit schema deployed. Objects in the '{AuditSchemaDeployer.Schema}' "
-                + $"schema are owned by {AuditSchemaDeployer.OwnerRole}, which cannot "
-                + "log in and has no members.");
+                $"Audit event catalogue deployed: {catalogue.ActiveEventTypes} "
+                + $"active of {catalogue.EventTypes} event type(s), "
+                + $"{catalogue.ActiveOrigins} active of {catalogue.Origins} "
+                + "origin(s). Entries this release no longer declares are "
+                + "inactive, never deleted.");
+
+            Console.WriteLine(
+                "The host verifies its compiled declarations against these "
+                + "rows at startup (IMPL-08).");
 
             return Success;
         }
@@ -108,7 +131,10 @@ internal static class Program
 
     private static void WriteUsage(TextWriter writer)
     {
-        writer.WriteLine("Deploys the Audit schema and its tamper boundary.");
+        writer.WriteLine(
+            "Deploys the Audit schema, its tamper boundary, and the release's");
+        writer.WriteLine(
+            "audit event catalogue, which the host requires to start (IMPL-08).");
         writer.WriteLine();
         writer.WriteLine("  dotnet run --project src/Tools/Ligature.AuditSchema");
         writer.WriteLine();

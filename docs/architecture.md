@@ -606,7 +606,7 @@ the roles the running system actually uses.
 | --- | --- | --- |
 | `app_role` | The host application | `SELECT`, `INSERT` on the trail. No `UPDATE`, no `DELETE` |
 | `migration_role` | EF migrations | Owns the ordinary schema. **Nothing at all** on `audit_record` or `audit_entity_ref` |
-| `provisioning_role` | `Ligature.Provisioning` | Seeds the catalogue and retention v1; **reads** the trail and the deployment ledger so it can verify a tenant before handing it over. Never writes a record |
+| `provisioning_role` | `Ligature.Provisioning` | Seeds retention v1 and **reads** the catalogue, the trail and the deployment ledger so it can verify a tenant before handing it over. Appends `TenantProvisioned` (`INSERT` only, script `004`); cannot write the catalogue |
 | `audit_owner` | Nobody | Owns the `audit` schema and every object in it. `NOLOGIN`, no members, no password |
 | `audit_anonymiser` | The future erasure worker | Column-level `UPDATE` on the AR20 set only. `NOLOGIN` until that worker exists |
 
@@ -674,9 +674,10 @@ anonymiser's `UPDATE` covers exactly the AR20 columns. Any failing fact stops
 the deployment; all failing facts are reported together.
 
 **Provisioning verifies handover** — *is this tenant safe to hand over?*
-`AUD-C4` checks, before seeding, that every audit script is in the ledger and
-that the application role cannot update or delete any audit table; and after
-seeding (`AUD-S11`) that the catalogue matches the release seed, that Anonymous
+`AUD-C4` checks, before it writes anything, that every audit script is in the
+ledger and that the application role cannot update or delete any audit table;
+and after its own writes (`AUD-S11`) that the **deployed** catalogue matches the
+release seed, that Anonymous
 origin is declared for exactly the two types EO5 permits, that retention v1
 exists, and that the trail is empty **and its sequence unconsumed** — a
 rolled-back write consumes a value, and the first record must be Sequence 1.
@@ -686,17 +687,48 @@ The handover set is small and tied to the acceptance criteria; the adversarial
 suite is not duplicated into it. What the redundancy buys is that a tenant is
 never handed over on the strength of an earlier step having exited 0.
 
-## The catalogue is seeded, not migrated
+## The catalogue is deployed, not migrated and not provisioned
 
 `AuditEventCatalogue` is the single code-side source of the 49 V1 event types
 and their origins, in the pattern of `GetPermissionSeeds()`; the Entity
 Workbook's Event Catalogue sheet is the normative origin. `AuditCatalogueSeeder`
-writes it with raw SQL on provisioning's own transaction — no `DbSet`, no
-entity, and deliberately the same mechanism `AuditRecordWriter` now uses to
-write into a schema it does not own. `AuditCatalogueDriftTests` holds a
-provisioned database to the seed. The retention floor it seeds from,
-`AuditReleaseBaseline.MinimumRetentionMonths`, is a placeholder pending
+writes it with raw SQL — no `DbSet`, no entity, and deliberately the same
+mechanism `AuditRecordWriter` uses to write into a schema it does not own.
+`AuditCatalogueDriftTests` holds a deployed database to the seed. The retention
+floor, `AuditReleaseBaseline.MinimumRetentionMonths`, is a placeholder pending
 `AUD-O11` and is marked as one.
+
+**The catalogue belongs to the DEPLOYMENT phase, not to provisioning.** It is
+applied by `Ligature.AuditSchema` as `audit_owner`, immediately after the
+schema scripts and before the host starts:
+
+```text
+db → roles → migrator → audit-schema (schema + catalogue) → host → bootstrap
+```
+
+It sits there because the compiled handlers depend on it. `AuditDeclarations`
+is verified against the deployed catalogue at start-up and a release that
+disagrees refuses to run (§11), which makes the catalogue a **precondition of
+the host** rather than tenant data. Written by a bootstrap step that runs after
+the host, it could never be present when the host needed it, and a fresh
+installation could not start at all.
+
+Two consequences follow, and both are deliberate:
+
+- **It reconciles rather than inserts.** It runs on every deployment, so a
+  catalogue holding the previous release's rows is the normal case. New
+  entries are inserted, changed definitions updated, and entries the release no
+  longer declares are marked **inactive**. Nothing is ever deleted: a committed
+  `audit_record` references its event type, so a catalogue that could drop rows
+  could orphan the trail.
+- **No role that can log in may write it.** `provisioning_role` holds `SELECT`
+  and no `INSERT` on the catalogue tables (script `004`). Release data is
+  written by the release.
+
+**Retention v1 stays with `AUD-C4`,** and that split is a constraint rather
+than a preference: `RT5` (script `003`) makes `audit_retention_policy.created_by`
+a foreign key to `public.app_user`, and the System actor it names is created by
+`PRV-C1`. It cannot exist before the host.
 
 ## What the application does with a schema it does not own
 
@@ -712,10 +744,14 @@ is a lazy singleton over the deployed rows. A release that disagrees with those
 rows never starts (§11), so the snapshot cannot drift beneath a running host.
 
 Provisioning writes `TenantProvisioned` through the same writer, on its own
-transaction, with the catalogue it is in the middle of seeding — the rows exist
-but are not yet committed, so a database read would not find them. That record
-is Sequence 1, and `AuditHandoverVerification` checks it is before handing the
-tenant over.
+transaction, against the **deployed** catalogue it reads back — the same rows
+the host verified its declarations against at start-up. It used to validate
+against the in-memory release seed, because it was in the middle of writing the
+catalogue and a database read would not have found the uncommitted rows. Now
+that the catalogue is deployed beforehand, provisioning consumes it like every
+other reader, and there is no second mechanism that could describe a different
+release. That record is Sequence 1, and `AuditHandoverVerification` checks it
+is before handing the tenant over.
 
 ## Rules
 

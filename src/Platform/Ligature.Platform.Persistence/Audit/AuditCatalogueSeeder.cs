@@ -7,8 +7,26 @@ using NpgsqlTypes;
 namespace Ligature.Platform.Persistence.Audit;
 
 /// <summary>
-/// AUD-C4 steps 3 and 4: seeds the event catalogue and retention policy v1
-/// into the audit schema, on the provisioning transaction.
+/// Writes the release's audit catalogue and the tenant's retention policy v1,
+/// which are now applied in DIFFERENT phases from the SAME source.
+///
+/// <code>
+/// AuditEventCatalogue.GetEventTypeSeeds()
+///   ├── deployment (Ligature.AuditSchema, as audit_owner, before the host)
+///   │     └── ReconcileCatalogueAsync — event types and origins
+///   └── provisioning (AUD-C4, as provisioning_role, inside PRV-C1)
+///         └── SeedRetentionVersionOneAsync — retention v1
+/// </code>
+///
+/// The catalogue moved into the deployment phase because the compiled
+/// handlers depend on it: IMPL-08 verifies their declarations at host
+/// startup, so a host on a fresh database could never start while the
+/// catalogue was written by a later bootstrap step. It is release-controlled
+/// infrastructure, not tenant data. Retention v1 stayed, because RT5 ties it
+/// to an actor that provisioning creates.
+///
+/// There is ONE definition. This class applies it in two places; it does not
+/// hold two copies of it.
 ///
 /// Raw SQL on a connection and transaction the caller already holds — not an
 /// EF entity, not a DbSet, not a repository. The audit tables belong to
@@ -45,36 +63,132 @@ internal sealed class AuditCatalogueSeeder
     }
 
     /// <summary>
-    /// Plain INSERTs, and deliberately not upserts. AUD-C4 runs once per
-    /// tenant database, inside PRV-C1's System-actor sentinel, against an
-    /// empty catalogue. A duplicate here means that assumption is false, and
-    /// the right outcome is a loud failure that rolls the whole provisioning
-    /// back — not a quiet overwrite that would make AUD-C4 behave like
-    /// AUD-C3 without AUD-C3's audit event.
+    /// RECONCILES the catalogue against the release seed, rather than
+    /// inserting into an empty one.
+    ///
+    /// This used to be plain INSERTs that failed loudly on a duplicate, which
+    /// was right while it ran once per tenant inside PRV-C1's System-actor
+    /// sentinel. It now runs in the deployment phase, before the host starts,
+    /// on EVERY deployment — so a catalogue that already holds the previous
+    /// release's rows is the normal case, not a broken assumption.
+    ///
+    /// Reconciling means: entries new in this release are inserted, entries
+    /// whose definition changed are updated, and entries the release no longer
+    /// declares are marked INACTIVE. Nothing is ever deleted. A committed
+    /// audit_record references its event type, and a catalogue that could drop
+    /// rows would be a catalogue that could orphan the trail.
     /// </summary>
-    public async Task SeedAsync(
+    public async Task ReconcileCatalogueAsync(CancellationToken cancellationToken)
+    {
+        var seeds = AuditEventCatalogue.GetEventTypeSeeds();
+
+        foreach (var seed in seeds)
+        {
+            await UpsertEventTypeAsync(seed, cancellationToken);
+
+            // Origins after their type: EO1 is a foreign key.
+            foreach (var origin in seed.Origins)
+            {
+                await UpsertOriginAsync(seed, origin, cancellationToken);
+            }
+        }
+
+        await RetireAbsentEventTypesAsync(seeds, cancellationToken);
+        await RetireAbsentOriginsAsync(seeds, cancellationToken);
+    }
+
+    /// <summary>
+    /// Retention v1 stays with provisioning and does NOT move into the
+    /// deployment phase, because RT5 (script 003) makes created_by a foreign
+    /// key to public.app_user and the System actor it names is created by
+    /// PRV-C1. Seeding it before the host would fail that key on a fresh
+    /// database. The split is therefore a constraint, not a preference.
+    /// </summary>
+    public async Task SeedRetentionVersionOneAsync(
         DateTimeOffset provisionedAt,
         UserId createdBy,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(createdBy);
 
-        foreach (var seed in AuditEventCatalogue.GetEventTypeSeeds())
-        {
-            await InsertEventTypeAsync(seed, cancellationToken);
-
-            // Origins after their type: EO1 is a foreign key.
-            foreach (var origin in seed.Origins)
-            {
-                await InsertOriginAsync(seed, origin, cancellationToken);
-            }
-        }
-
         await InsertRetentionVersionOneAsync(
             provisionedAt, createdBy, cancellationToken);
     }
 
-    private async Task InsertEventTypeAsync(
+    /// <summary>
+    /// Marks inactive every event type the release no longer declares. Set
+    /// membership is passed as two parallel arrays rather than built into the
+    /// SQL text, so a catalogue entry can never be a parameter injection site.
+    /// </summary>
+    private async Task RetireAbsentEventTypesAsync(
+        IReadOnlyList<EventTypeSeed> seeds,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            """
+            UPDATE audit.audit_event_type AS t
+               SET is_active = false
+             WHERE t.is_active
+               AND NOT EXISTS (
+                   SELECT 1
+                     FROM unnest(@codes, @versions) AS s(code, version)
+                    WHERE s.code = t.code AND s.version = t.version)
+            """,
+            _connection,
+            _transaction);
+
+        command.Parameters.Add("codes", NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+            seeds.Select(x => x.Code).ToArray();
+        command.Parameters.Add("versions", NpgsqlDbType.Array | NpgsqlDbType.Integer).Value =
+            seeds.Select(x => x.Version).ToArray();
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// The same for origins, keyed on the triple that identifies one (EO1).
+    /// </summary>
+    private async Task RetireAbsentOriginsAsync(
+        IReadOnlyList<EventTypeSeed> seeds,
+        CancellationToken cancellationToken)
+    {
+        var codes = new List<string>();
+        var versions = new List<int>();
+        var kinds = new List<string>();
+
+        foreach (var seed in seeds)
+        {
+            foreach (var origin in seed.Origins)
+            {
+                codes.Add(seed.Code);
+                versions.Add(seed.Version);
+                kinds.Add(origin);
+            }
+        }
+
+        await using var command = new NpgsqlCommand(
+            """
+            UPDATE audit.audit_event_origin AS o
+               SET is_active = false
+             WHERE o.is_active
+               AND NOT EXISTS (
+                   SELECT 1
+                     FROM unnest(@codes, @versions, @kinds) AS s(code, version, origin_kind)
+                    WHERE s.code = o.code
+                      AND s.version = o.version
+                      AND s.origin_kind = o.origin_kind)
+            """,
+            _connection,
+            _transaction);
+
+        command.Parameters.Add("codes", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = codes.ToArray();
+        command.Parameters.Add("versions", NpgsqlDbType.Array | NpgsqlDbType.Integer).Value = versions.ToArray();
+        command.Parameters.Add("kinds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = kinds.ToArray();
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task UpsertEventTypeAsync(
         EventTypeSeed seed,
         CancellationToken cancellationToken)
     {
@@ -90,6 +204,20 @@ internal sealed class AuditCatalogueSeeder
                  @classification, @reason_required, @write_path, @shape,
                  @primary_type, @primary_required,
                  @entity_ref_roles, @pii_paths, NULL, @is_active)
+            ON CONFLICT (code, version) DO UPDATE SET
+                owning_context         = EXCLUDED.owning_context,
+                name                   = EXCLUDED.name,
+                description            = EXCLUDED.description,
+                default_classification = EXCLUDED.default_classification,
+                reason_required        = EXCLUDED.reason_required,
+                write_path             = EXCLUDED.write_path,
+                shape                  = EXCLUDED.shape,
+                primary_entity_type    = EXCLUDED.primary_entity_type,
+                primary_entity_required= EXCLUDED.primary_entity_required,
+                entity_ref_roles       = EXCLUDED.entity_ref_roles,
+                pii_paths              = EXCLUDED.pii_paths,
+                payload_schema_ref     = EXCLUDED.payload_schema_ref,
+                is_active              = EXCLUDED.is_active
             """,
             _connection,
             _transaction);
@@ -119,7 +247,7 @@ internal sealed class AuditCatalogueSeeder
     /// are seeded inactive with it, so that when AU11 lifts the deferral both
     /// are switched on by the same AUD-C3 run.
     /// </summary>
-    private async Task InsertOriginAsync(
+    private async Task UpsertOriginAsync(
         EventTypeSeed seed,
         string originKind,
         CancellationToken cancellationToken)
@@ -128,6 +256,8 @@ internal sealed class AuditCatalogueSeeder
             """
             INSERT INTO audit.audit_event_origin (code, version, origin_kind, is_active)
             VALUES (@code, @version, @origin_kind, @is_active)
+            ON CONFLICT (code, version, origin_kind) DO UPDATE SET
+                is_active = EXCLUDED.is_active
             """,
             _connection,
             _transaction);

@@ -109,13 +109,31 @@ internal static class AuditConstructionVerification
         ("migration_role", "audit_event_type", "DELETE", false),
         ("migration_role", "audit_event_origin", "DELETE", false),
 
-        // provisioning_role — seeds the catalogue, reads the trail (003)
+        // provisioning_role — emits through the pipeline, READS the
+        // catalogue it no longer writes (004).
+        //
+        // The INSERTs on audit_record and audit_entity_ref exist because
+        // AUD-C4 emits TenantProvisioned through the ordinary pipeline since
+        // E1. The absent INSERTs on the two catalogue tables are the other
+        // half of the same change: the catalogue is deployed before the host
+        // by Ligature.AuditSchema, so provisioning reads it and nothing more.
         ("provisioning_role", "audit_record", "SELECT", true),
-        ("provisioning_role", "audit_record", "INSERT", false),
+        ("provisioning_role", "audit_record", "INSERT", true),
         ("provisioning_role", "audit_record", "UPDATE", false),
         ("provisioning_role", "audit_record", "DELETE", false),
-        ("provisioning_role", "audit_event_type", "INSERT", true),
-        ("provisioning_role", "audit_event_origin", "INSERT", true),
+        ("provisioning_role", "audit_entity_ref", "SELECT", true),
+        ("provisioning_role", "audit_entity_ref", "INSERT", true),
+        ("provisioning_role", "audit_entity_ref", "UPDATE", false),
+        ("provisioning_role", "audit_entity_ref", "DELETE", false),
+        ("provisioning_role", "audit_event_type", "SELECT", true),
+        ("provisioning_role", "audit_event_type", "INSERT", false),
+        ("provisioning_role", "audit_event_type", "UPDATE", false),
+        ("provisioning_role", "audit_event_type", "DELETE", false),
+        ("provisioning_role", "audit_event_origin", "SELECT", true),
+        ("provisioning_role", "audit_event_origin", "INSERT", false),
+        ("provisioning_role", "audit_event_origin", "UPDATE", false),
+        ("provisioning_role", "audit_event_origin", "DELETE", false),
+        ("provisioning_role", "audit_retention_policy", "SELECT", true),
         ("provisioning_role", "audit_retention_policy", "INSERT", true),
         ("provisioning_role", "audit_schema_version", "SELECT", true),
 

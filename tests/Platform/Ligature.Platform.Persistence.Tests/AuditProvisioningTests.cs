@@ -292,12 +292,25 @@ public sealed class AuditProvisioningTests
         await new PlatformProvisioner(context).ProvisionAsync(Now, CancellationToken.None);
     }
 
+    /// <summary>
+    /// A refused handover must leave no TENANT data. It must also leave the
+    /// deployment alone.
+    ///
+    /// The event catalogue used to be asserted at zero here, because
+    /// provisioning wrote it and a rollback took it with everything else. It
+    /// is now deployed before the host starts, by a different process under a
+    /// different role, so it is still present afterwards — and asserting that
+    /// is what separates "provisioning rolled back" from "the deployment was
+    /// undone", which would be a far worse outcome to pass silently.
+    /// </summary>
     private static async Task AssertNothingProvisionedAsync(ThrowawayDatabase database)
     {
         Assert.Equal(0, await CountAsync(database, "app_user"));
         Assert.Equal(0, await CountAsync(database, "permission"));
-        Assert.Equal(0, await CountAsync(database, "audit.audit_event_type"));
         Assert.Equal(0, await CountAsync(database, "audit.audit_retention_policy"));
+        Assert.Equal(0, await CountAsync(database, "audit.audit_record"));
+
+        Assert.NotEqual(0L, await CountAsync(database, "audit.audit_event_type"));
     }
 
     private static async Task<long> CountAsync(ThrowawayDatabase database, string from)

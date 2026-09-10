@@ -185,8 +185,17 @@ public sealed class PlatformProvisioner
         await AuditHandoverVerification.VerifyStructureAsync(
             connection, npgsqlTransaction, cancellationToken);
 
+        // The event catalogue is NOT written here any more. It is release
+        // infrastructure that the compiled handlers depend on, so it is
+        // deployed by Ligature.AuditSchema before the host starts (IMPL-08).
+        // Provisioning now CONSUMES that catalogue rather than establishing
+        // it, which is what stops the two ever describing different releases.
+        //
+        // Retention v1 stays, because RT5 makes created_by a foreign key to
+        // the System actor that this procedure has just created.
         await new AuditCatalogueSeeder(connection, npgsqlTransaction)
-            .SeedAsync(executionTimestamp, User.SystemUserId, cancellationToken);
+            .SeedRetentionVersionOneAsync(
+                executionTimestamp, User.SystemUserId, cancellationToken);
     }
 
     /// <summary>
@@ -194,8 +203,8 @@ public sealed class PlatformProvisioner
     /// a provisioning procedure running in the tool on its own transaction,
     /// so it uses the writer directly rather than through the pipeline;
     /// everything else about the record is held to the same rules, through
-    /// the same assembler, against the release seed it has just written
-    /// (no process could have loaded a catalogue that does not yet exist).
+    /// the same assembler, against the DEPLOYED catalogue it reads back —
+    /// the same rows the host verified its declarations against at startup.
     ///
     /// Actor SYSTEM_UUID, origin System (AUD-D24); primary Tenant with no
     /// id; a reference to the security policy version it seeded; a payload
@@ -224,7 +233,8 @@ public sealed class PlatformProvisioner
             [declaration],
             AuditDeclarations.For(typeof(PlatformProvisioning))!,
             ActorSnapshot.System(executionTimestamp),
-            AuditEventCatalogueLoader.FromSeeds(),
+            AuditEventCatalogueLoader.Load(
+                AuditConnection(), AuditTransaction(transaction)),
             AuditWritePath.Transactional,
             operationId: Guid.CreateVersion7(),
             occurredAt: executionTimestamp,
