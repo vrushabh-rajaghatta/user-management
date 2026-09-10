@@ -1,5 +1,7 @@
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Audit;
+using Ligature.Platform.Application.Notifications;
+using Ligature.Platform.Domain.Notifications;
 using Ligature.Platform.Domain.Users;
 using Ligature.SharedKernel.Abstractions;
 using Ligature.SharedKernel.Exceptions;
@@ -18,6 +20,7 @@ public sealed class CreateUserCommandHandler
     private readonly ISecurityPolicyResolver _securityPolicyResolver;
     private readonly IUserTokenService _userTokenService;
     private readonly IAuditEvents _auditEvents;
+    private readonly INotificationEvents _notificationEvents;
 
     public CreateUserCommandHandler(
         IExecutionContext executionContext,
@@ -28,7 +31,8 @@ public sealed class CreateUserCommandHandler
         IUserTokenRepository userTokenRepository,
         ISecurityPolicyResolver securityPolicyResolver,
         IUserTokenService userTokenService,
-        IAuditEvents auditEvents)
+        IAuditEvents auditEvents,
+        INotificationEvents notificationEvents)
     {
         _executionContext = executionContext;
         _clock = clock;
@@ -39,6 +43,7 @@ public sealed class CreateUserCommandHandler
         _securityPolicyResolver = securityPolicyResolver;
         _userTokenService = userTokenService;
         _auditEvents = auditEvents;
+        _notificationEvents = notificationEvents;
     }
 
     /// <summary>
@@ -126,10 +131,11 @@ public sealed class CreateUserCommandHandler
                     // embeds it: CRD-C1 consumes by primary key.
                     var tokenId = UserTokenId.New();
 
-                    // Only tokenMaterial.Hash is used. The plaintext has no
-                    // consumer in this phase and is deliberately left with
-                    // none: it lives for the duration of this method and is
-                    // never persisted, returned or logged (UT7).
+                    // Only tokenMaterial.Hash is persisted. The plaintext has
+                    // exactly one consumer — the notification declared at step
+                    // 9 below — and it lives in memory for the lifetime of
+                    // this command and nowhere else: never a column, never a
+                    // queue, never a log, never the command result (UT7).
                     var tokenMaterial =
                         _userTokenService.Generate(tokenId);
 
@@ -200,14 +206,26 @@ public sealed class CreateUserCommandHandler
                             expiresAt = activationToken.ExpiresAt,
                         });
 
-                    // TODO — USR-C1 step 9. Enqueue the activation
-                    // notification. Deferred to the Notifications capability,
-                    // which owns delivery — User Management does not own email
-                    // infrastructure (docs/architecture.md section 8).
-                    // Whatever delivers it must reckon with UT7: a queued row
-                    // carrying the activation link necessarily carries the
-                    // plaintext token, which is the exact disclosure that
-                    // storing only a hash exists to prevent.
+                    // USR-C1 step 9 — declare the activation notification. The
+                    // pipeline writes the Pending row after this handler
+                    // returns, still inside this transaction, so the token and
+                    // the record that we intend to deliver it commit together
+                    // or not at all.
+                    //
+                    // This is the ONE place the plaintext is handed anywhere.
+                    // It goes to a command-scoped collector in memory, never to
+                    // a column and never to a queue: a persisted payload
+                    // carrying the activation link would carry the plaintext,
+                    // which is the exact disclosure that storing only a hash
+                    // exists to prevent (UT7, D-NOTIF-01).
+                    //
+                    // User Management declares; Notification persists. This
+                    // handler references no notification table (D-N1-07).
+                    _notificationEvents.Emit(
+                        NotificationType.AccountActivation,
+                        tokenId,
+                        email.Value,
+                        tokenMaterial.PlainText);
 
                     return new CreateUserResult(
                         userId,

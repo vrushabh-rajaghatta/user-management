@@ -403,6 +403,30 @@ Harmless to correctness — every test scopes by its own ids — but it accumula
 **Intended fix:** establish the cleanup scope BEFORE any operation that can throw, rather than wrapping more code in another `try`/`finally`.
 **Deferred to:** unscheduled.
 
+## Execution-strategy replay leaves rolled-back entities looking persisted
+
+**State:** when the execution strategy replays a unit of work after a `SaveChanges` failure, the change tracker is not reset. Entities the failed attempt inserted stay `Unchanged` — EF believes they are persisted, so the replay does not re-insert them — while the rollback has already removed the rows. Entities the failed attempt merely added stay `Added` and are written on the next attempt, still referencing the rolled-back rows.
+
+Observed while implementing N1 Phase B, with the change tracker dumped at each save across a forced replay:
+
+```text
+attempt 1, inner save   User:Added, UserIdentity:Added, UserToken:Added
+attempt 1, outer save   Notification:Added, User:Unchanged, UserIdentity:Unchanged, UserToken:Unchanged   ← fails, rolls back
+attempt 2, inner save   UserIdentity:Added, User:Added, Notification:Added, UserToken:Added,
+                        User:Unchanged, UserIdentity:Unchanged, UserToken:Unchanged
+```
+
+The leftover `Notification` is written against the leftover `UserToken`, which is never re-inserted, and the foreign key fails with `23503`.
+
+`UnitOfWork` already states the requirement — "a retry re-invokes the operation on a change tracker that still holds the previous attempt's entries, so the operation must be idempotent in its database effects" — but nothing establishes tracker-safe replay, and the User Management handlers are not idempotent in that sense: a replay mints a fresh token id and strands the previous one.
+
+This is a platform correctness gap, not a Notification defect. Notification exposed it by being the first dependent entity added to the same persistence graph; the notification path deliberately does not work around it, since detaching entities or clearing the tracker from module code would make a module responsible for a platform invariant.
+
+**Not currently reachable:** `EnableRetryOnFailure` is off, so no replay occurs in production. This becomes live the day execution-strategy retries are enabled.
+
+**Where recorded:** `NotificationEmissionBehaviorTests` class doc, which is why the per-attempt isolation invariant is proved at the behaviour level rather than through a replayed transaction.
+**Deferred to:** unscheduled; it must be resolved before retries are enabled.
+
 ## Database-per-tenant not implemented
 
 **State:** one database, one connection string, no tenant resolution. See `docs/architecture.md` §9.

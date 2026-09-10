@@ -3,6 +3,7 @@ using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Behaviors;
 using Ligature.Platform.Application.Dispatching;
 using Ligature.Platform.Application.Execution;
+using Ligature.Platform.Application.Notifications;
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.SignIn;
@@ -62,21 +63,55 @@ public static class DependencyInjection
         services.AddScoped<IAuditEmissionScope>(
             sp => sp.GetRequiredService<ScopedAuditEvents>());
 
+        // The notification collector, one instance per scope under two
+        // interfaces — the declaration side an issuing command injects, and
+        // the pipeline side the two notification behaviours use — for the same
+        // single-instance reason as the execution context above.
+        //
+        // Deliberately its own collector rather than a shared one with audit:
+        // an audit declaration that cannot be written fails the request, and a
+        // notification that cannot be sent must not.
+        services.AddScoped<ScopedNotificationEvents>();
+
+        services.AddScoped<INotificationEvents>(
+            sp => sp.GetRequiredService<ScopedNotificationEvents>());
+
+        services.AddScoped<INotificationEmissionScope>(
+            sp => sp.GetRequiredService<ScopedNotificationEvents>());
+
         // Registration order is execution order, outermost first.
+        //
+        // The notification post-commit behaviour is outside the audit command
+        // scope, so a command whose autonomous audit write failed after commit
+        // — which fails the request — hands off no notification: the send
+        // follows the command result, and there was no result.
         //
         // The audit command scope is outside the transaction: it owns the
         // OperationId and the command clock, which belong to the command
         // rather than to either transaction, and it writes the autonomous
         // records once the transaction has finished, whichever way it
-        // finished. Behaviour 6 then opens the transaction, behaviour 7 runs
-        // inside it and writes the transactional records after the handler
-        // returns, and 6 commits (IMPL-05: 1 → 2 → 5 → 3 → 4 → 6 → handler
-        // → 7, with 5 satisfied before the pipeline by CallerEstablisher).
+        // finished. Behaviour 6 then opens the transaction. Inside it, the
+        // notification emission behaviour clears per attempt and adds the
+        // Pending row, and behaviour 7 writes the transactional audit records
+        // after the handler returns; 6 commits (IMPL-05: 1 → 2 → 5 → 3 → 4 →
+        // 6 → handler → 7, with 5 satisfied before the pipeline by
+        // CallerEstablisher).
+        //
+        // Notification emission sits OUTSIDE behaviour 7, so on the way out
+        // the audit rows are written before the Pending row. Both are on the
+        // command's transaction, so this is control flow rather than a
+        // difference in atomicity.
+        services.AddScoped(typeof(ICommandBehavior<,>),
+            typeof(NotificationPostCommitBehavior<,>));
+
         services.AddScoped(typeof(ICommandBehavior<,>),
             typeof(AuditCommandScopeBehavior<,>));
 
         services.AddScoped(typeof(ICommandBehavior<,>),
             typeof(TransactionScopeBehavior<,>));
+
+        services.AddScoped(typeof(ICommandBehavior<,>),
+            typeof(NotificationEmissionBehavior<,>));
 
         services.AddScoped(typeof(ICommandBehavior<,>),
             typeof(AuditEmissionBehavior<,>));

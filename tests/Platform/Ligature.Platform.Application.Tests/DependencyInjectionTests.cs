@@ -2,6 +2,7 @@ using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Behaviors;
 using Ligature.Platform.Application.Dispatching;
+using Ligature.Platform.Domain.Notifications;
 using Ligature.Platform.Domain.Users;
 using Ligature.SharedKernel.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -43,6 +44,14 @@ public sealed class DependencyInjectionTests
                         null,
                         UserRoleId.New())));
         }
+    }
+
+    private sealed class FakeNotificationRepository : INotificationRepository
+    {
+        public Task AddAsync(
+            Notification notification,
+            CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 
     private sealed class FakeAutonomousWriter : IAutonomousAuditRecordWriter
@@ -122,6 +131,10 @@ public sealed class DependencyInjectionTests
             IAutonomousAuditRecordWriter,
             FakeAutonomousWriter>();
 
+        services.AddScoped<
+            INotificationRepository,
+            FakeNotificationRepository>();
+
         using var provider = services.BuildServiceProvider();
 
         var pipeline =
@@ -165,6 +178,10 @@ public sealed class DependencyInjectionTests
             IAutonomousAuditRecordWriter,
             FakeAutonomousWriter>();
 
+        services.AddScoped<
+            INotificationRepository,
+            FakeNotificationRepository>();
+
         using var provider = services.BuildServiceProvider();
 
         using var scope = provider.CreateScope();
@@ -191,6 +208,14 @@ public sealed class DependencyInjectionTests
                     AuthorizationBehavior<TestCommand, TestResult>>(
                     behavior),
 
+            // Notification's post-commit behaviour wraps the audit command
+            // scope, so a command whose autonomous audit write failed after
+            // commit — which fails the request — hands off no notification.
+            behavior =>
+                Assert.IsType<
+                    NotificationPostCommitBehavior<TestCommand, TestResult>>(
+                    behavior),
+
             // The audit command scope wraps the transaction, because what it
             // writes must outlive the transaction's fate. Behaviour 6 then
             // opens the transaction that behaviour 7 writes inside, so it
@@ -204,6 +229,14 @@ public sealed class DependencyInjectionTests
             behavior =>
                 Assert.IsType<
                     TransactionScopeBehavior<TestCommand, TestResult>>(
+                    behavior),
+
+            // Inside the transaction, and outside behaviour 7: the clear must
+            // run once per ATTEMPT, which only something inside the execution
+            // strategy's delegate can do.
+            behavior =>
+                Assert.IsType<
+                    NotificationEmissionBehavior<TestCommand, TestResult>>(
                     behavior),
 
             behavior =>
