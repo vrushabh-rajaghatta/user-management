@@ -1,5 +1,6 @@
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
 
@@ -32,11 +33,25 @@ public static class AuditDeclarations
     private static readonly IReadOnlyDictionary<Type, AuditDeclaration> ByCommand =
         new Dictionary<Type, AuditDeclaration>
         {
-            // USR-C1 — one record per created row; TokenInvalidated (n) joins
-            // when UT5 lands with CRD-C2.
+            // USR-C1 — one record per created row. TokenInvalidated is not
+            // listed: USR-C1 issues the first token a brand-new identity has,
+            // so there is never a prior one to supersede. CRD-C2 below is
+            // where UT5 actually bites.
             [typeof(CreateUserCommand)] = new(
                 "UserManagement",
                 ["UserCreated", "IdentityCreated", "TokenIssued"]),
+
+            // CRD-C2 — both codes only on the known-account branch, and both
+            // attributed to System: nobody authenticated, and the catalogue
+            // permits only a System origin for PasswordResetRequested. The
+            // silent branch declares NOTHING, which is why this list has no
+            // entry for a rejected or unmatched request — a record of one
+            // would be the enumeration oracle the command exists to avoid.
+            //
+            // TokenInvalidated (n), one per superseded token (UT5).
+            [typeof(RequestPasswordResetCommand)] = new(
+                "UserManagement",
+                ["PasswordResetRequested", "TokenInvalidated"]),
 
             // SES-C2 — one record, and only when a session actually changed
             // state. The no-op outcomes declare nothing: a record of a

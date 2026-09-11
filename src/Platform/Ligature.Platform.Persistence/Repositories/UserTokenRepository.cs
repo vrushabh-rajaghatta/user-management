@@ -46,6 +46,48 @@ public sealed class UserTokenRepository : IUserTokenRepository
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<UserTokenId>> InvalidatePriorAsync(
+        UserIdentityId identityId,
+        TokenType tokenType,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(identityId);
+
+        var type = tokenType.ToString();
+
+        // One statement, like consumption, and for the same reason: two
+        // simultaneous reset requests must not both observe the same open
+        // token and both try to supersede it. Here they race on this UPDATE,
+        // each invalidates whatever it actually won, and UT4 then refuses the
+        // second insert — so the loser fails rather than producing a second
+        // live token.
+        //
+        // "used_at IS NULL AND invalidated_at IS NULL" and NOTHING about
+        // expiry: an expired-but-unused token still occupies UT4's slot, so it
+        // must be invalidated too. The interface documents why at length.
+        //
+        // RETURNING gives the caller the ids it must emit a TokenInvalidated
+        // for, from the same statement that invalidated them — no second read
+        // can observe a different set.
+        var invalidated = await _dbContext.Database
+            .SqlQuery<Guid>($"""
+                UPDATE user_token
+                SET    invalidated_at = {now}
+                WHERE  user_identity_id = {identityId.Value}
+                  AND  token_type = {type}
+                  AND  used_at IS NULL
+                  AND  invalidated_at IS NULL
+                RETURNING id AS "Value"
+                """)
+            .ToListAsync(cancellationToken);
+
+        return invalidated.Count == 0
+            ? []
+            : [.. invalidated.Select(x => new UserTokenId(x))];
+    }
+
+    /// <inheritdoc />
     public async Task<UserIdentityId?> TryConsumeAsync(
         UserTokenId tokenId,
         string tokenHash,

@@ -193,6 +193,10 @@ public sealed class CommandHandlerRegistrationTests
             string username, CancellationToken cancellationToken)
             => Task.FromResult<Domain.Users.UserIdentity?>(null);
 
+        public Task<IReadOnlyList<Domain.Users.UserIdentityId>> FindPasswordResetCandidatesAsync(
+            string emailOrUsername, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<Domain.Users.UserIdentityId>>([]);
+
         public Task<Domain.Users.UserIdentity?> FindAsync(
             Domain.Users.UserIdentityId userIdentityId,
             CancellationToken cancellationToken)
@@ -204,6 +208,11 @@ public sealed class CommandHandlerRegistrationTests
         public Task AddAsync(
             Domain.Users.UserToken token, CancellationToken cancellationToken)
             => Task.CompletedTask;
+
+        public Task<IReadOnlyList<Domain.Users.UserTokenId>> InvalidatePriorAsync(
+            Domain.Users.UserIdentityId identityId, Domain.Users.TokenType tokenType,
+            DateTimeOffset now, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<Domain.Users.UserTokenId>>([]);
 
         public Task<Domain.Users.UserIdentityId?> TryConsumeAsync(
             Domain.Users.UserTokenId tokenId, string tokenHash,

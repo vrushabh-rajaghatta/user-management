@@ -1,10 +1,11 @@
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
+using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 
 namespace Ligature.Host.Api;
 
 /// <summary>
-/// CRD-C1 over HTTP.
+/// CRD-C1 and CRD-C2 over HTTP.
 ///
 /// Anonymous, and that is the mechanism rather than an oversight: the token IS
 /// the authorisation. Whoever holds the emailed secret proves control of the
@@ -31,6 +32,59 @@ public static class AccountEndpoints
                 + "400.")
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest);
+
+        // CRD-C2. ONE outcome, deliberately: there is no 400 here and no 404,
+        // because a status code that varied with what was typed would be the
+        // account-enumeration oracle this command's frozen failure mode
+        // forbids. A blank body is rejected by the command, not by a distinct
+        // response.
+        //
+        // The description says so plainly rather than being vague about it —
+        // the uniformity is a documented control, not an implementation
+        // detail a reader should have to infer.
+        routes.MapPost("/api/account/password-reset-request", RequestPasswordResetAsync)
+            .WithTags("Account")
+            .WithSummary("Request a password-reset link.")
+            .WithDescription(
+                "Anonymous. Always returns 200 with the same body, whether or "
+                + "not an account matches, so that the response cannot be used "
+                + "to discover which addresses or usernames are registered. "
+                + "If a single eligible local account matches, a single-use "
+                + "link is emailed to it and any previous link stops working.")
+            .Produces(StatusCodes.Status200OK);
+    }
+
+    /// <summary>
+    /// Returns 200 on every path, including a missing body.
+    ///
+    /// NOTE FOR WHOEVER ADDS RATE LIMITING (pipeline behaviour 11, not yet
+    /// implemented): it belongs in front of this endpoint, per address and per
+    /// IP. The catalogue makes it a precondition of CRD-C2, and D-NOTIF-03
+    /// relies on it to compensate for the timing difference between the
+    /// matching and non-matching branches. Until then this endpoint is
+    /// unthrottled — see docs/requirements.md.
+    /// </summary>
+    private static async Task<IResult> RequestPasswordResetAsync(
+        PasswordResetRequest? request,
+        ICommandDispatcher dispatcher,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        await dispatcher
+            .SendAsync<RequestPasswordResetCommand, RequestPasswordResetResult>(
+                new RequestPasswordResetCommand(
+                    request?.EmailOrUsername ?? string.Empty,
+
+                    // Taken from the connection, never the body, so a caller
+                    // cannot choose what is recorded about them.
+                    context.Connection.RemoteIpAddress?.ToString()),
+                cancellationToken);
+
+        // A fixed literal, not a value derived from anything the command saw.
+        // Nothing here may vary: not the shape, not the wording, not the
+        // presence of a field.
+        return Results.Ok(
+            new { Message = "If the account exists, a reset link has been sent." });
     }
 
     private static async Task<IResult> ActivateAsync(
@@ -61,4 +115,12 @@ public static class AccountEndpoints
     /// echoed back in the response.
     /// </summary>
     private sealed record ActivateRequest(string? Token, string? NewPassword);
+
+    /// <summary>
+    /// One field, because the command takes one. Whether it holds an address
+    /// or a username is not the caller's to declare — usernames are
+    /// unconstrained labels and may look exactly like an address, so the
+    /// resolution tries both.
+    /// </summary>
+    private sealed record PasswordResetRequest(string? EmailOrUsername);
 }

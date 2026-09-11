@@ -209,7 +209,11 @@ public sealed class UserManagementImmutabilityTests : IAsyncLifetime
         // forbids one token holding both of user_token's write-once columns.
         var id = table switch
         {
-            "user_token" => await SeedTokenAsync(used: false, invalidated: false),
+            // Its own identity: the class fixture already holds an open
+            // Activation token for _identity, and UT4 permits only one.
+            "user_token" => await SeedTokenAsync(
+                used: false, invalidated: false,
+                identityId: await SeedIdentityAsync()),
             "user_session" => await SeedSessionAsync(revoked: false),
             // Its own permission too: the partial unique index on
             // (role_id, permission_id) covers unrevoked rows, so a second live
@@ -655,6 +659,27 @@ public sealed class UserManagementImmutabilityTests : IAsyncLifetime
             revoked: true);
     }
 
+    /// <summary>
+    /// An extra active local identity under the same user, for tests that
+    /// need an open token of a type the class fixture has already used up.
+    /// </summary>
+    private async Task<Guid> SeedIdentityAsync()
+    {
+        var id = Guid.NewGuid();
+
+        await ExecuteAsync(
+            $"""
+             INSERT INTO "user_identity"
+                 (id, user_id, actor_type, identity_type, identity_provider,
+                  subject_id, username, status, created_at, created_by)
+             VALUES
+                 ('{id}', '{_subjectUser}', 'Human', 'Local', 'Application',
+                  '{id}', 'jo-{Guid.NewGuid():N}', 'Active', now(), '{SystemUser}')
+             """);
+
+        return id;
+    }
+
     private async Task<Guid> SeedCredentialAsync()
     {
         var id = Guid.NewGuid();
@@ -688,19 +713,24 @@ public sealed class UserManagementImmutabilityTests : IAsyncLifetime
         return id;
     }
 
-    private async Task<Guid> SeedTokenAsync(bool used, bool invalidated)
+    private async Task<Guid> SeedTokenAsync(
+        bool used, bool invalidated, Guid? identityId = null)
     {
         var id = Guid.NewGuid();
 
         // ck_user_token_not_used_and_invalidated forbids both at once, which
         // is why the two write-once columns need separate rows.
+        //
+        // identityId exists because of UT4: at most one OPEN token per
+        // (identity, type), so a caller needing a second open Activation token
+        // must put it on an identity of its own.
         await ExecuteAsync(
             $"""
              INSERT INTO "user_token"
                  (id, user_identity_id, token_type, token_hash, expires_at,
                   used_at, invalidated_at, created_at, created_by)
              VALUES
-                 ('{id}', '{_identity}', 'Activation', 'hash-{Guid.NewGuid():N}',
+                 ('{id}', '{identityId ?? _identity}', 'Activation', 'hash-{Guid.NewGuid():N}',
                   now() + interval '72 hours',
                   {(used ? "now()" : "NULL")}, {(invalidated ? "now()" : "NULL")},
                   now(), '{SystemUser}')

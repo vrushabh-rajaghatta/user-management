@@ -190,11 +190,19 @@ public sealed class ActivateAccountIntegrationTests
             // ck_user_token_expires_after_created still applies: an expired
             // token is one issued before it lapsed, not one that never made
             // sense.
+            //
+            // On an identity of its own, because UT4 permits at most one OPEN
+            // token per (identity, type) and expiry does not close a token —
+            // an expired-but-unused token still occupies the slot the
+            // fixture's own token already holds. Which identity it belongs to
+            // is irrelevant to what this test asserts.
             var expired = (await IssueTokenAsync(
-                fixture.IdentityId,
+                await SeedIdentityAsync(fixture.UserId),
                 expiresAt: Now.AddDays(-1),
                 createdAt: Now.AddDays(-2))).PlainText;
 
+            // No extra identity needed: an invalidated token is closed, so it
+            // occupies no UT4 slot.
             var invalidated = (await IssueTokenAsync(
                 fixture.IdentityId, invalidatedAt: Now)).PlainText;
 
@@ -885,6 +893,36 @@ public sealed class ActivateAccountIntegrationTests
         command.Parameters.AddWithValue("id", id);
 
         await command.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>
+    /// A bare extra local identity, for tests needing an open token of a type
+    /// the fixture's own identity has already used up (UT4).
+    /// </summary>
+    private async Task<UserIdentityId> SeedIdentityAsync(UserId userId)
+    {
+        var id = Guid.NewGuid();
+
+        await using var connection = await _database.OpenAsync();
+
+        await using var command = new NpgsqlCommand(
+            """
+            INSERT INTO user_identity
+                (id, user_id, actor_type, identity_type, identity_provider,
+                 subject_id, username, status, created_at, created_by)
+            VALUES
+                (@id, @userId, 'Human', 'Local', 'Application',
+                 @id, @username, 'Active', now(), @system)
+            """, connection);
+
+        command.Parameters.AddWithValue("id", id);
+        command.Parameters.AddWithValue("userId", userId.Value);
+        command.Parameters.AddWithValue("username", $"extra-{id:N}");
+        command.Parameters.AddWithValue("system", User.SystemUserId.Value);
+
+        await command.ExecuteNonQueryAsync();
+
+        return new UserIdentityId(id);
     }
 
     private async Task<(UserTokenId Id, string PlainText)> IssueTokenAsync(

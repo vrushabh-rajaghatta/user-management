@@ -88,12 +88,32 @@ Suggested structure:
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
 
-## UT4 — no partial unique index on open user tokens
+## UT4 — no partial unique index on open user tokens — RESOLVED
 
 **Rule:** at most one open token per `(UserIdentityId, TokenType)`.
-**State:** the schema has no partial unique index for this, so `UserTokenRepository` has no `Exists` pre-check for it and nothing to mirror.
-**Deferred to:** CRD-C2, alongside UT5 (invalidate prior tokens on issue), so the invariant and the command that depends on it land together.
-**Where recorded:** `UserTokenRepository` class doc.
+
+**Resolved** by `AddOpenTokenUniqueIndex`, landing with CRD-C2 as planned:
+
+```sql
+CREATE UNIQUE INDEX "ux_user_token_open_per_type"
+ON "user_token" ("user_identity_id", "token_type")
+WHERE "used_at" IS NULL AND "invalidated_at" IS NULL;
+```
+
+**Note what the predicate does not say: expiry.** A partial index predicate
+must be immutable and `now()` is not, so an expired-but-unused token still
+occupies the slot. That is not a limitation worked around — it is what makes
+UT4 and UT5 one mechanism. UT5 requires issuance to invalidate all prior unused
+tokens of that type *including already-expired ones*, and this index is what
+makes forgetting that clause impossible: a reissue after expiry collides here
+rather than silently producing two open tokens.
+
+No data-cleanup step; a probe found 142 tokens, 137 open, and no violations in
+the development database. The index build is the authority elsewhere.
+
+**Fixture consequence.** Two test classes seeded several open Activation tokens
+for one identity and now seed an extra identity instead —
+`ActivateAccountIntegrationTests` and `UserManagementImmutabilityTests`.
 
 ## PostgresExceptionTranslator — role-overlap and live-grant constraints not mapped
 
@@ -361,6 +381,48 @@ closing `AUD-O11` changes one line.
 **Deferred to:** Regulatory's answer. Do not "correct" the number inside another
 story.
 **Where recorded:** `AuditReleaseBaseline` class doc.
+
+## CRD-C2 is not first-tenant-ready: rate limiting is missing
+
+**This is a blocking dependency, not an ordinary gap.** CRD-C2
+(`RequestPasswordReset`) is implemented, tested and merged. It must not be
+exposed to a real tenant until pipeline behaviour 11 exists.
+
+**Why it blocks.** The command catalogue states CRD-C2 is *"Rate limited per
+address and per IP"* — a **precondition** of the command, not a nicety. And
+Notification's D-NOTIF-03 accepts the residual timing difference between the
+issuing and non-issuing branches explicitly **because** behaviour 11
+compensates for it:
+
+> *"The residual timing difference between issuing and non-issuing paths is
+> accepted and recorded; behaviour 11 (rate limiting) is the compensating
+> control."*
+
+Shipping CRD-C2 without behaviour 11 therefore does not make CRD-C2
+unimplemented — it makes it **implemented but not deployable**, with an
+accepted risk whose compensation is absent.
+
+**What is and is not covered today.** The uniform response
+(`PasswordResetRequestEndpointTests`) closes the *content* channel: unknown
+address, external identity and known local identity return byte-identical
+responses, and only the third writes anything. It cannot close the *timing*
+channel, and nothing else does. Account lockout
+(`FailedAttemptCount`/`LockedUntil`) guards password attempts against one
+credential; it does nothing about repeated reset requests across many
+addresses, or about an unauthenticated caller enumerating at speed.
+
+**Scope when it is built.** Behaviour 11 applies to anonymous commands
+generally — sign-in needs it too — so it is cross-cutting infrastructure rather
+than part of CRD-C2. Note also that the host reads the client address from
+`context.Connection.RemoteIpAddress` with no forwarded-headers handling, so
+per-IP limiting behind a proxy would bucket every caller together until that is
+addressed.
+
+**Where recorded:** the class doc of `RequestPasswordResetCommandHandler`, and
+a note on the endpoint in `AccountEndpoints`, so the dependency is visible to
+whoever reads the code rather than only to whoever reads this file.
+
+**Deferred to:** its own story, before the first tenant.
 
 ## Notifications are not implemented
 

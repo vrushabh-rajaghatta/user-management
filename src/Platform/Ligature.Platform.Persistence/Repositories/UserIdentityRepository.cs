@@ -106,6 +106,48 @@ public sealed class UserIdentityRepository : IUserIdentityRepository
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<UserIdentityId>> FindPasswordResetCandidatesAsync(
+        string emailOrUsername,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(emailOrUsername);
+
+        // Raw SQL with database-side lower(), the same shape
+        // UserRepository.ExistsActiveHumanWithEmailAsync uses: the uniqueness
+        // indexes this mirrors are themselves on lower(email) and
+        // lower(username), so matching any other way would resemble them
+        // rather than mirror them.
+        //
+        // ONE statement covering both keys, not two lookups combined in
+        // memory. The eligibility predicate must describe a single instant:
+        // reading usernames and then emails would let a deactivation land
+        // between the halves and produce a decision true of neither moment.
+        //
+        // lower(NULL) yields NULL and never equals anything, so identities
+        // without a username and users without an email drop out here as well
+        // as at the explicit IS NOT NULL below.
+        var candidates = await _dbContext.Database
+            .SqlQuery<Guid>(
+                $"""
+                SELECT i."id" AS "Value"
+                FROM "user_identity" i
+                JOIN "app_user" u ON u."id" = i."user_id"
+                WHERE i."identity_type" = 'Local'
+                  AND i."status" = 'Active'
+                  AND u."status" = 'Active'
+                  AND u."actor_type" = 'Human'
+                  AND u."email" IS NOT NULL
+                  AND (lower(i."username") = lower({emailOrUsername})
+                       OR lower(u."email") = lower({emailOrUsername}))
+                """)
+            .ToListAsync(cancellationToken);
+
+        return candidates.Count == 0
+            ? []
+            : [.. candidates.Select(x => new UserIdentityId(x))];
+    }
+
+    /// <inheritdoc />
     public async Task<UserIdentity?> FindAsync(
         UserIdentityId userIdentityId,
         CancellationToken cancellationToken)

@@ -1,6 +1,7 @@
 using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
 
@@ -72,15 +73,22 @@ public sealed class AuditDeclarationsTests
     }
 
     /// <summary>
-    /// Derived from the registry rather than listed, so a command added later
-    /// cannot leave this test asserting yesterday's set.
+    /// The command types are LISTED, not derived — AuditDeclarations exposes
+    /// no enumeration, only For(type). The codes are then derived from the
+    /// registry, so a command whose codes change cannot leave this asserting
+    /// yesterday's set; a command ADDED without being listed here can, and
+    /// the only thing that catches that is the host's own start-up
+    /// verification against the deployed catalogue.
+    ///
+    /// (This comment previously claimed the whole thing was derived. It was
+    /// not, and adding CRD-C2 is what made the difference visible.)
     /// </summary>
     private static string[] EveryDeclaredCode
         => [.. new[]
             {
                 typeof(CreateUserCommand), typeof(SignOutCommand),
                 typeof(ActivateAccountCommand), typeof(SignInCommand),
-                typeof(PlatformProvisioning),
+                typeof(RequestPasswordResetCommand), typeof(PlatformProvisioning),
             }
             .SelectMany(x => AuditDeclarations.For(x)!.Codes)
             .Distinct()];

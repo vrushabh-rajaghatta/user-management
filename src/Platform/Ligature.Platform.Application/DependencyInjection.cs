@@ -6,6 +6,7 @@ using Ligature.Platform.Application.Execution;
 using Ligature.Platform.Application.Notifications;
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
 using Ligature.SharedKernel.Abstractions;
@@ -193,6 +194,11 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<ActivateAccountCommand, ActivateAccountResult>,
             ActivateAccountCommandHandler>();
+
+        // CRD-C2
+        services.AddScoped<
+            ICommandHandler<RequestPasswordResetCommand, RequestPasswordResetResult>,
+            RequestPasswordResetCommandHandler>();
 
         // SES-C1
         services.AddScoped<
