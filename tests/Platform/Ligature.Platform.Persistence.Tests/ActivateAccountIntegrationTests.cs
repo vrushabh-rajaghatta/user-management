@@ -33,8 +33,25 @@ public sealed class ActivateAccountIntegrationTests
     public ActivateAccountIntegrationTests(ActivationDatabase database)
         => _database = database;
 
-    private static readonly DateTimeOffset Now =
-        new(2026, 9, 8, 9, 0, 0, TimeSpan.Zero);
+    /// <summary>
+    /// The SEEDING clock, and deliberately not a literal.
+    ///
+    /// It was <c>new(2026, 9, 8, 9, 0, 0, TimeSpan.Zero)</c>, which made every
+    /// test in this class fail from 2026-09-11T09:00Z onwards — not flakily,
+    /// permanently. SeedAsync issues its activation token with
+    /// <c>expiresAt = Now + ActivationTokenLifetime</c>, 72 hours, while
+    /// BuildProvider registers the real SystemClock through
+    /// AddPlatformPersistence. The FixedClock below reaches CreateContext's
+    /// provenance stamping and nothing else, so the handler read real time,
+    /// found the token expired, and refused it.
+    ///
+    /// The pipeline must keep the real clock: this is an integration test, and
+    /// pinning the dispatcher to a past instant would move audit timestamps and
+    /// session lifetimes with it. So the seed moves instead. Every row this
+    /// class writes is now relative to the run, which is what the literal was
+    /// approximating before the calendar caught up with it.
+    /// </summary>
+    private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
 
     private const string GoodPassword = "a-sufficiently-long-password";
 
