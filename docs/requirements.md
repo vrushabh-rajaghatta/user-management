@@ -403,6 +403,61 @@ Harmless to correctness — every test scopes by its own ids — but it accumula
 **Intended fix:** establish the cleanup scope BEFORE any operation that can throw, rather than wrapping more code in another `try`/`finally`.
 **Deferred to:** unscheduled.
 
+## Execution-strategy replay leaves rolled-back entities looking persisted
+
+**State:** when the execution strategy replays a unit of work after a `SaveChanges` failure, the change tracker is not reset. Entities the failed attempt inserted stay `Unchanged` — EF believes they are persisted, so the replay does not re-insert them — while the rollback has already removed the rows. Entities the failed attempt merely added stay `Added` and are written on the next attempt, still referencing the rolled-back rows.
+
+Observed while implementing N1 Phase B, with the change tracker dumped at each save across a forced replay:
+
+```text
+attempt 1, inner save   User:Added, UserIdentity:Added, UserToken:Added
+attempt 1, outer save   Notification:Added, User:Unchanged, UserIdentity:Unchanged, UserToken:Unchanged   ← fails, rolls back
+attempt 2, inner save   UserIdentity:Added, User:Added, Notification:Added, UserToken:Added,
+                        User:Unchanged, UserIdentity:Unchanged, UserToken:Unchanged
+```
+
+The leftover `Notification` is written against the leftover `UserToken`, which is never re-inserted, and the foreign key fails with `23503`.
+
+`UnitOfWork` already states the requirement — "a retry re-invokes the operation on a change tracker that still holds the previous attempt's entries, so the operation must be idempotent in its database effects" — but nothing establishes tracker-safe replay, and the User Management handlers are not idempotent in that sense: a replay mints a fresh token id and strands the previous one.
+
+This is a platform correctness gap, not a Notification defect. Notification exposed it by being the first dependent entity added to the same persistence graph; the notification path deliberately does not work around it, since detaching entities or clearing the tracker from module code would make a module responsible for a platform invariant.
+
+**Not currently reachable:** `EnableRetryOnFailure` is off, so no replay occurs in production. This becomes live the day execution-strategy retries are enabled.
+
+**Where recorded:** `NotificationEmissionBehaviorTests` class doc, which is why the per-attempt isolation invariant is proved at the behaviour level rather than through a replayed transaction.
+**Deferred to:** unscheduled; it must be resolved before retries are enabled.
+
+## Notification mail composition has two recorded RFC limits
+
+**State:** the Gmail transport encodes the subject and the sender display name
+as a single RFC 2047 encoded-word. RFC 2047 §2 caps an encoded-word at 75
+characters, so a subject or display name longer than roughly 47 bytes is
+non-conformant and a strict receiver renders the raw `=?utf-8?B?...?=` to the
+user. The shipped activation subject is well inside that, and the templates are
+release-controlled code assets rather than free text, so the limit cannot be
+crossed without a code change.
+
+**Deliberately not fixed:** a general encoded-word splitter is real work with no
+current consumer. The constraint is that release-controlled templates stay
+within the envelope.
+
+**Deferred to:** the slice that first needs a long or non-ASCII subject — N2's
+reset templates are the likeliest trigger.
+
+## One notification send can take twice the transport timeout
+
+**State:** the transport timeout is applied per HTTP request, and a send that
+finds no cached access token makes two requests — the token mint and the message
+send. Worst case for one send is therefore `2 × TransportTimeout` rather than
+one, which understates the per-send term of the §5.4 grace-window inequality.
+
+Not currently a violation of anything claimed: §5.4 is explicitly unclaimed
+while the hard transaction bound `T` is unenforced (AUD-O17), and the 10-second
+timeout is provisional pending the Phase F measurement.
+
+**Deferred to:** Phase F, which measures the terms and fixes the constants. The
+measurement must use the two-request worst case, not the cached-token case.
+
 ## Database-per-tenant not implemented
 
 **State:** one database, one connection string, no tenant resolution. See `docs/architecture.md` §9.

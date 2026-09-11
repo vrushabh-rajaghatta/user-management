@@ -183,6 +183,21 @@ Business modules express intent ("notify the reviewer that a submission requires
 
 Regardless of tenancy, each module owns the database objects belonging to its domain. A module must not read or write another module's tables; use the owning module's application contract.
 
+**One recorded exception: the notification eligibility gate.** `NotificationGate`
+reads `user_token`, `user_identity` and `app_user` directly. This is deliberate,
+not drift. The frozen Notification specification defines the eligibility
+predicate (§5.2) across exactly those three records, and its privilege matrix
+(§8.1) grants the gate the reads it needs — "as User Management grants; the gate
+is a read". It is evaluated immediately before transport, never cached, and
+writes nothing: a token can be invalidated by a concurrent issuance between the
+notification row being written and the send being attempted, and noticing that
+is the entire purpose of the read.
+
+Routing it through a User Management application contract would mean a
+background sender taking a request-scoped dependency, which is the arrangement
+IMPL-N02 exists to avoid. Recorded here so a future reviewer does not "fix" an
+intentional decision.
+
 ---
 
 # 10. Dependency Direction

@@ -562,6 +562,25 @@ public sealed class AuditEmissionIntegrationTests
 
         foreach (var sql in new[]
         {
+            // A notification references the token, so it goes first. A
+            // Pending one cannot simply be deleted: N10 refuses to remove a
+            // message of unknown fate, and the sweeper that would close it
+            // arrives with slice N1 Phase D. Closing it here is the same
+            // transition that sweeper will make.
+            """
+            UPDATE notification
+            SET status = 'NotSent', not_sent_reason = 'Abandoned', closed_at = now()
+            WHERE status = 'Pending' AND token_id IN (
+                SELECT t.id FROM user_token t
+                JOIN user_identity i ON i.id = t.user_identity_id
+                WHERE i.user_id = @id)
+            """,
+            """
+            DELETE FROM notification WHERE token_id IN (
+                SELECT t.id FROM user_token t
+                JOIN user_identity i ON i.id = t.user_identity_id
+                WHERE i.user_id = @id)
+            """,
             """
             DELETE FROM user_token WHERE user_identity_id IN (
                 SELECT id FROM user_identity WHERE user_id = @id)

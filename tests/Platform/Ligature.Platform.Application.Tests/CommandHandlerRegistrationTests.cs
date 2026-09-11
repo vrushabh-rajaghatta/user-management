@@ -1,5 +1,6 @@
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Audit;
+using Ligature.Platform.Domain.Notifications;
 using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Application.Dispatching;
 using Ligature.Platform.Application.Execution;
@@ -76,9 +77,11 @@ public sealed class CommandHandlerRegistrationTests
             .GetServices<ICommandBehavior<CreateUserCommand, CreateUserResult>>()
             .ToList();
 
-        // Three authorisation-side behaviours, plus the audit command scope,
-        // the transaction scope inside it, and the audit emission inside that.
-        Assert.Equal(6, behaviors.Count);
+        // Three authorisation-side behaviours, then notification's post-commit
+        // scope, the audit command scope inside it, the transaction scope
+        // inside that, and — within the transaction — notification emission
+        // and audit emission.
+        Assert.Equal(8, behaviors.Count);
 
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<IExecutionContext>());
         Assert.NotNull(
@@ -111,6 +114,7 @@ public sealed class CommandHandlerRegistrationTests
         services.AddScoped<IAuditEventCatalogue, StubAuditEventCatalogue>();
         services.AddScoped<IAuditRecordWriter, StubAuditRecordWriter>();
         services.AddScoped<IAutonomousAuditRecordWriter, StubAutonomousWriter>();
+        services.AddScoped<INotificationRepository, StubNotificationRepository>();
 
         return services.BuildServiceProvider(validateScopes: true);
     }
@@ -128,6 +132,14 @@ public sealed class CommandHandlerRegistrationTests
 
         public IReadOnlyCollection<AuditEventTypeDefinition> All
             => [];
+    }
+
+    private sealed class StubNotificationRepository : INotificationRepository
+    {
+        public Task AddAsync(
+            Notification notification,
+            CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 
     private sealed class StubAutonomousWriter : IAutonomousAuditRecordWriter
