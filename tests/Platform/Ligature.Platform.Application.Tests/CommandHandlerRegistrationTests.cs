@@ -207,6 +207,7 @@ public sealed class CommandHandlerRegistrationTests
 
         public Task<Domain.Users.UserIdentityId?> TryConsumeAsync(
             Domain.Users.UserTokenId tokenId, string tokenHash,
+            Domain.Users.TokenType expectedType,
             DateTimeOffset now, CancellationToken cancellationToken)
             => Task.FromResult<Domain.Users.UserIdentityId?>(null);
     }

@@ -49,11 +49,16 @@ public sealed class UserTokenRepository : IUserTokenRepository
     public async Task<UserIdentityId?> TryConsumeAsync(
         UserTokenId tokenId,
         string tokenHash,
+        TokenType expectedType,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(tokenId);
         ArgumentException.ThrowIfNullOrEmpty(tokenHash);
+
+        // TokenType is mapped with HasConversion<string>(), so the enum's name
+        // is what the column holds and what this must compare against.
+        var expected = expectedType.ToString();
 
         // UT6 — a SINGLE conditional UPDATE, and deliberately no read of the
         // token before it. "SELECT, decide, UPDATE" would let two simultaneous
@@ -64,6 +69,24 @@ public sealed class UserTokenRepository : IUserTokenRepository
         // RETURNING hands back the identity from the same statement that
         // consumed it, so no second read can observe a different row.
         //
+        // UT6's text in the frozen workbook names only the three liveness
+        // predicates. The two below are a documented INTERPRETATION of it, not
+        // a departure from it — see docs/requirements.md. Both belong in this
+        // statement rather than in the caller, because the caller can only run
+        // after the token has already been consumed, and refusing then would
+        // burn a token for a condition that may be temporary. A subject
+        // deactivated in error and reactivated must still be able to activate
+        // with the token they were sent.
+        //
+        //   token_type   the plaintext is an id and a secret and carries no
+        //                type, so without this the activation endpoint
+        //                consumes a password-reset token that matches on both
+        //
+        //   EXISTS       the same predicate SignInCommandHandler and
+        //                NotificationGate already use for "is this subject
+        //                live". A third spelling of one question is a defect
+        //                waiting to happen, so this is theirs verbatim.
+        //
         // Interpolation here builds an EF parameterised command — the values
         // become bound parameters, not concatenated SQL.
         var identities = await _dbContext.Database
@@ -72,9 +95,17 @@ public sealed class UserTokenRepository : IUserTokenRepository
                 SET    used_at = {now}
                 WHERE  id = {tokenId.Value}
                   AND  token_hash = {tokenHash}
+                  AND  token_type = {expected}
                   AND  used_at IS NULL
                   AND  invalidated_at IS NULL
                   AND  expires_at > {now}
+                  AND  EXISTS (
+                           SELECT 1
+                           FROM   user_identity i
+                           JOIN   app_user u ON u.id = i.user_id
+                           WHERE  i.id = user_token.user_identity_id
+                             AND  i.status = 'Active'
+                             AND  u.status = 'Active')
                 RETURNING user_identity_id AS "Value"
                 """)
             .ToListAsync(cancellationToken);

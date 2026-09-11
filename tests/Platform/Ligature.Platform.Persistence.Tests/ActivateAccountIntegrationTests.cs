@@ -190,13 +190,13 @@ public sealed class ActivateAccountIntegrationTests
             // ck_user_token_expires_after_created still applies: an expired
             // token is one issued before it lapsed, not one that never made
             // sense.
-            var expired = await IssueTokenAsync(
+            var expired = (await IssueTokenAsync(
                 fixture.IdentityId,
                 expiresAt: Now.AddDays(-1),
-                createdAt: Now.AddDays(-2));
+                createdAt: Now.AddDays(-2))).PlainText;
 
-            var invalidated = await IssueTokenAsync(
-                fixture.IdentityId, invalidatedAt: Now);
+            var invalidated = (await IssueTokenAsync(
+                fixture.IdentityId, invalidatedAt: Now)).PlainText;
 
             var candidates = new[]
             {
@@ -408,6 +408,104 @@ public sealed class ActivateAccountIntegrationTests
 
             // Neither the secret nor the plaintext went anywhere near it.
             Assert.DoesNotContain(fixture.Secret, record.Payload!, StringComparison.Ordinal);
+        });
+    }
+
+    /// <summary>
+    /// The consumption contract, seen from the command.
+    ///
+    /// A password-reset token is a perfectly valid token: correct id, correct
+    /// secret, unused, unexpired, active subject. Only its TYPE is wrong, and
+    /// the plaintext does not carry one — so before UT6 gained that predicate
+    /// this activated the account, and because activation inserts a credential
+    /// unconditionally the identity came away with two password hashes.
+    ///
+    /// Unreachable until CRD-C2 issues the first reset token. Closed now so
+    /// that story inherits the contract rather than rediscovering it.
+    /// </summary>
+    [Fact]
+    public async Task A_password_reset_token_cannot_activate_an_account()
+    {
+        await RunAsync(async (dispatcher, fixture) =>
+        {
+            var reset = await IssueTokenAsync(
+                fixture.IdentityId, tokenType: TokenType.PasswordReset);
+
+            var failure = await Assert
+                .ThrowsAsync<BusinessRuleViolationException>(
+                    () => dispatcher
+                        .SendAsync<ActivateAccountCommand, ActivateAccountResult>(
+                            new ActivateAccountCommand(reset.PlainText, GoodPassword),
+                            CancellationToken.None));
+
+            // The same opaque message as every other refusal.
+            Assert.Contains("not valid", failure.Message, StringComparison.OrdinalIgnoreCase);
+
+            // And the point of the predicate living inside the conditional
+            // UPDATE: the reset token is still usable for the reset it was
+            // issued for. Burning it here would have denied the user the thing
+            // they actually asked for.
+            Assert.Null(await ReadTokenUsedAtAsync(reset.Id));
+
+            Assert.Equal(0, await CountCredentialsAsync(fixture.IdentityId));
+        });
+    }
+
+    /// <summary>
+    /// Activation is an authentication event, and the two places that already
+    /// ask "is this subject live" — SignInCommandHandler and NotificationGate —
+    /// both require the identity AND its user to be active. Activation asked
+    /// neither, which left a sharp asymmetry: the notification slice refuses to
+    /// SEND the activation mail to a deactivated person, while the endpoint
+    /// would have accepted the token if they already held it.
+    /// </summary>
+    [Theory]
+    [InlineData("app_user", false)]
+    [InlineData("user_identity", true)]
+    public async Task A_deactivated_subject_cannot_activate(
+        string table, bool byIdentity)
+    {
+        await RunAsync(async (dispatcher, fixture) =>
+        {
+            await DeactivateAsync(
+                table, byIdentity ? fixture.IdentityId.Value : fixture.UserId.Value);
+
+            await Assert.ThrowsAsync<BusinessRuleViolationException>(
+                () => dispatcher
+                    .SendAsync<ActivateAccountCommand, ActivateAccountResult>(
+                        new ActivateAccountCommand(fixture.TokenPlainText, GoodPassword),
+                        CancellationToken.None));
+
+            // Unconsumed, which is what makes a deactivation reversible: the
+            // mail this person was sent still works once somebody restores
+            // their account, and no new token has to be issued to a user who
+            // cannot request one.
+            Assert.Null(await ReadTokenUsedAtAsync(fixture.TokenId));
+
+            Assert.Equal(0, await CountCredentialsAsync(fixture.IdentityId));
+        });
+    }
+
+    [Fact]
+    public async Task A_reactivated_subject_can_still_use_the_token_they_were_sent()
+    {
+        await RunAsync(async (dispatcher, fixture) =>
+        {
+            await DeactivateAsync("app_user", fixture.UserId.Value);
+
+            await Assert.ThrowsAsync<BusinessRuleViolationException>(
+                () => dispatcher
+                    .SendAsync<ActivateAccountCommand, ActivateAccountResult>(
+                        new ActivateAccountCommand(fixture.TokenPlainText, GoodPassword),
+                        CancellationToken.None));
+
+            await ReactivateAsync("app_user", fixture.UserId.Value);
+
+            await dispatcher.SendAsync<ActivateAccountCommand, ActivateAccountResult>(
+                new ActivateAccountCommand(fixture.TokenPlainText, GoodPassword),
+                CancellationToken.None);
+
+            Assert.Equal(1, await CountCredentialsAsync(fixture.IdentityId));
         });
     }
 
@@ -766,11 +864,35 @@ public sealed class ActivateAccountIntegrationTests
     /// Issues an extra token in a chosen terminal state, returning its
     /// delivered form.
     /// </summary>
-    private async Task<string> IssueTokenAsync(
+    private async Task DeactivateAsync(string table, Guid id)
+        => await SetStatusAsync(table, id, "Inactive");
+
+    private async Task ReactivateAsync(string table, Guid id)
+        => await SetStatusAsync(table, id, "Active");
+
+    /// <summary>
+    /// Status only. The deactivation stamp columns are a both-or-neither pair
+    /// independent of it, and nothing here reads them.
+    /// </summary>
+    private async Task SetStatusAsync(string table, Guid id, string status)
+    {
+        await using var connection = await _database.OpenAsync();
+
+        await using var command = new NpgsqlCommand(
+            $"UPDATE {table} SET status = @status WHERE id = @id", connection);
+
+        command.Parameters.AddWithValue("status", status);
+        command.Parameters.AddWithValue("id", id);
+
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task<(UserTokenId Id, string PlainText)> IssueTokenAsync(
         UserIdentityId identityId,
         DateTimeOffset? expiresAt = null,
         DateTimeOffset? invalidatedAt = null,
-        DateTimeOffset? createdAt = null)
+        DateTimeOffset? createdAt = null,
+        TokenType tokenType = TokenType.Activation)
     {
         var tokenId = UserTokenId.New();
         var material = new UserTokenService().Generate(tokenId);
@@ -783,9 +905,11 @@ public sealed class ActivateAccountIntegrationTests
                 (id, user_identity_id, token_type, token_hash, expires_at,
                  used_at, invalidated_at, created_at, created_by)
             VALUES
-                (@id, @identityId, 'Activation', @hash, @expiresAt,
+                (@id, @identityId, @tokenType, @hash, @expiresAt,
                  NULL, @invalidatedAt, @now, @system)
             """, connection);
+
+        command.Parameters.AddWithValue("tokenType", tokenType.ToString());
 
         command.Parameters.AddWithValue("id", tokenId.Value);
         command.Parameters.AddWithValue("identityId", identityId.Value);
@@ -798,7 +922,7 @@ public sealed class ActivateAccountIntegrationTests
 
         await command.ExecuteNonQueryAsync();
 
-        return material.PlainText;
+        return (tokenId, material.PlainText);
     }
 
     private LigatureDbContext CreateContext()
