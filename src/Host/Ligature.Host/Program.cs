@@ -1,10 +1,16 @@
 using Ligature.Host.Api;
 using Ligature.Host.Authentication;
 using Ligature.Host.Configuration;
+using Ligature.Host.Notifications;
 using Ligature.Platform.Application;
 using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Persistence;
 using Scalar.AspNetCore;
+
+// IMPL-N03 — a release constant, not configuration. It is one term of the
+// grace-window inequality, so a deployment that could change it independently
+// could invalidate the bound the sweeper relies on.
+var TransportTimeout = TimeSpan.FromSeconds(10);
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,6 +37,27 @@ builder.Services.AddPlatformPersistence(connectionString);
 // stops the process rather than surfacing on the first sign-in.
 builder.Services.AddSingleton(SigningKeyRing.Load(builder.Configuration));
 builder.Services.AddSingleton<AccessCarrier>();
+
+// Mail, or the deliberate absence of it. Validated here for the same reason
+// the signing key is: a half-configured mail setup would start, never deliver,
+// and be discovered by a user who waited for an activation link that was never
+// sent. Total absence is a different thing and is allowed — up.sh can generate
+// a signing key but cannot generate a Google service account, and a clean clone
+// must still reach a running host.
+//
+// Nothing registered  ->  the pump runs sweep-only, and every notification
+// records honestly that no attempt was ever observed.
+var mail = MailConfiguration.Load(
+    builder.Configuration, TransportTimeout);
+
+if (mail is not null)
+{
+    builder.Services.AddNotificationDelivery(mail.Value.PublicBaseUrl);
+    builder.Services.AddNotificationTransport(mail.Value.Settings);
+}
+
+// Registered either way: abandonment is not a delivery concern.
+builder.Services.AddHostedService<NotificationSenderService>();
 
 // Read once, here, so the services registered below and the endpoints mapped
 // after Build() cannot disagree about whether documentation is published. A

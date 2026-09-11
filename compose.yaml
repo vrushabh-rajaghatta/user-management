@@ -152,6 +152,26 @@ services:
       # This is a development environment, so the API reference is on
       # (docs/architecture.md §18). It is off by default everywhere else.
       LIGATURE_API_DOCUMENTATION: "true"
+
+      # Mail. Deliberately `:-` and not `:?`: unlike the signing key, ./up.sh
+      # CANNOT generate these — a Google service account is issued by Google —
+      # so requiring them would break "a clean clone to a running system in one
+      # command".
+      #
+      # All five empty is a supported state: the host starts, delivery is
+      # disabled, and notifications age honestly into Abandoned. Setting SOME of
+      # them is what the host refuses, because a half-configured mail setup
+      # looks like it works and silently never delivers.
+      #
+      # To send for real, put all five in .env. The key is the base64 of the
+      # private_key field from the service account's JSON, and the Workspace
+      # administrator must have authorised that client id for the gmail.send
+      # scope and nothing else.
+      LIGATURE_PUBLIC_BASE_URL: ${LIGATURE_PUBLIC_BASE_URL:-}
+      LIGATURE_MAIL_SENDER_ADDRESS: ${LIGATURE_MAIL_SENDER_ADDRESS:-}
+      LIGATURE_MAIL_SENDER_NAME: ${LIGATURE_MAIL_SENDER_NAME:-}
+      LIGATURE_MAIL_SERVICE_ACCOUNT: ${LIGATURE_MAIL_SERVICE_ACCOUNT:-}
+      LIGATURE_MAIL_SERVICE_ACCOUNT_KEY: ${LIGATURE_MAIL_SERVICE_ACCOUNT_KEY:-}
     ports:
       - "8080:8080"
     depends_on:

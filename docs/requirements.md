@@ -427,6 +427,37 @@ This is a platform correctness gap, not a Notification defect. Notification expo
 **Where recorded:** `NotificationEmissionBehaviorTests` class doc, which is why the per-attempt isolation invariant is proved at the behaviour level rather than through a replayed transaction.
 **Deferred to:** unscheduled; it must be resolved before retries are enabled.
 
+## Notification mail composition has two recorded RFC limits
+
+**State:** the Gmail transport encodes the subject and the sender display name
+as a single RFC 2047 encoded-word. RFC 2047 §2 caps an encoded-word at 75
+characters, so a subject or display name longer than roughly 47 bytes is
+non-conformant and a strict receiver renders the raw `=?utf-8?B?...?=` to the
+user. The shipped activation subject is well inside that, and the templates are
+release-controlled code assets rather than free text, so the limit cannot be
+crossed without a code change.
+
+**Deliberately not fixed:** a general encoded-word splitter is real work with no
+current consumer. The constraint is that release-controlled templates stay
+within the envelope.
+
+**Deferred to:** the slice that first needs a long or non-ASCII subject — N2's
+reset templates are the likeliest trigger.
+
+## One notification send can take twice the transport timeout
+
+**State:** the transport timeout is applied per HTTP request, and a send that
+finds no cached access token makes two requests — the token mint and the message
+send. Worst case for one send is therefore `2 × TransportTimeout` rather than
+one, which understates the per-send term of the §5.4 grace-window inequality.
+
+Not currently a violation of anything claimed: §5.4 is explicitly unclaimed
+while the hard transaction bound `T` is unenforced (AUD-O17), and the 10-second
+timeout is provisional pending the Phase F measurement.
+
+**Deferred to:** Phase F, which measures the terms and fixes the constants. The
+measurement must use the two-request worst case, not the cached-token case.
+
 ## Database-per-tenant not implemented
 
 **State:** one database, one connection string, no tenant resolution. See `docs/architecture.md` §9.

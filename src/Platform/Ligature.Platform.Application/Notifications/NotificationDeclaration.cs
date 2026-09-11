@@ -20,4 +20,20 @@ internal sealed record NotificationDeclaration(
     NotificationType NotificationType,
     UserTokenId TokenId,
     string Recipient,
-    string PlaintextToken);
+    string PlaintextToken)
+{
+    /// <summary>
+    /// Overridden because a record's GENERATED ToString prints every property,
+    /// including the token — so one day's `$"{declaration}"` in a log line, an
+    /// exception message, or an assertion failure would publish a live
+    /// credential. Nothing does that today; this makes it structural rather
+    /// than a matter of everyone remembering, which is how N16 is argued
+    /// everywhere else.
+    ///
+    /// The recipient is omitted too: it is personal data, and an identifier is
+    /// enough to find the row.
+    /// </summary>
+    public override string ToString()
+        => $"NotificationDeclaration {{ NotificationId = {NotificationId}, "
+           + $"NotificationType = {NotificationType}, TokenId = {TokenId} }}";
+}

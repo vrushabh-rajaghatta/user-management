@@ -1,11 +1,14 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Notifications;
 using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Persistence.Audit;
 using Ligature.Platform.Persistence.Database;
+using Ligature.Platform.Persistence.Notifications;
 using Ligature.Platform.Persistence.Repositories;
 using Ligature.Platform.Persistence.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Ligature.Platform.Persistence;
 
@@ -47,6 +50,26 @@ public static class DependencyInjection
         services.AddScoped<IUserTokenRepository, UserTokenRepository>();
 
         services.AddScoped<INotificationRepository, NotificationRepository>();
+
+        // The notification sender's database collaborators. Each holds the
+        // connection string and opens its own connection (IMPL-N02), so they
+        // are singletons and carry no ambient transaction — which is what lets
+        // the pump run them from a background thread with no DI scope.
+        //
+        // All three are registered whether or not mail is configured. The
+        // sweeper in particular must run either way: a Pending row on a host
+        // with no mail still needs a terminus.
+        services.TryAddSingleton(TimeProvider.System);
+
+        services.AddSingleton<INotificationGate>(
+            _ => new NotificationGate(connectionString));
+
+        services.AddSingleton<INotificationTerminalWriter>(
+            sp => new NotificationTerminalWriter(
+                connectionString, sp.GetRequiredService<TimeProvider>()));
+
+        services.AddSingleton<INotificationSweeper>(
+            _ => new NotificationSweeper(connectionString));
 
         services.AddScoped<ISecurityPolicyResolver, SecurityPolicyResolver>();
 
@@ -92,4 +115,45 @@ public static class DependencyInjection
 
         return services;
     }
+    /// <summary>
+    /// Registers the mail transport. Called by the composition root ONLY when
+    /// the mail settings are present; not calling it leaves INotificationTransport
+    /// unregistered, which — together with the absent sender — is what puts the
+    /// pump into sweep-only mode.
+    ///
+    /// One HttpClient for the life of the host, with a pooled-connection
+    /// lifetime so a long-lived client still notices DNS changes. The transport
+    /// timeout is applied here because IMPL-N03 makes it host configuration
+    /// read at start, and because the sender must never be able to block a
+    /// consumer indefinitely on a provider that has stopped answering.
+    /// </summary>
+    public static IServiceCollection AddNotificationTransport(
+        this IServiceCollection services,
+        MailSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        services.TryAddSingleton(TimeProvider.System);
+
+        services.AddSingleton<INotificationTransport>(sp =>
+        {
+            var http = new HttpClient(
+                new SocketsHttpHandler
+                {
+                    PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+                })
+            {
+                Timeout = settings.TransportTimeout,
+            };
+
+            return new GmailTransport(
+                http,
+                new GoogleServiceAccountTokenSource(
+                    http, settings, sp.GetRequiredService<TimeProvider>()),
+                settings);
+        });
+
+        return services;
+    }
+
 }

@@ -10,6 +10,7 @@ using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
 using Ligature.SharedKernel.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Ligature.Platform.Application;
 
@@ -79,6 +80,19 @@ public static class DependencyInjection
         services.AddScoped<INotificationEmissionScope>(
             sp => sp.GetRequiredService<ScopedNotificationEvents>());
 
+        // The pump is registered whether or not mail is configured: the
+        // abandonment sweep is not a delivery concern, and a deployment
+        // without mail must still give Pending rows a terminus.
+        //
+        // THE HANDOFF IS NOT REGISTERED HERE. It arrives with the sender, in
+        // AddNotificationDelivery, because a queue with no consumer would hold
+        // live token plaintexts in a singleton until the process exited —
+        // which is precisely the retention the phase boundary exists to
+        // prevent. With no sender there is no handoff, the post-commit
+        // behaviour hands off nothing, and the committed Pending row is closed
+        // by the sweeper as Abandoned. Honest, and nothing is retained.
+        services.AddSingleton<INotificationPump, NotificationPump>();
+
         // Registration order is execution order, outermost first.
         //
         // The notification post-commit behaviour is outside the audit command
@@ -117,6 +131,46 @@ public static class DependencyInjection
             typeof(AuditEmissionBehavior<,>));
 
         AddCommandHandlers(services);
+
+        return services;
+    }
+
+    /// <summary>
+    /// The half of notification delivery that only exists when mail is
+    /// configured: the templates that render a message, and the sender that
+    /// gates, renders, transports and closes one notification.
+    ///
+    /// Called by the composition root ONLY when the mail settings are present.
+    /// Not calling it is what puts the pump into sweep-only mode, and that is
+    /// the whole mechanism — there is no flag, no null transport and no stand-in
+    /// adapter that accepts a message and drops it. A host without mail simply
+    /// has no sender, which is exactly what its Abandoned rows will say.
+    ///
+    /// The transport itself is registered separately by the persistence module,
+    /// because everything provider-specific lives behind INotificationTransport.
+    /// </summary>
+    public static IServiceCollection AddNotificationDelivery(
+        this IServiceCollection services,
+        Uri publicBaseUrl)
+    {
+        ArgumentNullException.ThrowIfNull(publicBaseUrl);
+
+        // Not IClock: that is registered scoped, and the sender is resolved by
+        // a singleton pump. See NotificationSender for why the alternative —
+        // changing IClock's lifetime — would reach outside this slice.
+        services.TryAddSingleton(TimeProvider.System);
+
+        // Registered together with the sender, and only with it: the handoff
+        // must never outlive the consumer that gives its contents a terminal
+        // disposition.
+        services.AddSingleton<BoundedNotificationHandoff>();
+
+        services.AddSingleton<INotificationHandoff>(
+            sp => sp.GetRequiredService<BoundedNotificationHandoff>());
+
+        services.AddSingleton(new NotificationTemplates(publicBaseUrl));
+
+        services.AddSingleton<NotificationSender>();
 
         return services;
     }
