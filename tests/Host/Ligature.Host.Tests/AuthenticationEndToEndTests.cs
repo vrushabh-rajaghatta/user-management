@@ -966,6 +966,19 @@ public sealed class AuthenticationEndToEndTests
             _ => throw new InvalidOperationException("Not a timestamp."),
         };
 
+    /// <summary>
+    /// Re-creates the session with the timestamps it would have had if it had
+    /// been established that long ago.
+    ///
+    /// It used to backdate with an UPDATE. G4 made created_at and expires_at
+    /// immutable, so a session's age is now fixed at insert — which is the
+    /// point: nothing may silently extend a session past the absolute timeout
+    /// the effective policy set, a test fixture included.
+    ///
+    /// One statement. The DELETE's RETURNING feeds the INSERT, so every other
+    /// column travels across unchanged and the row keeps its id — the carrier
+    /// the caller is holding still names this session.
+    /// </summary>
     private static async Task BackdateAsync(
         Guid sessionId,
         DateTimeOffset createdAt,
@@ -976,11 +989,15 @@ public sealed class AuthenticationEndToEndTests
 
         await using var command = new NpgsqlCommand(
             """
-            UPDATE user_session
-            SET created_at = @created,
-                last_activity_at = @activity,
-                expires_at = @expires
-            WHERE id = @id
+            WITH removed AS (
+                DELETE FROM user_session WHERE id = @id RETURNING *
+            )
+            INSERT INTO user_session
+                (id, user_identity_id, created_at, last_activity_at, expires_at,
+                 revoked_at, revoked_by, revocation_reason, ip_address, user_agent)
+            SELECT id, user_identity_id, @created, @activity, @expires,
+                   revoked_at, revoked_by, revocation_reason, ip_address, user_agent
+            FROM removed
             """, connection);
 
         command.Parameters.AddWithValue("id", sessionId);
