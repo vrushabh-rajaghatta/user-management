@@ -63,12 +63,31 @@ public sealed class NotificationTemplatesTests
     {
         var templates = new NotificationTemplates(BaseUrl);
 
-        // Both reset types arrive with slice N2. Sending the wrong message
-        // about a credential would be worse than sending none.
+        // AdminPasswordReset arrives with CRD-C5; PasswordReset landed with
+        // CRD-C2 and now renders. Sending the wrong message about a credential
+        // would be worse than sending none.
         var failure = Assert.Throws<InvalidOperationException>(
-            () => templates.Render(Declaration("token", NotificationType.PasswordReset)));
+            () => templates.Render(
+                Declaration("token", NotificationType.AdminPasswordReset)));
 
         Assert.Contains("no template", failure.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// CRD-C2's message. The link must point at the reset page, not the
+    /// activation one, and must carry the token in the FRAGMENT — a query
+    /// string would put a bearer credential into access and proxy logs.
+    /// </summary>
+    [Fact]
+    public void The_password_reset_message_links_to_the_reset_page()
+    {
+        var rendered = new NotificationTemplates(BaseUrl)
+            .Render(Declaration("a-plaintext-token", NotificationType.PasswordReset));
+
+        Assert.Equal("Reset your password", rendered.Subject);
+        Assert.Contains("/reset-password#token=a-plaintext-token", rendered.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("/activate", rendered.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("?token=", rendered.Body, StringComparison.Ordinal);
     }
 
     private static RenderedMessage Render(string plaintext)

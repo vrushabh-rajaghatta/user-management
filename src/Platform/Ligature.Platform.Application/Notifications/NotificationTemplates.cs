@@ -19,9 +19,10 @@ namespace Ligature.Platform.Application.Notifications;
 /// whoever holds it can set the password — so keeping it out of every log on
 /// the path is worth the small awkwardness of reading it in the browser.
 ///
-/// The activation page must therefore read window.location.hash and POST the
-/// token with the new password to /api/account/activate. That contract is the
-/// frontend's half of this design.
+/// Each page must therefore read window.location.hash and POST the token with
+/// the new password: /activate to /api/account/activate, and /reset-password
+/// to CRD-C3's endpoint when it lands. That contract is the frontend's half of
+/// this design.
 /// </summary>
 internal sealed class NotificationTemplates
 {
@@ -43,7 +44,10 @@ internal sealed class NotificationTemplates
             NotificationType.AccountActivation =>
                 Activation(declaration),
 
-            // Both reset types arrive with slice N2 and their own copy. A type
+            NotificationType.PasswordReset =>
+                PasswordReset(declaration),
+
+            // AdminPasswordReset arrives with CRD-C5 and its own copy. A type
             // the templates do not know is a defect rather than a fallback:
             // sending the wrong message about a credential is worse than
             // sending none, and the row will record TransportFailed.
@@ -63,7 +67,7 @@ internal sealed class NotificationTemplates
 
              To choose your password and finish setting it up, open this link:
 
-             {Link(declaration.PlaintextToken)}
+             {Link("/activate", declaration.PlaintextToken)}
 
              The link can only be used once, and it expires. If it has already
              expired, ask your administrator to send a new one.
@@ -73,16 +77,54 @@ internal sealed class NotificationTemplates
              """);
 
     /// <summary>
+    /// CRD-C2's message.
+    ///
+    /// Written for a reader who did NOT ask for it, because that is the one
+    /// who most needs it to be clear: anyone may type anyone's address into
+    /// the form, so an unrequested reset mail is an ordinary event rather than
+    /// evidence of an attack. It says plainly that ignoring it changes
+    /// nothing, and it does not say who requested it — the system does not
+    /// know, and guessing would be worse than silence.
+    ///
+    /// It also avoids implying the address is registered. The mail only
+    /// reaches a mailbox whose account exists, so the fact is already
+    /// disclosed to whoever reads it; what it must not do is confirm anything
+    /// to someone who merely typed the address in.
+    /// </summary>
+    private RenderedMessage PasswordReset(NotificationDeclaration declaration)
+        => new(
+            declaration.Recipient,
+            "Reset your password",
+            $"""
+             Someone asked for a password reset for your account.
+
+             To choose a new password, open this link:
+
+             {Link("/reset-password", declaration.PlaintextToken)}
+
+             The link can only be used once, and it expires shortly. Asking
+             again replaces it, so only the newest link will work.
+
+             If you did not ask for this, you can ignore this message. Your
+             password has not changed, and it will not change unless somebody
+             opens the link above.
+             """);
+
+    /// <summary>
     /// AbsoluteUri, not ToString(): Uri.ToString() returns a partially
     /// UNESCAPED form, so a token containing URL syntax would produce a broken
     /// or truncated link. Today's tokens are "{guid}.{base64url}" and need no
     /// escaping, which is exactly why this would have gone unnoticed until the
     /// token format changed.
+    ///
+    /// The path is a parameter because each type has its own page, and the
+    /// FRAGMENT is what carries the token in every case — see the class
+    /// summary for why that is a security property rather than a style.
     /// </summary>
-    private string Link(string plaintextToken)
+    private string Link(string path, string plaintextToken)
         => new UriBuilder(_publicBaseUrl)
         {
-            Path = "/activate",
+            Path = path,
             Fragment = $"token={Uri.EscapeDataString(plaintextToken)}",
         }.Uri.AbsoluteUri;
 }

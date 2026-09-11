@@ -44,4 +44,33 @@ public interface IUserTokenRepository
         TokenType expectedType,
         DateTimeOffset now,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// UT5 — invalidates every prior unused token of this type for this
+    /// identity, so that issuing a new one leaves exactly one live.
+    ///
+    /// INCLUDING ALREADY-EXPIRED ONES, which is the clause most likely to be
+    /// dropped as pointless. It is not: UT4's partial unique index is
+    /// "unused AND uninvalidated", and it cannot mention expiry because a
+    /// partial index predicate must be immutable and now() is not. So an
+    /// expired-but-unused token still occupies the slot, and skipping it here
+    /// makes the next issuance collide rather than succeed.
+    ///
+    /// Why this limits exposure rather than merely tidying up: if an earlier
+    /// reset mail were intercepted, the token it carried must stop working the
+    /// moment a newer one is issued. Only one link is ever live.
+    ///
+    /// Runs in the caller's transaction, before the insert, so the window in
+    /// which two tokens are live is not merely small — it does not exist.
+    /// </summary>
+    /// <returns>
+    /// The tokens actually invalidated, so the caller can emit one
+    /// TokenInvalidated per token rather than one for the batch. Empty is the
+    /// ordinary case and not a failure.
+    /// </returns>
+    Task<IReadOnlyList<UserTokenId>> InvalidatePriorAsync(
+        UserIdentityId identityId,
+        TokenType tokenType,
+        DateTimeOffset now,
+        CancellationToken cancellationToken);
 }

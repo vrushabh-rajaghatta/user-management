@@ -115,6 +115,10 @@ public sealed class SignInDecoyTests
             string username, CancellationToken cancellationToken)
             => Task.FromResult<UserIdentity?>(null);
 
+        public Task<IReadOnlyList<UserIdentityId>> FindPasswordResetCandidatesAsync(
+            string emailOrUsername, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<UserIdentityId>>([]);
+
         public Task<UserIdentity?> FindAsync(
             UserIdentityId userIdentityId, CancellationToken cancellationToken)
             => Task.FromResult<UserIdentity?>(null);
