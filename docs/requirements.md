@@ -263,28 +263,64 @@ compare two different normal forms and report tampering that did not happen.
 That decision belongs to AUD-S12's reconciliation work, not to an emission
 story.
 
-## Activation does not check identity or user status — User Management
+## Token consumption checked too little — RESOLVED
 
-**State:** `UserTokenRepository.TryConsumeAsync` decides whether an activation
-token may be used by looking at the token row alone: the id, the secret hash,
-and whether it is unused, uninvalidated and unexpired. It does not join the
-identity or the user, so a token belonging to a deactivated identity, or to an
-identity whose user has been deactivated, still activates the account.
+**Was:** `UserTokenRepository.TryConsumeAsync` decided whether a token could be
+used from the token row alone — id, secret hash, unused, uninvalidated,
+unexpired. Two things it never checked:
 
-**Not introduced by the audit work, and deliberately not fixed by it.**
-E2a added `ITokenBearerEstablisher`, which loads the identity and its user to
-build the actor snapshot and therefore has both statuses in hand. It ignores
-them on purpose. Refusing an activation on that basis would change what the
-command accepts, and eligibility for activation is a User Management decision
-about authentication policy, not something an audit story should settle as a
-side effect. The establisher's own comment says so, so the next reader does not
-mistake the omission for an oversight.
+- **Subject status.** A token belonging to a deactivated identity, or to an
+  identity whose user had been deactivated, still activated the account.
+- **Token type.** The token plaintext is an id and a secret and carries no
+  type, so the activation endpoint would consume a password-reset token that
+  matched on both.
 
-**Whoever takes it** should decide it for the whole token-bearer family rather
-than for activation alone: CRD-C3's password reset consumes a token the same
-way. A second question sits next to it — `TryConsumeAsync` does not check the
-token's TYPE either, so the activation endpoint will consume a password-reset
-token that matches on id and secret.
+**Why the second one mattered more than it looked.** `ActivateAccount` inserts
+a credential unconditionally — fresh id, no lookup for an existing row — and
+`CredentialRepository` resolves with `FirstOrDefaultAsync`. So a reset token
+presented to the activation endpoint produced a **second credential row**, and
+from then on authentication ran against whichever of two password hashes the
+query happened to return. No error, no symptom, nothing in the trail. Latent
+only because no path issues a reset token yet; CRD-C2 would have made it live.
+
+**Resolved.** Both predicates now sit inside the single conditional UPDATE, and
+`TryConsumeAsync` requires the expected `TokenType` rather than defaulting it —
+so CRD-C2 inherits the contract instead of rediscovering the defect. The
+subject predicate is `SignInCommandHandler`'s and `NotificationGate`'s
+verbatim: one question, one spelling.
+
+**The property that decided where the checks go.** Inside the UPDATE, a token
+refused for a wrong type or an inactive subject is **not consumed**. A
+caller-side check could only run once the token had already been burned, which
+would permanently disable an account over a condition — a deactivation later
+reversed — that was temporary. `TokenConsumptionContractTests` asserts both
+halves of every refusal, the return value and the untouched `used_at`.
+
+### UT6 is interpreted, not contradicted
+
+The frozen workbook's UT6 reads:
+
+> consumption is a single conditional UPDATE (used IS NULL AND invalidated IS
+> NULL AND not expired); zero rows affected = rejection
+
+It names three predicates. The previous implementation was a **faithful reading
+of that text** — this was an incomplete rule, not a defective implementation of
+a complete one. The two added predicates are recorded here as an interpretation
+of UT6 rather than a departure from it, in the same register as the UR12 note
+in `AuthorizationServiceTests`. **The frozen workbook is not edited.**
+
+**Deliberately still out:** consumption does not check
+`identity_type = 'Local'`, and `ActivateAccount`'s unconditional
+credential-creation behaviour is unchanged — CR1's index now makes the second
+row impossible rather than the handler declining to attempt it.
+
+**Rejection reasons stay generic.** `TokenRejected` continues to record
+`NotUsable` for every post-lookup refusal. Distinguishing them would mean a
+second read of token state, free to drift from the predicate that actually
+governs, and it would risk becoming a pre-check — reintroducing the
+"SELECT, decide, UPDATE" race UT6 exists to forbid. Richer rejection telemetry,
+if it is ever wanted, should be designed deliberately rather than smuggled in
+here.
 
 ## Authorization failures are not distinguishable from validation failures
 
@@ -418,15 +454,29 @@ story that builds the revoke command, not for the story that added the trigger.
 
 **Deferred to:** the role-revocation command, whenever it is built.
 
-## CR1 — no unique constraint on credential.user_identity_id
+## CR1 — no unique constraint on credential.user_identity_id — RESOLVED
 
 **Rule:** one credential per identity, 1:0..1.
 
-**State:** the index on `(user_identity_id, identity_type)` is NOT unique, so two credential rows for one identity are possible. The composite FK pins `identity_type` to the identity but does not constrain cardinality.
+**Was:** the index on `(user_identity_id, identity_type)` was not unique, so two
+credential rows for one identity were possible. The composite foreign key
+pinned `identity_type` to the identity and constrained cardinality not at all.
 
-Nothing produces a second row today — CRD-C1 only ever inserts after consuming a single-use token — so this is a missing backstop rather than a live defect.
+**Resolved** by `EnforceOneCredentialPerIdentity`, which makes that same index
+unique. Unique on the pair rather than on `user_identity_id` alone because the
+two are equivalent here — the foreign key forces `credential.identity_type` to
+equal the identity's own, and an identity has exactly one — so it states the
+rule exactly and adds no second index over overlapping columns.
 
-**Deferred to:** unscheduled.
+Scoped separately from the consumption-contract correction it shipped
+alongside, and for a different reason: that closed the one path which could
+produce a second row, this closes the shape of the failure whatever path is
+invented later.
+
+**No data-cleanup step.** PostgreSQL validates every existing row as it builds
+a unique index, so an environment holding duplicates fails the migration —
+the wanted outcome. There is no way to know which of two password hashes its
+owner uses, so deleting one silently would be worse than stopping.
 
 ## Integration-test fixtures can outlive a failed dispatch
 

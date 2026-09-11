@@ -96,15 +96,21 @@ public sealed class ActivateAccountCommandHandler
                 var identityId = await _userTokenRepository.TryConsumeAsync(
                     presented.TokenId,
                     _userTokenService.Hash(presented.Secret),
+                    TokenType.Activation,
                     now,
                     ct);
 
                 if (identityId is null)
                 {
-                    // Unknown id, wrong secret, already used, invalidated or
-                    // expired: the caller cannot tell these apart and neither
-                    // can this. The trail records that the token named was
-                    // refused, which is what a reviewer needs.
+                    // Unknown id, wrong secret, wrong type, already used,
+                    // invalidated, expired, or an inactive subject: the caller
+                    // cannot tell these apart and neither can this. The
+                    // statement that decides reports only whether it consumed,
+                    // deliberately — a second read to classify the refusal
+                    // would be a second interpretation of token state, free to
+                    // drift from the predicate that actually governs. The trail
+                    // records that the token named was refused, which is what a
+                    // reviewer needs.
                     DeclareRejection(presented.TokenId, "NotUsable");
 
                     throw new BusinessRuleViolationException(InvalidToken);
@@ -137,10 +143,11 @@ public sealed class ActivateAccountCommandHandler
                     .Ref("User", subject.Value, role: "Subject")
                     .WithPayload(new
                     {
-                        // What consumed it, not what it claimed to be: the
-                        // consumption query matches on id, secret and
-                        // liveness, so the token's own type is not something
-                        // this command has verified.
+                        // What consumed it. The consumption query now also
+                        // matches on token_type, so for a successful
+                        // consumption this is the token's own type as well —
+                        // an Activation token is the only kind this command
+                        // can have consumed.
                         consumedBy = "Activation",
                         consumedAt = now,
                     });
