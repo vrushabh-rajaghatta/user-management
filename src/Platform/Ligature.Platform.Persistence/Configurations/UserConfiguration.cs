@@ -32,6 +32,27 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
                 table.HasCheckConstraint(
                     "ck_app_user_system_not_deactivated",
                     "\"actor_type\" <> 'System' OR \"deactivated_at\" IS NULL");
+
+                // Mirrors char.IsControl in EmailAddress exactly, so the
+                // pre-check and the constraint cannot disagree. Explicit
+                // ranges rather than [[:cntrl:]], which is locale-dependent
+                // and would make the invariant mean different things in
+                // different environments.
+                //
+                // A raw string literal because the regex contains backslashes;
+                // the other constraints here have none. The IS NULL disjunct is
+                // spelled out rather than relying on NULL !~ ... yielding
+                // unknown, since email is nullable.
+                //
+                // \x00 appears in the range for completeness. PostgreSQL cannot
+                // store U+0000 in a varchar at all — it is refused at the text
+                // encoding boundary with 22021 — so that character never
+                // reaches this constraint.
+                table.HasCheckConstraint(
+                    "ck_app_user_email_no_control_characters",
+                    """
+                    "email" IS NULL OR "email" !~ '[\x00-\x1F\x7F-\x9F]'
+                    """);
             });
 
         builder.HasKey(x => x.Id);
