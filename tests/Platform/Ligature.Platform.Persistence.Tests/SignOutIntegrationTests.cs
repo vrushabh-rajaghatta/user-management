@@ -343,12 +343,21 @@ public sealed class SignOutIntegrationTests
     {
         await using var connection = await TestDatabase.OpenAsync();
 
+        // Re-created rather than backdated: G4 makes created_at and expires_at
+        // immutable, so a session's age is fixed at insert. The DELETE's
+        // RETURNING feeds the INSERT, so the row keeps its id and every other
+        // column, and the caller's carrier still names this session.
         await using var command = new NpgsqlCommand(
             """
-            UPDATE user_session
-            SET created_at = @created, last_activity_at = @created,
-                expires_at = @expires
-            WHERE id = @id
+            WITH removed AS (
+                DELETE FROM user_session WHERE id = @id RETURNING *
+            )
+            INSERT INTO user_session
+                (id, user_identity_id, created_at, last_activity_at, expires_at,
+                 revoked_at, revoked_by, revocation_reason, ip_address, user_agent)
+            SELECT id, user_identity_id, @created, @created, @expires,
+                   revoked_at, revoked_by, revocation_reason, ip_address, user_agent
+            FROM removed
             """, connection);
 
         command.Parameters.AddWithValue("id", id.Value);

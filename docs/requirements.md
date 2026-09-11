@@ -352,37 +352,71 @@ that does not prevent PRV-C2 being written.
 **Deferred to:** its own story. Deliberately kept out of AUD-S01, which
 established the deployment's security boundary and nothing else.
 
-## Enforcement layers G1, G4, PE2, PH3 and SP2 are not implemented
+## Enforcement layers G1 and PE2 are not fully implemented
 
-**State:** no `GRANT`/`REVOKE` statements and no triggers exist in any migration — verified. So none of these hold at the database level:
+**Originally:** none of G1, G4, PE2, PH3 or SP2 held at the database level. No
+`GRANT`/`REVOKE` statement and no trigger existed in any migration, and the
+domain layer was the only thing enforcing them.
 
-- **G1** no hard deletes (application role granted SELECT/INSERT/UPDATE only, with `user_session` the sole purge exception)
-- **G4** BEFORE UPDATE triggers rejecting writes to immutable and write-once columns
-- **PE2** `permission` readable but not writable by the application role
-- **PH3** `password_history` insert-only
-- **SP2** `security_policy` append-only
+**Now largely closed, in two steps.**
 
-The domain enforces the equivalent rules in code, so behaviour is correct today; what is missing is the database-level backstop the frozen model specifies, which is what makes these structural rather than a matter of developer discipline.
+`AddUserManagementPrivilegeModel` grants the ordinary tables to `app_role` and
+`provisioning_role` in G1's shape — `SELECT`, `INSERT`, `UPDATE`, and no
+`DELETE` for anyone. That closed G1's **grant** half.
 
-**Partially lifted.** A database role model now exists (`docs/architecture.md`
-§19), and `AddUserManagementPrivilegeModel` grants the ordinary tables to
-`app_role` and `provisioning_role` in G1's shape — `SELECT`, `INSERT`, `UPDATE`,
-and no `DELETE` for anyone. That closes G1's **grant** half only.
+`AddUserManagementImmutabilityTriggers` adds eleven `BEFORE UPDATE` guards, one
+per User Management table, each `ENABLE ALWAYS` and each raising `P0001`. That
+closes **G4**, **PH3** and **SP2**:
+
+- **G4** — 72 immutable columns rejected on change, 11 write-once columns
+  admitting `NULL` -> value once and nothing after. `AU7` rides along: the
+  System actor row refuses any update at all, whatever the column's class.
+- **PH3** — `password_history` refuses every `UPDATE`, no-ops included.
+- **SP2** — `security_policy` likewise. Both tables are entirely immutable by
+  classification, so a blanket refusal states insert-only and append-only in
+  their own terms rather than leaving them to emerge from a column comparison.
+
+The classification map lives in `UserManagementImmutabilityDriftTests`, which
+holds it against both the live schema and the deployed function bodies — so a
+column added later cannot silently escape G4, and a column omitted from a
+hand-written `ROW()` list fails a test rather than going unnoticed.
 
 **Still outstanding:**
 
 - **G1** — `user_session` is named as the eventual purge exception; no purge
   exists, so no `DELETE` is granted for it either. Revisit when one is built.
-- **G4** — no BEFORE UPDATE triggers on immutable/write-once columns of the
-  User Management tables. The audit tables have their equivalents; these do not.
 - **PE2** — `permission` is granted `INSERT`/`UPDATE` to `provisioning_role`
-  rather than being writable only by a migration role.
-- **PH3** — `password_history` is not insert-only at the database.
-- **SP2** — `security_policy` is not append-only at the database.
+  rather than being writable only by a migration role. G4 protects that table's
+  `id`, `code`, `created_at` and `created_by`, but its six Release-controlled
+  columns stay writable by design: that is a privilege rule, not a trigger one.
 
-**Deferred to:** unscheduled. The blocker was the missing role model; that is
-no longer the obstacle, so these are now schedulable work rather than blocked
-work.
+**Deferred to:** unscheduled, both.
+
+## G4 constrains how an already-ended assignment may be revoked
+
+**Rule:** `user_role.effective_to` is Write-once (frozen workbook), while the
+same sheet's `revoked_at` note says "Revocation also sets EffectiveTo = now".
+For an assignment created *with* an end date those two collide, and
+`AddUserManagementImmutabilityTriggers` resolves them in favour of the property
+both exist to protect: an authorisation window may close early, but may never
+widen or reopen.
+
+**Consequence:** `UserRole.Revoke` sets `EffectiveTo = revokedAt`
+unconditionally. Revoking an assignment whose `effective_to` has **already
+passed** therefore moves the value forward, and the database refuses it with
+`P0001`.
+
+**State:** not reachable today. The only assignment path,
+`BootstrapAdministratorProvisioner`, passes `effectiveTo: null`, and agents —
+for whom a finite end date is mandatory under UR8 — cannot be created in V1.
+
+**Not worked around.** The domain is unchanged: no clamping to
+`LEAST(effective_to, revoked_at)`, no special case in `Revoke`. The right
+answer is probably that revoking an assignment which already ended is
+meaningless and should be refused in the domain, but that is a decision for the
+story that builds the revoke command, not for the story that added the trigger.
+
+**Deferred to:** the role-revocation command, whenever it is built.
 
 ## CR1 — no unique constraint on credential.user_identity_id
 

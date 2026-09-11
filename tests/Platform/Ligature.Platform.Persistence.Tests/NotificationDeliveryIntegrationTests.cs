@@ -64,18 +64,11 @@ public sealed class NotificationDeliveryIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task An_expired_token_is_not_live()
     {
-        var seeded = await SeedAsync();
-
-        // Both, because user_token carries its own CHECK that expiry follows
-        // creation — a token cannot be made to have expired without also
-        // having been issued earlier.
-        await ExecuteAsync(
-            $"""
-             UPDATE user_token
-             SET created_at = now() - interval '2 hours',
-                 expires_at = now() - interval '1 hour'
-             WHERE id = '{seeded.TokenId}'
-             """);
+        // Issued already expired. ck_user_token_expires_after_created means a
+        // token cannot have expired without having been issued earlier still,
+        // so both timestamps move together — and G4 means they move at insert
+        // or not at all.
+        var seeded = await SeedAsync(expiredToken: true);
 
         Assert.Equal(
             NotificationEligibility.TokenNotLive, await EvaluateAsync(seeded));
@@ -312,7 +305,14 @@ public sealed class NotificationDeliveryIntegrationTests : IAsyncLifetime
         DateTimeOffset? ClosedAt,
         string? MessageId);
 
-    private async Task<Seeded> SeedAsync(int ageMinutes = 0)
+    /// <summary>
+    /// <paramref name="expiredToken"/> seeds the token already past its
+    /// expiry rather than issuing a live one and backdating it afterwards.
+    /// G4 makes user_token.created_at and expires_at immutable — a token's
+    /// lifetime is fixed at issue, which is the whole point of the column
+    /// being immutable, so the fixture has to issue the token it wants.
+    /// </summary>
+    private async Task<Seeded> SeedAsync(int ageMinutes = 0, bool expiredToken = false)
     {
         var userId = Guid.NewGuid();
         var identityId = Guid.NewGuid();
@@ -338,7 +338,9 @@ public sealed class NotificationDeliveryIntegrationTests : IAsyncLifetime
                  ("id","user_identity_id","token_type","token_hash","expires_at",
                   "created_at","created_by")
              VALUES ('{tokenId}','{identityId}','Activation','hash-{unique}',
-                  now() + interval '72 hours', now(), '{userId}');
+                  {(expiredToken
+                      ? "now() - interval '1 hour', now() - interval '2 hours'"
+                      : "now() + interval '72 hours', now()")}, '{userId}');
 
              INSERT INTO "notification"
                  ("id","notification_type","token_id","recipient","status","created_at")
