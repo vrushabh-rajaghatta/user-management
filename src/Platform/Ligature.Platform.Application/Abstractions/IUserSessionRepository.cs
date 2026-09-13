@@ -33,6 +33,28 @@ public interface IUserSessionRepository
     /// let this particular request through is not information any caller
     /// should act on.
     /// </summary>
+    /// <summary>
+    /// CRD-C4 (A5). Every session of <paramref name="identityId"/> OTHER than
+    /// <paramref name="excluding"/> that would still pass the per-request
+    /// session check at <paramref name="now"/> — tracked, so the caller revokes
+    /// through these instances.
+    ///
+    /// "Would still pass" is not restated here: it is UserSession.IsActive with
+    /// the idle timeout widened by the same enforcement tolerance the
+    /// per-request check applies. A session that check would already refuse is
+    /// ended, and revoking it would record a termination that changed nothing.
+    ///
+    /// The caller passes the effective idle timeout; the tolerance is added by
+    /// the implementation, beside the check that owns it, so the two cannot
+    /// drift apart.
+    /// </summary>
+    Task<IReadOnlyList<UserSession>> FindOtherActiveForIdentityAsync(
+        UserIdentityId identityId,
+        UserSessionId excluding,
+        DateTimeOffset now,
+        TimeSpan idleTimeout,
+        CancellationToken cancellationToken);
+
     Task RecordActivityAsync(
         UserSessionId sessionId,
         DateTimeOffset now,

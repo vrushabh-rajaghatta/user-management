@@ -434,6 +434,62 @@ dependency and no other.
 
 **Deferred to:** its own story, before the first tenant.
 
+## CRD-C4 does not limit current-password attempts
+
+**This is a known security gap, recorded by owner ruling.**
+
+**Rule (CRD-C4, frozen):** *"Must not be usable to probe the current password —
+constant-time comparison, generic error."*
+
+**What is covered.** Verification is fixed-time inside the hasher. A wrong
+current password, a locked credential and a session the command cannot act for
+all return one generic message, and a locked credential still pays a real
+derivation, so neither the message nor the timing distinguishes them. The
+current password is verified before anything about the new one is judged.
+
+**What is not.** Nothing limits how many times a holder of a valid session —
+including a stolen one — may try. Behaviour 11 (rate limiting, not yet
+implemented) is scoped to anonymous commands, and CRD-C4 deliberately does NOT
+count a wrong current password toward `FailedAttemptCount`: doing so would add a
+second producer of `AccountLocked`, decide threshold and reset semantics sign-in
+alone owns today, and let a session holder lock the account — a security and
+product behaviour CRD-C4 does not specify.
+
+**Deferred to:** an explicit security decision, with catalogue review, on
+whether authenticated password-change failures must count toward lockout or be
+rate limited.
+**Where recorded:** the class doc of `ChangePasswordCommandHandler`.
+
+## A5 closed — CRD-C4 revokes other sessions, which amends two catalogues
+
+**Decision (owner ruling, closes UM open decision A5 as option (b)).** A
+password change revokes every other session of the identity whose credential
+changed that would still pass the per-request session check. The session
+making the request survives; sessions of the user's other identities are
+untouched. Each revocation is its own `SessionRevoked` — reason
+`PasswordChanged`, revoked by the user, caused by the `PasswordChanged` record
+— and `PasswordChanged.otherSessionsRevoked` says whether any were.
+
+**The inconsistency this exposed.** The frozen documents disagree once A5 is
+resolved this way:
+
+- the Audit Event Catalogue lists `SessionRevoked`'s producers as SES-C3,
+  SES-C4, USR-C4, IDN-C3 and OPR-C2 — not CRD-C4;
+- the UM command catalogue lists only `PasswordChanged` in CRD-C4's audit-events
+  column, and AUD-11 makes that column the verbatim source of event codes;
+- yet `PasswordChanged`'s own payload field `otherSessionsRevoked` presumes A5
+  revokes sessions.
+
+**What the code does.** The code catalogue carries no producer list, and
+`SessionRevoked` already permits an Authenticated origin, so no seed changes.
+`AuditDeclarations` lists `SessionRevoked` for `ChangePasswordCommand`, with a
+comment naming it an amendment.
+
+**Change control outstanding:** add CRD-C4 to `SessionRevoked`'s producers in
+the Audit Event Catalogue; add `SessionRevoked (n)` to CRD-C4's audit-events
+column and record A5 as closed in the UM command catalogue. Neither workbook is
+edited by the implementing story.
+
 ## Password reuse cannot yet prove the algorithm column is honoured
 
 **Rule (CRD-C3, frozen):** *"Reuse-check must compare against each history row
@@ -463,7 +519,9 @@ administrator-initiated reset."*
 
 **What exists.** CRD-C5 sets it to `true` when it issues the token, and CRD-C3
 sets it to `false` when the user completes a reset, because the user chose that
-password. `AdminResetPasswordIntegrationTests` proves both transitions.
+password. `AdminResetPasswordIntegrationTests` proves both transitions. CRD-C4
+(`ChangePassword`) also clears it, as its catalogue row requires, and
+`ChangePasswordIntegrationTests` proves that.
 
 **What does not.** SES-C1 never reads the flag. Until the reset link is used,
 the user's existing password still signs them in with no restriction. The

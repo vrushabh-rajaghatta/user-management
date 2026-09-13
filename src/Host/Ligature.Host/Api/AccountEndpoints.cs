@@ -1,21 +1,33 @@
+using Ligature.Host.Authentication;
+using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
+using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
 
 namespace Ligature.Host.Api;
 
 /// <summary>
-/// CRD-C1, CRD-C2 and CRD-C3 over HTTP.
+/// CRD-C1, CRD-C2, CRD-C3 and CRD-C4 over HTTP.
 ///
-/// Anonymous, and that is the mechanism rather than an oversight: the token IS
-/// the authorisation. Whoever holds the emailed secret proves control of the
-/// mailbox, which is the whole point — an administrator setting the password
-/// instead would know it, and every document that user later approved could be
-/// argued to have been signed by someone else.
+/// The first three are anonymous, and that is the mechanism rather than an
+/// oversight: the token IS the authorisation. Whoever holds the emailed secret
+/// proves control of the mailbox, which is the whole point — an administrator
+/// setting the password instead would know it, and every document that user
+/// later approved could be argued to have been signed by someone else.
+///
+/// CRD-C4 is the exception: it changes the password of the session presenting
+/// the request, so it requires a carrier.
 /// </summary>
 public static class AccountEndpoints
 {
+    /// <summary>
+    /// The pipeline's 401 wording, as SignOut uses it, so a missing carrier is
+    /// not distinguishable from any other authentication failure.
+    /// </summary>
+    private const string Rejected = "Authentication is required.";
+
     public static void MapAccountEndpoints(this IEndpointRouteBuilder routes)
     {
         ArgumentNullException.ThrowIfNull(routes);
@@ -67,7 +79,57 @@ public static class AccountEndpoints
                 + "leaves the token usable.")
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest);
+
+        // CRD-C4. As with sign-in, the description must not enumerate why a
+        // change was refused beyond what the caller already knows.
+        routes.MapPost("/api/account/change-password", ChangePasswordAsync)
+            .WithTags("Account")
+            .WithSummary("Change the password of the signed-in account.")
+            .WithDescription(
+                "Requires a carrier. Changes the password of the account whose "
+                + "session presented this request, and ends that account's "
+                + "other sessions; this session stays signed in. A wrong current "
+                + "password and an account that cannot be changed right now "
+                + "return the same 400. A new password the policy refuses also "
+                + "returns 400. Success is 204 with no body.")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+
+            // Documentation only. The pipeline refuses an unauthenticated
+            // caller; this marker refuses nothing.
+            .WithMetadata(new RequiresCarrier());
     }
+
+    /// <summary>
+    /// The session comes from the carrier this request presented, never from a
+    /// body: it names whose password changes and which session survives.
+    /// </summary>
+    private static async Task<IResult> ChangePasswordAsync(
+        ChangePasswordRequest? request,
+        CurrentCarrier currentCarrier,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        if (currentCarrier.SessionId is null)
+            return Results.Json(new { Error = Rejected }, statusCode: 401);
+
+        if (request?.CurrentPassword is null || request.NewPassword is null)
+        {
+            return Results.BadRequest(
+                new { Error = "The current password and a new password are required." });
+        }
+
+        await dispatcher.SendAsync<ChangePasswordCommand, ChangePasswordResult>(
+            new ChangePasswordCommand(
+                currentCarrier.SessionId, request.CurrentPassword, request.NewPassword),
+            cancellationToken);
+
+        return Results.NoContent();
+    }
+
+    /// <summary>Never persisted, and never echoed back.</summary>
+    private sealed record ChangePasswordRequest(string? CurrentPassword, string? NewPassword);
 
     /// <summary>
     /// Returns 200 on every path, including a missing body.

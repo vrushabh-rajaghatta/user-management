@@ -1,6 +1,7 @@
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Persistence.Database;
+using Ligature.Platform.Persistence.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace Ligature.Platform.Persistence.Repositories;
@@ -41,6 +42,34 @@ public sealed class UserSessionRepository : IUserSessionRepository
         // Tracked: SES-C2 revokes through this instance.
         return await _dbContext.Set<UserSession>()
             .FirstOrDefaultAsync(x => x.Id == sessionId, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<UserSession>> FindOtherActiveForIdentityAsync(
+        UserIdentityId identityId,
+        UserSessionId excluding,
+        DateTimeOffset now,
+        TimeSpan idleTimeout,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(identityId);
+        ArgumentNullException.ThrowIfNull(excluding);
+
+        // The database narrows to rows that could possibly be active; the
+        // verdict itself is UserSession.IsActive, evaluated in memory, because
+        // that is the one definition CallerEstablisher uses. Restating the idle
+        // comparison in SQL would be a second definition waiting to disagree
+        // with the first.
+        var candidates = await _dbContext.Set<UserSession>()
+            .Where(x => x.UserIdentityId == identityId
+                        && x.Id != excluding
+                        && x.RevokedAt == null
+                        && x.ExpiresAt > now)
+            .ToListAsync(cancellationToken);
+
+        var window = idleTimeout + CallerEstablisher.EnforcementTolerance;
+
+        return [.. candidates.Where(x => x.IsActive(now, window))];
     }
 
     /// <inheritdoc />
