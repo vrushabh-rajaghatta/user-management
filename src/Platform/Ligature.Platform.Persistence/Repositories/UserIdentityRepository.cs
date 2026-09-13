@@ -151,6 +151,21 @@ public sealed class UserIdentityRepository : IUserIdentityRepository
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<UserIdentity>> FindLocalByUserIdAsync(
+        UserId userId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(userId);
+
+        // LINQ is safe here, unlike the username lookups above: the predicate
+        // compares keys and an enum, with no case folding for .NET and
+        // PostgreSQL to disagree about.
+        return await _dbContext.Set<UserIdentity>()
+            .Where(x => x.UserId == userId && x.IdentityType == IdentityType.Local)
+            .ToListAsync(cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async Task<UserIdentity?> FindAsync(
         UserIdentityId userIdentityId,
         CancellationToken cancellationToken)

@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
+using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
@@ -63,6 +64,16 @@ public static class AuditDeclarations
             [typeof(ResetPasswordCommand)] = new(
                 "UserManagement",
                 ["TokenConsumed", "PasswordReset", "TokenRejected"]),
+
+            // CRD-C5 — all three as the ADMINISTRATOR, Authenticated. Unlike
+            // CRD-C2 nothing here is AsSystem: a person holding
+            // user.resetpassword authorised this, and the record must say who.
+            // TokenInvalidated (n), one per superseded token (UT5); only
+            // AdminPasswordResetIssued requires the reason. A refused target
+            // declares nothing — every eligibility check precedes every write.
+            [typeof(AdminResetPasswordCommand)] = new(
+                "UserManagement",
+                ["AdminPasswordResetIssued", "TokenIssued", "TokenInvalidated"]),
 
             // SES-C2 — one record, and only when a session actually changed
             // state. The no-op outcomes declare nothing: a record of a

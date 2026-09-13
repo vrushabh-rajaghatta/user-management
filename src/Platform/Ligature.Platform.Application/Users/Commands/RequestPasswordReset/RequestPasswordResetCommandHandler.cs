@@ -230,7 +230,7 @@ public sealed class RequestPasswordResetCommandHandler
                 // betray that an address was known.
                 _notificationEvents.Emit(
                     NotificationType.PasswordReset,
-                    tokenId,
+                    token,
                     subject.Email.Value,
                     material.PlainText);
 

@@ -47,10 +47,12 @@ internal sealed class NotificationTemplates
             NotificationType.PasswordReset =>
                 PasswordReset(declaration),
 
-            // AdminPasswordReset arrives with CRD-C5 and its own copy. A type
-            // the templates do not know is a defect rather than a fallback:
-            // sending the wrong message about a credential is worse than
-            // sending none, and the row will record TransportFailed.
+            NotificationType.AdminPasswordReset =>
+                AdminPasswordReset(declaration),
+
+            // A type the templates do not know is a defect rather than a
+            // fallback: sending the wrong message about a credential is worse
+            // than sending none, and the row will record TransportFailed.
             _ => throw new InvalidOperationException(
                 $"Notification defect — no template for '{declaration.NotificationType}'. "
                 + "The type set is release-controlled and a template lands with "
@@ -108,6 +110,36 @@ internal sealed class NotificationTemplates
              If you did not ask for this, you can ignore this message. Your
              password has not changed, and it will not change unless somebody
              opens the link above.
+             """);
+
+    /// <summary>
+    /// CRD-C5's message.
+    ///
+    /// It says an administrator started the reset, because that is what
+    /// happened and the reader is entitled to know it did not come from the
+    /// forgotten-password form. It does not name the administrator: the
+    /// message would then carry one person's identity into another's mailbox,
+    /// and the audit trail already records who it was.
+    ///
+    /// It links to the SAME page as CRD-C2's message. The token type is the
+    /// same (N14) and CRD-C3 consumes both; only the words differ.
+    /// </summary>
+    private RenderedMessage AdminPasswordReset(NotificationDeclaration declaration)
+        => new(
+            declaration.Recipient,
+            "Your administrator has asked you to reset your password",
+            $"""
+             An administrator has started a password reset for your account.
+
+             To choose a new password, open this link:
+
+             {Link("/reset-password", declaration.PlaintextToken)}
+
+             The link can only be used once, and it expires. It replaces any
+             reset link you were sent before, so only this one will work.
+
+             Nobody else knows or can see your new password. If you were not
+             expecting this, contact your administrator.
              """);
 
     /// <summary>

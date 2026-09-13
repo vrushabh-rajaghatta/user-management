@@ -426,6 +426,12 @@ CRD-C3 (`ResetPassword`) completes the reset flow behind the same gate. It is
 token-gated, so it is not itself an enumeration surface, but each accepted
 token buys up to `PasswordHistoryDepth` adaptive-cost verifications.
 
+CRD-C5 (`AdminResetPassword`) is **not** behind this gate: behaviour 11 covers
+anonymous commands, and CRD-C5 requires an authenticated caller holding
+`user.resetpassword`. Its link is still completed by CRD-C3 on the
+`/reset-password` page, which no client serves yet, so it shares that
+dependency and no other.
+
 **Deferred to:** its own story, before the first tenant.
 
 ## Password reuse cannot yet prove the algorithm column is honoured
@@ -449,6 +455,72 @@ rather than reported as killed.
 
 **Deferred to:** the release that introduces a second hashing scheme — which
 must add the test this cannot have yet.
+
+## MustChangePassword is recorded but not enforced
+
+**Rule (entity model):** `credential.MustChangePassword` is *"Set after an
+administrator-initiated reset."*
+
+**What exists.** CRD-C5 sets it to `true` when it issues the token, and CRD-C3
+sets it to `false` when the user completes a reset, because the user chose that
+password. `AdminResetPasswordIntegrationTests` proves both transitions.
+
+**What does not.** SES-C1 never reads the flag. Until the reset link is used,
+the user's existing password still signs them in with no restriction. The
+specification says when the flag is set, not what it means at sign-in —
+refusing sign-in, or issuing a session that can only change the password, are
+both authentication and session designs no story has defined.
+
+**Deferred to:** its own story, which must decide the sign-in behaviour. The
+owner ruled explicitly that CRD-C5 establishes the state and does not change
+SES-C1.
+**Where recorded:** the class doc of `AdminResetPasswordCommandHandler`.
+
+## A failed activation mail has no recovery command
+
+**The contradiction.** Notification's walkthrough (§11.4, §11.5) names CRD-C5
+as the administrator's remedy when an activation mail fails or is abandoned —
+*"a new token, a new row"*. CRD-C5 cannot be that remedy:
+
+- it issues a `PasswordReset` token (N14), and CRD-C3 refuses an identity
+  without a credential;
+- the target of a failed activation has no credential — that absence *is* the
+  pending-activation state (inv. 15);
+- `AdminPasswordResetIssued` requires a Credential as its primary entity, so
+  there is no audit record it could write.
+
+CRD-C5 therefore refuses such a user, by ruling, rather than quietly issuing an
+activation token and becoming a second activation path.
+
+**Consequence.** A user whose activation token expires unused, or whose
+activation mail was never delivered, cannot currently be recovered by any
+command. USR-C1 cannot be re-run for the same address or username.
+
+**Deferred to:** a separate story — a command that reissues an activation token
+(its own permission, `TokenIssued`, `TokenInvalidated` per UT5, and an
+`AccountActivation` notification) — with the Notification walkthrough's wording
+corrected through that specification's own change control.
+
+## N14(b) — no architecture test proves NOT-P1 has no public entry point
+
+**Rule (Notification §10.1):** *"NOT-P1 has no public entry point: no type
+outside the pipeline assembly references it, and the only call sites are the
+three issuing commands' token-issuance steps."*
+
+**What exists.** N14 itself — the type/token agreement — is enforced in the
+single writer since CRD-C5: `INotificationEvents.Emit` takes the issued token,
+and `ScopedNotificationEvents` refuses any pairing other than
+AccountActivation↔Activation, PasswordReset↔PasswordReset and
+AdminPasswordReset↔PasswordReset, with the unit test the specification requires.
+
+**What does not.** Nothing asserts the call-site half. `INotificationEvents` is
+a public interface, and a fourth caller could inject it and declare a
+notification for a token it did not just issue; N14 would still hold for that
+call, but N2(b)'s and N14's "only the three commands" premise would not.
+
+**Deferred to:** its own story, which must decide how "outside the pipeline
+assembly" is expressed and asserted (reflection over references, or an
+analyzer).
 
 ## Notifications are not implemented
 

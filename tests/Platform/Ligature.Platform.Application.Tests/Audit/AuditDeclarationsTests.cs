@@ -1,6 +1,7 @@
 using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
 using Ligature.Platform.Application.Users.Commands.SignIn;
@@ -51,6 +52,22 @@ public sealed class AuditDeclarationsTests
     }
 
     /// <summary>
+    /// CRD-C5 — the administrator's three. No refusal code: an ineligible
+    /// target is refused before anything is declared.
+    /// </summary>
+    [Fact]
+    public void CRD_C5_declares_the_issuance_the_token_and_the_supersession()
+    {
+        var declaration = AuditDeclarations.For(typeof(AdminResetPasswordCommand));
+
+        Assert.Equal("UserManagement", declaration!.OwningContext);
+
+        Assert.Equal(
+            ["AdminPasswordResetIssued", "TokenIssued", "TokenInvalidated"],
+            declaration.Codes);
+    }
+
+    /// <summary>
     /// SES-C1 is the command that needs both write paths and both actors.
     /// </summary>
     [Fact]
@@ -90,6 +107,7 @@ public sealed class AuditDeclarationsTests
                 typeof(CreateUserCommand), typeof(SignOutCommand),
                 typeof(ActivateAccountCommand), typeof(SignInCommand),
                 typeof(RequestPasswordResetCommand), typeof(ResetPasswordCommand),
+                typeof(AdminResetPasswordCommand),
                 typeof(PlatformProvisioning),
             }
             .SelectMany(x => AuditDeclarations.For(x)!.Codes)

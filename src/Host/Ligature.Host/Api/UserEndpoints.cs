@@ -1,6 +1,8 @@
 using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Domain.Users;
 
 namespace Ligature.Host.Api;
 
@@ -48,7 +50,53 @@ public static class UserEndpoints
             // Documentation only. AuthorizationBehavior is what refuses a
             // caller without 'user.create'; this marker refuses nothing.
             .WithMetadata(new RequiresCarrier());
+
+        routes.MapPost("/api/users/{userId:guid}/password-reset", ResetPasswordAsync)
+            .WithTags("Users")
+            .WithSummary("Send a user a password reset link (administrator).")
+            .WithDescription(
+                "Requires a carrier, the 'user.resetpassword' permission and a "
+                + "reason. Issues a reset token and mails the link to the user's "
+                + "own address; any earlier reset link stops working. The "
+                + "response is 202 with NO body: the administrator never "
+                + "receives the token or the password, and the mail is the only "
+                + "delivery. A refusal, including a missing permission or an "
+                + "ineligible user, is 400.")
+            .Produces(StatusCodes.Status202Accepted)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
     }
+
+    /// <summary>
+    /// CRD-C5 over HTTP.
+    ///
+    /// The endpoint refuses only a body it cannot bind. A present but blank
+    /// reason is dispatched, and the command refuses it — so that rule lives in
+    /// one place and holds for every caller of the command, not only this one.
+    /// </summary>
+    private static async Task<IResult> ResetPasswordAsync(
+        Guid userId,
+        AdminResetPasswordRequest? request,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        if (request?.Reason is null)
+        {
+            return Results.BadRequest(
+                new { Error = "A reason is required." });
+        }
+
+        await dispatcher.SendAsync<AdminResetPasswordCommand, AdminResetPasswordResult>(
+            new AdminResetPasswordCommand(new UserId(userId), request.Reason),
+            cancellationToken);
+
+        // 202, not 200: the mail is sent after the command commits and its
+        // outcome is not known here. No body, and in particular no token.
+        return Results.Accepted();
+    }
+
+    private sealed record AdminResetPasswordRequest(string? Reason);
 
     private static async Task<IResult> CreateAsync(
         CreateUserRequest? request,

@@ -146,6 +146,20 @@ public sealed class Credential : AggregateRoot<CredentialId>
         PasswordAlgorithm = passwordAlgorithm;
     }
 
+    /// <summary>
+    /// Records that the password on file must be replaced (CRD-C5).
+    ///
+    /// Deliberately the flag and nothing else. An administrator-issued reset
+    /// has not changed the password, so PasswordChangedAt must not move, and
+    /// it has not been completed, so the lockout counters must not be touched:
+    /// issuing a reset is not unlocking an account. Completing the reset
+    /// (CRD-C3) is what changes the credential and clears the lockout.
+    /// </summary>
+    public void RequirePasswordChange()
+    {
+        MustChangePassword = true;
+    }
+
     public void ClearMustChangePassword()
     {
         MustChangePassword = false;

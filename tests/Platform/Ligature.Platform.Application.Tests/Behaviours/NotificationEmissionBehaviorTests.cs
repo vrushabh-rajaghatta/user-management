@@ -131,9 +131,13 @@ public sealed class NotificationEmissionBehaviorTests
         UserTokenId tokenId,
         string plaintext)
     {
+        var now = DateTimeOffset.UtcNow;
+
         events.Emit(
             NotificationType.AccountActivation,
-            tokenId,
+            UserToken.Create(
+                tokenId, UserIdentityId.New(), TokenType.Activation, "hash",
+                now, now.AddHours(1), User.SystemUserId),
             "john.smith@example.com",
             plaintext);
 
