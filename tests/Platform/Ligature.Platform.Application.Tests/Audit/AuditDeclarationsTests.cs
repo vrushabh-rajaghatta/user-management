@@ -2,6 +2,7 @@ using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
+using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
 using Ligature.Platform.Application.Users.Commands.SignIn;
@@ -49,6 +50,20 @@ public sealed class AuditDeclarationsTests
         Assert.Equal(
             ["TokenConsumed", "PasswordSet", "AccountActivated", "TokenRejected"],
             declaration.Codes);
+    }
+
+    /// <summary>
+    /// CRD-C4 — the change, and one revocation per other session (A5). The
+    /// second code is a catalogue amendment recorded in docs/requirements.md.
+    /// </summary>
+    [Fact]
+    public void CRD_C4_declares_the_change_and_the_revocations()
+    {
+        var declaration = AuditDeclarations.For(typeof(ChangePasswordCommand));
+
+        Assert.Equal("UserManagement", declaration!.OwningContext);
+
+        Assert.Equal(["PasswordChanged", "SessionRevoked"], declaration.Codes);
     }
 
     /// <summary>
@@ -107,7 +122,7 @@ public sealed class AuditDeclarationsTests
                 typeof(CreateUserCommand), typeof(SignOutCommand),
                 typeof(ActivateAccountCommand), typeof(SignInCommand),
                 typeof(RequestPasswordResetCommand), typeof(ResetPasswordCommand),
-                typeof(AdminResetPasswordCommand),
+                typeof(AdminResetPasswordCommand), typeof(ChangePasswordCommand),
                 typeof(PlatformProvisioning),
             }
             .SelectMany(x => AuditDeclarations.For(x)!.Codes)

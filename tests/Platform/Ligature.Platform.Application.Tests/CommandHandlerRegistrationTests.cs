@@ -5,6 +5,7 @@ using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Application.Dispatching;
 using Ligature.Platform.Application.Execution;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
+using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.SharedKernel.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -58,6 +59,21 @@ public sealed class CommandHandlerRegistrationTests
 
         Assert.NotNull(
             scope.ServiceProvider.GetRequiredService<ICommandDispatcher>());
+    }
+
+    /// <summary>
+    /// CRD-C4, resolved for the same reason as CRD-C5 below.
+    /// </summary>
+    [Fact]
+    public void The_dispatcher_can_resolve_the_ChangePassword_handler()
+    {
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        var handler = scope.ServiceProvider
+            .GetRequiredService<ICommandHandler<ChangePasswordCommand, ChangePasswordResult>>();
+
+        Assert.IsType<ChangePasswordCommandHandler>(handler);
     }
 
     /// <summary>
@@ -322,6 +338,14 @@ public sealed class CommandHandlerRegistrationTests
             Domain.Users.UserSessionId sessionId,
             CancellationToken cancellationToken)
             => Task.FromResult<Domain.Users.UserSession?>(null);
+
+        public Task<IReadOnlyList<Domain.Users.UserSession>> FindOtherActiveForIdentityAsync(
+            Domain.Users.UserIdentityId identityId,
+            Domain.Users.UserSessionId excluding,
+            DateTimeOffset now,
+            TimeSpan idleTimeout,
+            CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<Domain.Users.UserSession>>([]);
 
         public Task RecordActivityAsync(
             Domain.Users.UserSessionId sessionId,

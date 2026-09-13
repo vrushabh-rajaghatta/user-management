@@ -160,6 +160,14 @@ public sealed class SignInDecoyTests
             UserSessionId sessionId, CancellationToken cancellationToken)
             => Task.FromResult<UserSession?>(null);
 
+        public Task<IReadOnlyList<UserSession>> FindOtherActiveForIdentityAsync(
+            UserIdentityId identityId,
+            UserSessionId excluding,
+            DateTimeOffset now,
+            TimeSpan idleTimeout,
+            CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<UserSession>>([]);
+
         public Task RecordActivityAsync(
             UserSessionId sessionId,
             DateTimeOffset now,

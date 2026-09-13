@@ -1,5 +1,6 @@
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
+using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
@@ -74,6 +75,18 @@ public static class AuditDeclarations
             [typeof(AdminResetPasswordCommand)] = new(
                 "UserManagement",
                 ["AdminPasswordResetIssued", "TokenIssued", "TokenInvalidated"]),
+
+            // CRD-C4 — PasswordChanged, and SessionRevoked (n) for each other
+            // session of the identity that A5 ends, each caused by the change.
+            //
+            // SessionRevoked here is a CATALOGUE AMENDMENT, not an existing
+            // producer: the frozen Audit Event Catalogue does not list CRD-C4
+            // among its producers, and the UM command catalogue lists only
+            // PasswordChanged for CRD-C4. Resolving A5 as (b) is what requires
+            // it; see docs/requirements.md. A refused change declares nothing.
+            [typeof(ChangePasswordCommand)] = new(
+                "UserManagement",
+                ["PasswordChanged", "SessionRevoked"]),
 
             // SES-C2 — one record, and only when a session actually changed
             // state. The no-op outcomes declare nothing: a record of a
