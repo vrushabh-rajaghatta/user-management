@@ -422,7 +422,33 @@ addressed.
 a note on the endpoint in `AccountEndpoints`, so the dependency is visible to
 whoever reads the code rather than only to whoever reads this file.
 
+CRD-C3 (`ResetPassword`) completes the reset flow behind the same gate. It is
+token-gated, so it is not itself an enumeration surface, but each accepted
+token buys up to `PasswordHistoryDepth` adaptive-cost verifications.
+
 **Deferred to:** its own story, before the first tenant.
+
+## Password reuse cannot yet prove the algorithm column is honoured
+
+**Rule (CRD-C3, frozen):** *"Reuse-check must compare against each history row
+using ITS stored algorithm, not the current one."*
+
+**What is proven.** `ResetPasswordCommandHandler` verifies every row with
+`Verify(newPassword, row.PasswordHash, row.PasswordAlgorithm)`. The stored hash
+is self-describing — `$pbkdf2-sha256$i=<iterations>$<salt>$<key>` — so each row
+is verified at its own work factor and salt, never re-derived with current
+parameters. `ResetPasswordIntegrationTests` proves it with a history row stored
+at 1,000 iterations, and the mutation campaign kills both "hash afresh and
+compare" and "verify at current iterations".
+
+**What is not.** `PasswordHasher` implements one scheme, and `storedAlgorithm`
+only decides `NeedsRehash`; it never changes `IsValid`. So passing the current
+marker instead of `row.PasswordAlgorithm` is behaviourally indistinguishable
+today, and no test can catch it. That mutant is excluded from the campaign
+rather than reported as killed.
+
+**Deferred to:** the release that introduces a second hashing scheme — which
+must add the test this cannot have yet.
 
 ## Notifications are not implemented
 

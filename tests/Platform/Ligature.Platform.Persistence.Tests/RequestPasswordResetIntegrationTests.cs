@@ -208,13 +208,19 @@ public sealed class RequestPasswordResetIntegrationTests
     [InlineData("external-identity")]
     [InlineData("no-email")]
     [InlineData("blank")]
+    [InlineData("never-activated")]
     public async Task An_ineligible_request_writes_nothing(string scenario)
     {
+        // "never-activated" is the CRD-C3 amendment: an active, local, human
+        // identity with an address but NO credential. Absence of a credential
+        // is the pending-activation state, and a reset must not be a second
+        // way out of it.
         var subject = await SeedAsync(
             userStatus: scenario == "inactive-user" ? "Inactive" : "Active",
             identityStatus: scenario == "inactive-identity" ? "Inactive" : "Active",
             identityType: scenario == "external-identity" ? "External" : "Local",
-            withEmail: scenario != "no-email");
+            withEmail: scenario != "no-email",
+            withCredential: scenario is not ("never-activated" or "external-identity"));
 
         var input = scenario switch
         {
@@ -298,7 +304,8 @@ public sealed class RequestPasswordResetIntegrationTests
         string identityType = "Local",
         bool withEmail = true,
         string? email = null,
-        string? username = null)
+        string? username = null,
+        bool withCredential = true)
     {
         var unique = Guid.NewGuid().ToString("N");
 
@@ -328,6 +335,24 @@ public sealed class RequestPasswordResetIntegrationTests
                   '{identityId}', '{resolvedUsername}', '{identityStatus}',
                   now(), '{User.SystemUserId.Value}');
              """);
+
+        // Eligibility requires a credential since CRD-C3, so every account
+        // meant to be found gets one — otherwise an issuing-branch test would
+        // silently become a silent-branch test and still look green.
+        if (withCredential)
+        {
+            await ExecuteAsync(
+                $"""
+                 INSERT INTO credential
+                     (id, user_identity_id, identity_type, password_hash,
+                      password_algorithm, password_changed_at, must_change_password,
+                      failed_attempt_count, locked_until, created_at, created_by)
+                 VALUES
+                     ('{Guid.NewGuid()}', '{identityId}', 'Local', 'a-hash',
+                      'pbkdf2-sha256-v1', now(), false, 0, NULL, now(),
+                      '{User.SystemUserId.Value}')
+                 """);
+        }
 
         return new Subject(userId, identityId, resolvedUsername, resolvedEmail);
     }

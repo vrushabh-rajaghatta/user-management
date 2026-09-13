@@ -283,6 +283,11 @@ public sealed class CommandHandlerRegistrationTests
         public Task AddAsync(
             Domain.Users.PasswordHistory history, CancellationToken cancellationToken)
             => Task.CompletedTask;
+
+        public Task<IReadOnlyList<Domain.Users.PasswordHistory>> FindRecentAsync(
+            Domain.Users.UserIdentityId userIdentityId, int depth,
+            CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<Domain.Users.PasswordHistory>>([]);
     }
 
     private sealed class StubUserSessionRepository : IUserSessionRepository

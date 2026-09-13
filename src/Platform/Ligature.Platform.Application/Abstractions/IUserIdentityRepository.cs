@@ -34,9 +34,17 @@ public interface IUserIdentityRepository
     /// username.
     ///
     /// Eligible means ALL of: a human actor, an active user, an active
-    /// identity, a LOCAL identity, and a non-null email to send to. An
-    /// external identity resets at its provider, and an identity with no
-    /// address has nowhere to send the link.
+    /// identity, a LOCAL identity, a non-null email to send to, and an
+    /// EXISTING CREDENTIAL. An external identity resets at its provider, and
+    /// an identity with no address has nowhere to send the link.
+    ///
+    /// The credential clause arrived with CRD-C3. Absence of a credential is
+    /// the pending-activation state (inv. 15), and CRD-C3 changes an existing
+    /// credential — it never creates one. Without this clause a user who was
+    /// created but never activated could request a reset, and the reset would
+    /// have to either fail on a link that looked valid or become a second
+    /// activation path that bypasses AccountActivated. A never-activated user's
+    /// remedy is a fresh activation token, not a reset.
     ///
     /// EMAIL AS A LOOKUP KEY HERE, UNLIKE SIGN-IN. FindLocalByUsernameAsync
     /// above refuses email deliberately, because a reassigned address would

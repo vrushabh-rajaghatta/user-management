@@ -1,11 +1,12 @@
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
+using Ligature.Platform.Application.Users.Commands.ResetPassword;
 
 namespace Ligature.Host.Api;
 
 /// <summary>
-/// CRD-C1 and CRD-C2 over HTTP.
+/// CRD-C1, CRD-C2 and CRD-C3 over HTTP.
 ///
 /// Anonymous, and that is the mechanism rather than an oversight: the token IS
 /// the authorisation. Whoever holds the emailed secret proves control of the
@@ -52,6 +53,20 @@ public static class AccountEndpoints
                 + "If a single eligible local account matches, a single-use "
                 + "link is emailed to it and any previous link stops working.")
             .Produces(StatusCodes.Status200OK);
+
+        // CRD-C3. The counterpart of /activate: the emailed reset link lands
+        // on the /reset-password page, which reads the token from the URL
+        // fragment and posts it here with the new password.
+        routes.MapPost("/api/account/reset-password", ResetPasswordAsync)
+            .WithTags("Account")
+            .WithSummary("Set a new password using an emailed reset token.")
+            .WithDescription(
+                "Anonymous: the emailed token is the authorisation. An invalid, "
+                + "expired, consumed or unparseable token all return the same "
+                + "400. A password the policy refuses also returns 400, and "
+                + "leaves the token usable.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest);
     }
 
     /// <summary>
@@ -123,4 +138,33 @@ public static class AccountEndpoints
     /// resolution tries both.
     /// </summary>
     private sealed record PasswordResetRequest(string? EmailOrUsername);
+
+    /// <summary>
+    /// Refusals arrive as BusinessRuleViolationException and leave as 400
+    /// through ProblemMiddleware — the surface CRD-C1 already established.
+    /// </summary>
+    private static async Task<IResult> ResetPasswordAsync(
+        ResetPasswordRequest? request,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        if (request?.Token is null || request.NewPassword is null)
+        {
+            return Results.BadRequest(
+                new { Error = "A reset token and a new password are required." });
+        }
+
+        var result = await dispatcher
+            .SendAsync<ResetPasswordCommand, ResetPasswordResult>(
+                new ResetPasswordCommand(request.Token, request.NewPassword),
+                cancellationToken);
+
+        return Results.Ok(new { UserIdentityId = result.UserIdentityId.Value });
+    }
+
+    /// <summary>
+    /// The delivered "{tokenId}.{secret}" string. Never persisted, and never
+    /// echoed back in the response.
+    /// </summary>
+    private sealed record ResetPasswordRequest(string? Token, string? NewPassword);
 }

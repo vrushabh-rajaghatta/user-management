@@ -1,6 +1,7 @@
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Persistence.Database;
+using Microsoft.EntityFrameworkCore;
 
 namespace Ligature.Platform.Persistence.Repositories;
 
@@ -27,5 +28,25 @@ public sealed class PasswordHistoryRepository : IPasswordHistoryRepository
         _dbContext.Add(history);
 
         return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<PasswordHistory>> FindRecentAsync(
+        UserIdentityId userIdentityId,
+        int depth,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(userIdentityId);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(depth);
+
+        // Newest first, then capped. The cap is the policy's depth, which is
+        // a FLOOR — max(tenant, baseline) — so a caller never asks for fewer
+        // rows than the baseline requires.
+        return await _dbContext.Set<PasswordHistory>()
+            .AsNoTracking()
+            .Where(x => x.UserIdentityId == userIdentityId)
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(depth)
+            .ToListAsync(cancellationToken);
     }
 }
