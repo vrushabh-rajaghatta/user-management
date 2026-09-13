@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
+using Ligature.Platform.Application.Users.Commands.ResetPassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.SignIn;
@@ -52,6 +53,16 @@ public static class AuditDeclarations
             [typeof(RequestPasswordResetCommand)] = new(
                 "UserManagement",
                 ["PasswordResetRequested", "TokenInvalidated"]),
+
+            // CRD-C3 — the bearer's two on success, both Authenticated because
+            // the consumed token establishes the actor (AUD-D28), exactly as
+            // CRD-C1. A refused token emits TokenRejected, autonomous and
+            // anonymous, so it survives the rollback. A password refused after
+            // the token proved itself emits nothing: the transaction rolls
+            // back and the token is still usable.
+            [typeof(ResetPasswordCommand)] = new(
+                "UserManagement",
+                ["TokenConsumed", "PasswordReset", "TokenRejected"]),
 
             // SES-C2 — one record, and only when a session actually changed
             // state. The no-op outcomes declare nothing: a record of a

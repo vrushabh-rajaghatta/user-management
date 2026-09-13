@@ -137,6 +137,9 @@ public sealed class UserIdentityRepository : IUserIdentityRepository
                   AND u."status" = 'Active'
                   AND u."actor_type" = 'Human'
                   AND u."email" IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1 FROM "credential" c
+                      WHERE c."user_identity_id" = i."id")
                   AND (lower(i."username") = lower({emailOrUsername})
                        OR lower(u."email") = lower({emailOrUsername}))
                 """)

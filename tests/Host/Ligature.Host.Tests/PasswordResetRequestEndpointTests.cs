@@ -46,6 +46,18 @@ public sealed class PasswordResetRequestEndpointTests
     private static readonly Guid ExternalIdentity =
         Guid.Parse("c0000000-0000-4000-8000-000000000004");
 
+    /// <summary>
+    /// Active, local, human, with an address — and no credential. Created but
+    /// never activated. Since CRD-C3 it is not eligible for a reset.
+    /// </summary>
+    private static readonly Guid PendingUser =
+        Guid.Parse("c0000000-0000-4000-8000-000000000005");
+
+    private static readonly Guid PendingIdentity =
+        Guid.Parse("c0000000-0000-4000-8000-000000000006");
+
+    private const string PendingEmail = "reset-pending@example.test";
+
     private const string LocalEmail = "reset-local@example.test";
     private const string LocalUsername = "reset-local";
     private const string ExternalEmail = "reset-external@example.test";
@@ -62,15 +74,17 @@ public sealed class PasswordResetRequestEndpointTests
         // the difference could not be blamed on ordering or on a warmed cache.
         var unknown = await PostAsync(client, "nobody@example.test");
         var external = await PostAsync(client, ExternalEmail);
+        var neverActivated = await PostAsync(client, PendingEmail);
         var known = await PostAsync(client, LocalEmail);
         var knownByUsername = await PostAsync(client, LocalUsername);
         var blank = await PostAsync(client, "");
 
-        foreach (var response in new[] { unknown, external, known, knownByUsername, blank })
+        foreach (var response in new[] { unknown, external, neverActivated, known, knownByUsername, blank })
             Assert.Equal(HttpStatusCode.OK, response.Status);
 
         // The bytes themselves. Not a shape, not a field count.
         Assert.Equal(unknown.Body, external.Body);
+        Assert.Equal(unknown.Body, neverActivated.Body);
         Assert.Equal(unknown.Body, known.Body);
         Assert.Equal(unknown.Body, knownByUsername.Body);
         Assert.Equal(unknown.Body, blank.Body);
@@ -103,6 +117,11 @@ public sealed class PasswordResetRequestEndpointTests
         // local token for it would be a second credential path nobody asked
         // for.
         Assert.Equal(0, externalBefore);
+
+        // Never activated: no credential, so no reset token either — and the
+        // response above was byte-identical to an unknown address's.
+        await PostAsync(client, PendingEmail);
+        Assert.Equal(0, await CountOpenResetTokensAsync(PendingIdentity));
 
         await PostAsync(client, LocalEmail);
 
@@ -157,7 +176,9 @@ public sealed class PasswordResetRequestEndpointTests
                 (@localUser, 'Human', 'Reset', 'Local', 'Reset Local', @localEmail,
                  'Active', now(), @system, now(), @system),
                 (@externalUser, 'Human', 'Reset', 'External', 'Reset External',
-                 @externalEmail, 'Active', now(), @system, now(), @system)
+                 @externalEmail, 'Active', now(), @system, now(), @system),
+                (@pendingUser, 'Human', 'Reset', 'Pending', 'Reset Pending',
+                 @pendingEmail, 'Active', now(), @system, now(), @system)
             ON CONFLICT (id) DO NOTHING;
 
             INSERT INTO user_identity
@@ -167,8 +188,23 @@ public sealed class PasswordResetRequestEndpointTests
                 (@localIdentity, @localUser, 'Human', 'Local', 'Application',
                  @localIdentity, @localUsername, 'Active', now(), @system),
                 (@externalIdentity, @externalUser, 'Human', 'External', 'Okta',
-                 @externalIdentity, NULL, 'Active', now(), @system)
+                 @externalIdentity, NULL, 'Active', now(), @system),
+                (@pendingIdentity, @pendingUser, 'Human', 'Local', 'Application',
+                 @pendingIdentity, 'reset-pending', 'Active', now(), @system)
             ON CONFLICT (id) DO NOTHING;
+
+            -- Eligibility requires a credential since CRD-C3. The known local
+            -- account gets one; the pending account deliberately does not.
+            -- No conflict target: CR1's unique index and the primary key both
+            -- make a re-run a no-op.
+            INSERT INTO credential
+                (id, user_identity_id, identity_type, password_hash,
+                 password_algorithm, password_changed_at, must_change_password,
+                 failed_attempt_count, locked_until, created_at, created_by)
+            VALUES
+                ('c0000000-0000-4000-8000-000000000007', @localIdentity, 'Local',
+                 'a-hash', 'pbkdf2-sha256-v1', now(), false, 0, NULL, now(), @system)
+            ON CONFLICT DO NOTHING;
             """, connection);
 
         command.Parameters.AddWithValue("localUser", LocalUser);
@@ -178,6 +214,9 @@ public sealed class PasswordResetRequestEndpointTests
         command.Parameters.AddWithValue("externalUser", ExternalUser);
         command.Parameters.AddWithValue("externalIdentity", ExternalIdentity);
         command.Parameters.AddWithValue("externalEmail", ExternalEmail);
+        command.Parameters.AddWithValue("pendingUser", PendingUser);
+        command.Parameters.AddWithValue("pendingIdentity", PendingIdentity);
+        command.Parameters.AddWithValue("pendingEmail", PendingEmail);
         command.Parameters.AddWithValue("system", User.SystemUserId.Value);
 
         await command.ExecuteNonQueryAsync();

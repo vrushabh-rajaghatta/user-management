@@ -2,6 +2,7 @@ using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
+using Ligature.Platform.Application.Users.Commands.ResetPassword;
 using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
 
@@ -88,7 +89,8 @@ public sealed class AuditDeclarationsTests
             {
                 typeof(CreateUserCommand), typeof(SignOutCommand),
                 typeof(ActivateAccountCommand), typeof(SignInCommand),
-                typeof(RequestPasswordResetCommand), typeof(PlatformProvisioning),
+                typeof(RequestPasswordResetCommand), typeof(ResetPasswordCommand),
+                typeof(PlatformProvisioning),
             }
             .SelectMany(x => AuditDeclarations.For(x)!.Codes)
             .Distinct()];
