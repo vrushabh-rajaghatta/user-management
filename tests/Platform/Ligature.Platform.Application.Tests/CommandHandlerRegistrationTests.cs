@@ -4,6 +4,7 @@ using Ligature.Platform.Domain.Notifications;
 using Ligature.Platform.Domain.Users;
 using Ligature.Platform.Application.Dispatching;
 using Ligature.Platform.Application.Execution;
+using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.SharedKernel.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -57,6 +58,23 @@ public sealed class CommandHandlerRegistrationTests
 
         Assert.NotNull(
             scope.ServiceProvider.GetRequiredService<ICommandDispatcher>());
+    }
+
+    /// <summary>
+    /// CRD-C5. Resolved rather than only described, so a dependency the
+    /// handler takes but nothing registers fails here and not on the first
+    /// administrator's request.
+    /// </summary>
+    [Fact]
+    public void The_dispatcher_can_resolve_the_AdminResetPassword_handler()
+    {
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        var handler = scope.ServiceProvider
+            .GetRequiredService<ICommandHandler<AdminResetPasswordCommand, AdminResetPasswordResult>>();
+
+        Assert.IsType<AdminResetPasswordCommandHandler>(handler);
     }
 
     /// <summary>
@@ -196,6 +214,10 @@ public sealed class CommandHandlerRegistrationTests
         public Task<IReadOnlyList<Domain.Users.UserIdentityId>> FindPasswordResetCandidatesAsync(
             string emailOrUsername, CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<Domain.Users.UserIdentityId>>([]);
+
+        public Task<IReadOnlyList<Domain.Users.UserIdentity>> FindLocalByUserIdAsync(
+            Domain.Users.UserId userId, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<Domain.Users.UserIdentity>>([]);
 
         public Task<Domain.Users.UserIdentity?> FindAsync(
             Domain.Users.UserIdentityId userIdentityId,

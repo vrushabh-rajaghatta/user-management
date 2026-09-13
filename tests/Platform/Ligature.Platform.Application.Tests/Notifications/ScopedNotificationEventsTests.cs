@@ -151,10 +151,101 @@ public sealed class ScopedNotificationEventsTests
         Assert.Throws<InvalidOperationException>(() => Declare(collector));
     }
 
-    private static void Declare(INotificationEvents events)
+    // ------------------------------------------------------------------ N14
+
+    /// <summary>
+    /// The frozen specification's own test: "Enqueue AccountActivation against
+    /// a PasswordReset token — refused by the writer". Refused as a defect, and
+    /// before anything is recorded, so no row for the wrong message could ever
+    /// be written.
+    /// </summary>
+    [Fact]
+    public void An_activation_notification_for_a_reset_token_is_refused()
+    {
+        var collector = new ScopedNotificationEvents();
+        var scope = (INotificationEmissionScope)collector;
+
+        using var open = scope.BeginCommand();
+
+        var failure = Assert.Throws<InvalidOperationException>(
+            () => Declare(collector, NotificationType.AccountActivation, TokenType.PasswordReset));
+
+        Assert.Contains("N14", failure.Message, StringComparison.Ordinal);
+        Assert.Empty(scope.Declarations);
+    }
+
+    [Theory]
+    [InlineData(NotificationType.PasswordReset, TokenType.Activation)]
+    [InlineData(NotificationType.AdminPasswordReset, TokenType.Activation)]
+    public void A_reset_notification_for_an_activation_token_is_refused(
+        NotificationType notificationType, TokenType tokenType)
+    {
+        var collector = new ScopedNotificationEvents();
+        var scope = (INotificationEmissionScope)collector;
+
+        using var open = scope.BeginCommand();
+
+        Assert.Throws<InvalidOperationException>(
+            () => Declare(collector, notificationType, tokenType));
+
+        Assert.Empty(scope.Declarations);
+    }
+
+    /// <summary>
+    /// A type the agreement does not know is refused rather than waved
+    /// through: a new release value must be given its token type explicitly.
+    /// </summary>
+    [Theory]
+    [InlineData(TokenType.Activation)]
+    [InlineData(TokenType.PasswordReset)]
+    public void An_unknown_notification_type_agrees_with_no_token(TokenType tokenType)
+    {
+        var collector = new ScopedNotificationEvents();
+
+        using var open = ((INotificationEmissionScope)collector).BeginCommand();
+
+        Assert.Throws<InvalidOperationException>(
+            () => Declare(collector, (NotificationType)999, tokenType));
+    }
+
+    [Theory]
+    [InlineData(NotificationType.AccountActivation, TokenType.Activation)]
+    [InlineData(NotificationType.PasswordReset, TokenType.PasswordReset)]
+    [InlineData(NotificationType.AdminPasswordReset, TokenType.PasswordReset)]
+    public void Each_legal_pairing_is_declared(
+        NotificationType notificationType, TokenType tokenType)
+    {
+        var collector = new ScopedNotificationEvents();
+        var scope = (INotificationEmissionScope)collector;
+
+        using var open = scope.BeginCommand();
+
+        var token = Token(tokenType);
+
+        collector.Emit(notificationType, token, "john.smith@example.com", "plaintext-token");
+
+        var declaration = Assert.Single(scope.Declarations);
+
+        Assert.Equal(notificationType, declaration.NotificationType);
+        Assert.Equal(token.Id, declaration.TokenId);
+    }
+
+    private static void Declare(
+        INotificationEvents events,
+        NotificationType notificationType = NotificationType.AccountActivation,
+        TokenType tokenType = TokenType.Activation)
         => events.Emit(
-            NotificationType.AccountActivation,
-            UserTokenId.New(),
+            notificationType,
+            Token(tokenType),
             "john.smith@example.com",
             "plaintext-token");
+
+    private static UserToken Token(TokenType tokenType)
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        return UserToken.Create(
+            UserTokenId.New(), UserIdentityId.New(), tokenType, "hash",
+            now, now.AddHours(1), User.SystemUserId);
+    }
 }

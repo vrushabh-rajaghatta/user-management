@@ -223,7 +223,7 @@ public sealed class CreateUserCommandHandler
                     // handler references no notification table (D-N1-07).
                     _notificationEvents.Emit(
                         NotificationType.AccountActivation,
-                        tokenId,
+                        activationToken,
                         email.Value,
                         tokenMaterial.PlainText);
 

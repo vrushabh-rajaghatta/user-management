@@ -65,6 +65,20 @@ public interface IUserIdentityRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Every LOCAL identity belonging to a user, whatever its status (CRD-C5).
+    ///
+    /// All of them rather than "the" one, and unfiltered by status, because
+    /// both are the caller's rules and must be visible where they are applied.
+    /// No constraint guarantees a user has at most one local identity — no
+    /// command creates a second, but nothing in the schema forbids it — so the
+    /// caller refuses anything other than exactly one rather than this method
+    /// silently choosing.
+    /// </summary>
+    Task<IReadOnlyList<UserIdentity>> FindLocalByUserIdAsync(
+        UserId userId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Loads an identity by id, or null (SES-C2).
     /// </summary>
     Task<UserIdentity?> FindAsync(

@@ -55,13 +55,28 @@ internal sealed class ScopedNotificationEvents
 
     public void Emit(
         NotificationType notificationType,
-        UserTokenId tokenId,
+        UserToken token,
         string recipient,
         string plaintextToken)
     {
-        ArgumentNullException.ThrowIfNull(tokenId);
+        ArgumentNullException.ThrowIfNull(token);
         ArgumentException.ThrowIfNullOrWhiteSpace(recipient);
         ArgumentException.ThrowIfNullOrWhiteSpace(plaintextToken);
+
+        // N14, in the single writer. Only a code defect reaches this — every
+        // call site passes a literal type beside the token it just issued — so
+        // it is an emission defect and fails the command, never a business
+        // refusal a caller could provoke. The agreement is a property of the
+        // arguments alone, so it is checked first; a declaration outside a
+        // command is refused below either way.
+        if (!NotificationTokenAgreement.Permits(notificationType, token.TokenType))
+        {
+            throw new InvalidOperationException(
+                "Notification emission defect — a "
+                + $"'{notificationType}' notification was declared for a "
+                + $"'{token.TokenType}' token. The notification type must agree "
+                + "with the type of the token it delivers (N14).");
+        }
 
         if (!_open)
         {
@@ -82,7 +97,7 @@ internal sealed class ScopedNotificationEvents
             new NotificationDeclaration(
                 NotificationId.New(),
                 notificationType,
-                tokenId,
+                token.Id,
                 recipient,
                 plaintextToken));
     }

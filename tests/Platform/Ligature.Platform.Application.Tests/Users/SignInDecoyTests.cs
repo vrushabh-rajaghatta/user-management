@@ -119,6 +119,10 @@ public sealed class SignInDecoyTests
             string emailOrUsername, CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<UserIdentityId>>([]);
 
+        public Task<IReadOnlyList<UserIdentity>> FindLocalByUserIdAsync(
+            UserId userId, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<UserIdentity>>([]);
+
         public Task<UserIdentity?> FindAsync(
             UserIdentityId userIdentityId, CancellationToken cancellationToken)
             => Task.FromResult<UserIdentity?>(null);

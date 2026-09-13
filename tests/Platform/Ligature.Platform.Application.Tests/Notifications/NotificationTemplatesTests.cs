@@ -63,12 +63,13 @@ public sealed class NotificationTemplatesTests
     {
         var templates = new NotificationTemplates(BaseUrl);
 
-        // AdminPasswordReset arrives with CRD-C5; PasswordReset landed with
-        // CRD-C2 and now renders. Sending the wrong message about a credential
-        // would be worse than sending none.
+        // Every V1 type now has a template (AdminPasswordReset arrived with
+        // CRD-C5), so an out-of-range value stands in for the next type added
+        // without one. Sending the wrong message about a credential would be
+        // worse than sending none.
         var failure = Assert.Throws<InvalidOperationException>(
             () => templates.Render(
-                Declaration("token", NotificationType.AdminPasswordReset)));
+                Declaration("token", (NotificationType)999)));
 
         Assert.Contains("no template", failure.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -88,6 +89,36 @@ public sealed class NotificationTemplatesTests
         Assert.Contains("/reset-password#token=a-plaintext-token", rendered.Body, StringComparison.Ordinal);
         Assert.DoesNotContain("/activate", rendered.Body, StringComparison.Ordinal);
         Assert.DoesNotContain("?token=", rendered.Body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// CRD-C5's message. Same page as CRD-C2's — the token type is the same and
+    /// CRD-C3 consumes both — but it must say an administrator started it, so
+    /// the reader can tell it apart from the forgotten-password form.
+    /// </summary>
+    [Fact]
+    public void The_admin_password_reset_message_links_to_the_reset_page_and_says_who_started_it()
+    {
+        var templates = new NotificationTemplates(BaseUrl);
+
+        var admin = templates.Render(
+            Declaration("a-plaintext-token", NotificationType.AdminPasswordReset));
+
+        var self = templates.Render(
+            Declaration("a-plaintext-token", NotificationType.PasswordReset));
+
+        Assert.Contains(
+            "https://app.example.com/reset-password#token=a-plaintext-token",
+            admin.Body,
+            StringComparison.Ordinal);
+
+        Assert.DoesNotContain("/activate", admin.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("?token=", admin.Body, StringComparison.Ordinal);
+        Assert.Contains("administrator", admin.Body, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("john.smith@example.com", admin.Recipient);
+
+        Assert.NotEqual(self.Subject, admin.Subject);
+        Assert.NotEqual(self.Body, admin.Body);
     }
 
     private static RenderedMessage Render(string plaintext)
