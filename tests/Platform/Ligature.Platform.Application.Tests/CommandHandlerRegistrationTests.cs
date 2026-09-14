@@ -7,6 +7,9 @@ using Ligature.Platform.Application.Execution;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.RevokeSession;
+using Ligature.Platform.Application.Users.Commands.RevokeUserSessions;
+using Ligature.Platform.Application.Users.Commands.SignOutEverywhere;
 using Ligature.Platform.Application.Users.Commands.UnlockAccount;
 using Ligature.SharedKernel.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -60,6 +63,26 @@ public sealed class CommandHandlerRegistrationTests
 
         Assert.NotNull(
             scope.ServiceProvider.GetRequiredService<ICommandDispatcher>());
+    }
+
+    /// <summary>
+    /// SES-C3 and both SES-C4 commands, resolved for the same reason as CRD-C5
+    /// below.
+    /// </summary>
+    [Fact]
+    public void The_dispatcher_can_resolve_the_session_revocation_handlers()
+    {
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.IsType<RevokeSessionCommandHandler>(scope.ServiceProvider
+            .GetRequiredService<ICommandHandler<RevokeSessionCommand, RevokeSessionResult>>());
+
+        Assert.IsType<RevokeUserSessionsCommandHandler>(scope.ServiceProvider
+            .GetRequiredService<ICommandHandler<RevokeUserSessionsCommand, RevokeUserSessionsResult>>());
+
+        Assert.IsType<SignOutEverywhereCommandHandler>(scope.ServiceProvider
+            .GetRequiredService<ICommandHandler<SignOutEverywhereCommand, SignOutEverywhereResult>>());
     }
 
     /// <summary>
@@ -354,6 +377,20 @@ public sealed class CommandHandlerRegistrationTests
             Domain.Users.UserSessionId sessionId,
             CancellationToken cancellationToken)
             => Task.FromResult<Domain.Users.UserSession?>(null);
+
+        public Task<Domain.Users.UserSession?> FindActiveAsync(
+            Domain.Users.UserSessionId sessionId,
+            DateTimeOffset now,
+            TimeSpan idleTimeout,
+            CancellationToken cancellationToken)
+            => Task.FromResult<Domain.Users.UserSession?>(null);
+
+        public Task<IReadOnlyList<Domain.Users.UserSession>> FindActiveForUserAsync(
+            Domain.Users.UserId userId,
+            DateTimeOffset now,
+            TimeSpan idleTimeout,
+            CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<Domain.Users.UserSession>>([]);
 
         public Task<IReadOnlyList<Domain.Users.UserSession>> FindOtherActiveForIdentityAsync(
             Domain.Users.UserIdentityId identityId,

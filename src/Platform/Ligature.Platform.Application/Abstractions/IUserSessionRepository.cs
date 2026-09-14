@@ -55,6 +55,33 @@ public interface IUserSessionRepository
         TimeSpan idleTimeout,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// SES-C3. The session if it passes the CANONICAL active-session test at
+    /// <paramref name="now"/>, otherwise null — tracked, so the caller revokes
+    /// through it.
+    ///
+    /// Canonical means exactly what the per-request session check accepts: not
+    /// revoked, before absolute expiry, within the idle timeout widened by the
+    /// enforcement tolerance, held by an Active identity of an Active Human
+    /// user. The caller passes the effective idle timeout; the tolerance and the
+    /// status joins are the implementation's, beside the check that owns them.
+    /// </summary>
+    Task<UserSession?> FindActiveAsync(
+        UserSessionId sessionId,
+        DateTimeOffset now,
+        TimeSpan idleTimeout,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// SES-C4. Every session of EVERY identity of <paramref name="userId"/> that
+    /// passes the canonical active-session test (see FindActiveAsync) — tracked.
+    /// </summary>
+    Task<IReadOnlyList<UserSession>> FindActiveForUserAsync(
+        UserId userId,
+        DateTimeOffset now,
+        TimeSpan idleTimeout,
+        CancellationToken cancellationToken);
+
     Task RecordActivityAsync(
         UserSessionId sessionId,
         DateTimeOffset now,

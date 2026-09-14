@@ -110,6 +110,7 @@ app.MapAuthEndpoints();
 app.MapAccountEndpoints();
 app.MapUserEndpoints();
 app.MapIdentityEndpoints();
+app.MapSessionEndpoints();
 
 if (apiDocumentationEnabled)
 {

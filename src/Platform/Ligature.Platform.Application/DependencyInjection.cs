@@ -12,6 +12,9 @@ using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
+using Ligature.Platform.Application.Users.Commands.RevokeSession;
+using Ligature.Platform.Application.Users.Commands.RevokeUserSessions;
+using Ligature.Platform.Application.Users.Commands.SignOutEverywhere;
 using Ligature.Platform.Application.Users.Commands.UnlockAccount;
 using Ligature.SharedKernel.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -208,6 +211,21 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<ResetPasswordCommand, ResetPasswordResult>,
             ResetPasswordCommandHandler>();
+
+        // SES-C3
+        services.AddScoped<
+            ICommandHandler<RevokeSessionCommand, RevokeSessionResult>,
+            RevokeSessionCommandHandler>();
+
+        // SES-C4 — administrator form
+        services.AddScoped<
+            ICommandHandler<RevokeUserSessionsCommand, RevokeUserSessionsResult>,
+            RevokeUserSessionsCommandHandler>();
+
+        // SES-C4 — self form
+        services.AddScoped<
+            ICommandHandler<SignOutEverywhereCommand, SignOutEverywhereResult>,
+            SignOutEverywhereCommandHandler>();
 
         // CRD-C6
         services.AddScoped<

@@ -5,11 +5,12 @@ using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
+using Ligature.Platform.Application.Users.Commands.SignOutEverywhere;
 
 namespace Ligature.Host.Api;
 
 /// <summary>
-/// CRD-C1, CRD-C2, CRD-C3 and CRD-C4 over HTTP.
+/// CRD-C1, CRD-C2, CRD-C3, CRD-C4 and SES-C4 (self form) over HTTP.
 ///
 /// The first three are anonymous, and that is the mechanism rather than an
 /// oversight: the token IS the authorisation. Whoever holds the emailed secret
@@ -17,8 +18,8 @@ namespace Ligature.Host.Api;
 /// setting the password instead would know it, and every document that user
 /// later approved could be argued to have been signed by someone else.
 ///
-/// CRD-C4 is the exception: it changes the password of the session presenting
-/// the request, so it requires a carrier.
+/// CRD-C4 and SES-C4's self form are the exceptions: each acts for the session
+/// presenting the request, so each requires a carrier.
 /// </summary>
 public static class AccountEndpoints
 {
@@ -99,7 +100,48 @@ public static class AccountEndpoints
             // Documentation only. The pipeline refuses an unauthenticated
             // caller; this marker refuses nothing.
             .WithMetadata(new RequiresCarrier());
+
+        // SES-C4, self form.
+        routes.MapPost("/api/account/sign-out-everywhere", SignOutEverywhereAsync)
+            .WithTags("Account")
+            .WithSummary("Sign out of every session of the signed-in account.")
+            .WithDescription(
+                "Requires a carrier. Ends every active session of the account, "
+                + "INCLUDING this one, unless keepCurrentSession is true. The "
+                + "body is optional; a reason may be given but is not required. "
+                + "Success is 204 with no body, including when nothing was active.")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status401Unauthorized)
+
+            // Documentation only. The pipeline refuses an unauthenticated
+            // caller; this marker refuses nothing.
+            .WithMetadata(new RequiresCarrier());
     }
+
+    /// <summary>
+    /// The current session comes from the carrier, never from the body; the body
+    /// may say only whether to keep it and why.
+    /// </summary>
+    private static async Task<IResult> SignOutEverywhereAsync(
+        SignOutEverywhereRequest? request,
+        CurrentCarrier currentCarrier,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        if (currentCarrier.SessionId is null)
+            return Results.Json(new { Error = Rejected }, statusCode: 401);
+
+        await dispatcher.SendAsync<SignOutEverywhereCommand, SignOutEverywhereResult>(
+            new SignOutEverywhereCommand(
+                currentCarrier.SessionId,
+                request?.KeepCurrentSession ?? false,
+                request?.Reason),
+            cancellationToken);
+
+        return Results.NoContent();
+    }
+
+    private sealed record SignOutEverywhereRequest(bool? KeepCurrentSession, string? Reason);
 
     /// <summary>
     /// The session comes from the carrier this request presented, never from a

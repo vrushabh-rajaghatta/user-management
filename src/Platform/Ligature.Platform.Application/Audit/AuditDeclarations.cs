@@ -6,6 +6,9 @@ using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
+using Ligature.Platform.Application.Users.Commands.RevokeSession;
+using Ligature.Platform.Application.Users.Commands.RevokeUserSessions;
+using Ligature.Platform.Application.Users.Commands.SignOutEverywhere;
 using Ligature.Platform.Application.Users.Commands.UnlockAccount;
 
 namespace Ligature.Platform.Application.Audit;
@@ -76,6 +79,23 @@ public static class AuditDeclarations
             [typeof(AdminResetPasswordCommand)] = new(
                 "UserManagement",
                 ["AdminPasswordResetIssued", "TokenIssued", "TokenInvalidated"]),
+
+            // SES-C3 and both SES-C4 commands — SessionRevoked (n), one per
+            // session actually ended, each with the caller's explanation as its
+            // Reason and the controlled code in its After (D2). An unknown
+            // target is refused and an already-ended session or an empty set
+            // is a no-op: neither declares anything.
+            [typeof(RevokeSessionCommand)] = new(
+                "UserManagement",
+                ["SessionRevoked"]),
+
+            [typeof(RevokeUserSessionsCommand)] = new(
+                "UserManagement",
+                ["SessionRevoked"]),
+
+            [typeof(SignOutEverywhereCommand)] = new(
+                "UserManagement",
+                ["SessionRevoked"]),
 
             // CRD-C6 — one record, and only when a live lock was actually
             // cleared. Every refusal (ineligible, not locked, own account)
