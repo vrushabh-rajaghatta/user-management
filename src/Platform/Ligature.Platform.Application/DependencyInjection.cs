@@ -12,6 +12,7 @@ using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
+using Ligature.Platform.Application.Users.Commands.UnlockAccount;
 using Ligature.SharedKernel.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -207,6 +208,11 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<ResetPasswordCommand, ResetPasswordResult>,
             ResetPasswordCommandHandler>();
+
+        // CRD-C6
+        services.AddScoped<
+            ICommandHandler<UnlockAccountCommand, UnlockAccountResult>,
+            UnlockAccountCommandHandler>();
 
         // CRD-C4
         services.AddScoped<

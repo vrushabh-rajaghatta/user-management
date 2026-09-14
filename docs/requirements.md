@@ -490,6 +490,21 @@ the Audit Event Catalogue; add `SessionRevoked (n)` to CRD-C4's audit-events
 column and record A5 as closed in the UM command catalogue. Neither workbook is
 edited by the implementing story.
 
+## The unlock permission disagrees between the Audit and UM specifications
+
+**The discrepancy.** Audit operator walkthrough §18.5 refers to
+`credential.unlock` and describes it as operator-eligible, while the UM
+permission catalogue and seed define `user.unlock` as human-only.
+
+**What the code does.** CRD-C6 (`UnlockAccount`) follows the current UM
+permission contract: `user.unlock`, `RequiresHumanActor = true`, granted through
+the existing administrator authorisation model. No permission, seed or workbook
+is changed.
+
+**Deferred to:** resolve the discrepancy before AM-01/A8 introduces
+PlatformOperator authorisation — both the permission's name and whether it is
+operator-eligible.
+
 ## Password reuse cannot yet prove the algorithm column is honoured
 
 **Rule (CRD-C3, frozen):** *"Reuse-check must compare against each history row

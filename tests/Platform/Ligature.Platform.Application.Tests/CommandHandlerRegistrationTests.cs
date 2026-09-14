@@ -7,6 +7,7 @@ using Ligature.Platform.Application.Execution;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.UnlockAccount;
 using Ligature.SharedKernel.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -59,6 +60,21 @@ public sealed class CommandHandlerRegistrationTests
 
         Assert.NotNull(
             scope.ServiceProvider.GetRequiredService<ICommandDispatcher>());
+    }
+
+    /// <summary>
+    /// CRD-C6, resolved for the same reason as CRD-C5 below.
+    /// </summary>
+    [Fact]
+    public void The_dispatcher_can_resolve_the_UnlockAccount_handler()
+    {
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        var handler = scope.ServiceProvider
+            .GetRequiredService<ICommandHandler<UnlockAccountCommand, UnlockAccountResult>>();
+
+        Assert.IsType<UnlockAccountCommandHandler>(handler);
     }
 
     /// <summary>

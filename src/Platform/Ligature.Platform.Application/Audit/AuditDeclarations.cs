@@ -6,6 +6,7 @@ using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
+using Ligature.Platform.Application.Users.Commands.UnlockAccount;
 
 namespace Ligature.Platform.Application.Audit;
 
@@ -75,6 +76,13 @@ public static class AuditDeclarations
             [typeof(AdminResetPasswordCommand)] = new(
                 "UserManagement",
                 ["AdminPasswordResetIssued", "TokenIssued", "TokenInvalidated"]),
+
+            // CRD-C6 — one record, and only when a live lock was actually
+            // cleared. Every refusal (ineligible, not locked, own account)
+            // precedes the write and declares nothing.
+            [typeof(UnlockAccountCommand)] = new(
+                "UserManagement",
+                ["AccountUnlocked"]),
 
             // CRD-C4 — PasswordChanged, and SessionRevoked (n) for each other
             // session of the identity that A5 ends, each caused by the change.
