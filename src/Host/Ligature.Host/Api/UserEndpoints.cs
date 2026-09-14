@@ -2,6 +2,7 @@ using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.RevokeUserSessions;
 using Ligature.Platform.Domain.Users;
 
 namespace Ligature.Host.Api;
@@ -66,7 +67,49 @@ public static class UserEndpoints
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
             .WithMetadata(new RequiresCarrier());
+
+        // SES-C4, administrator form. No way to keep a session: it is not the
+        // administrator's to keep (D4).
+        routes.MapPost("/api/users/{userId:guid}/sign-out-everywhere", SignOutEverywhereAsync)
+            .WithTags("Users")
+            .WithSummary("End every active session of a user (administrator).")
+            .WithDescription(
+                "Requires a carrier, the 'session.revoke' permission and a "
+                + "reason. Ends every active session of every identity the user "
+                + "holds — including the caller's own current session if they "
+                + "target themselves. A user with no active sessions is left as "
+                + "they are. Success is 204 with no body. An unknown user, a "
+                + "missing permission or a missing reason is 400.")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
     }
+
+    /// <summary>
+    /// SES-C4, administrator form, over HTTP. A missing reason is a binding
+    /// failure refused here; a blank one is refused by the command.
+    /// </summary>
+    private static async Task<IResult> SignOutEverywhereAsync(
+        Guid userId,
+        UserSessionsRequest? request,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        if (request?.Reason is null)
+        {
+            return Results.BadRequest(
+                new { Error = "A reason is required." });
+        }
+
+        await dispatcher.SendAsync<RevokeUserSessionsCommand, RevokeUserSessionsResult>(
+            new RevokeUserSessionsCommand(new UserId(userId), request.Reason),
+            cancellationToken);
+
+        return Results.NoContent();
+    }
+
+    private sealed record UserSessionsRequest(string? Reason);
 
     /// <summary>
     /// CRD-C5 over HTTP.

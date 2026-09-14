@@ -73,6 +73,73 @@ public sealed class UserSessionRepository : IUserSessionRepository
     }
 
     /// <inheritdoc />
+    public async Task<UserSession?> FindActiveAsync(
+        UserSessionId sessionId,
+        DateTimeOffset now,
+        TimeSpan idleTimeout,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sessionId);
+
+        var candidates = await ActiveCandidates(now)
+            .Where(x => x.Id == sessionId)
+            .ToListAsync(cancellationToken);
+
+        return ActiveOnly(candidates, now, idleTimeout).SingleOrDefault();
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<UserSession>> FindActiveForUserAsync(
+        UserId userId,
+        DateTimeOffset now,
+        TimeSpan idleTimeout,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(userId);
+
+        var candidates = await (
+                from session in ActiveCandidates(now)
+                join identity in _dbContext.Set<UserIdentity>()
+                    on session.UserIdentityId equals identity.Id
+                where identity.UserId == userId
+                select session)
+            .ToListAsync(cancellationToken);
+
+        return ActiveOnly(candidates, now, idleTimeout);
+    }
+
+    /// <summary>
+    /// The half of the canonical test the database answers: not revoked, before
+    /// expiry, and the statuses and actor type CallerEstablisher refuses on.
+    /// Tracked, because both callers revoke through what this returns.
+    /// </summary>
+    private IQueryable<UserSession> ActiveCandidates(DateTimeOffset now)
+        => from session in _dbContext.Set<UserSession>()
+           join identity in _dbContext.Set<UserIdentity>()
+               on session.UserIdentityId equals identity.Id
+           join user in _dbContext.Set<User>()
+               on identity.UserId equals user.Id
+           where session.RevokedAt == null
+                 && session.ExpiresAt > now
+                 && identity.Status == UserStatus.Active
+                 && user.Status == UserStatus.Active
+                 && user.ActorType == ActorType.Human
+           select session;
+
+    /// <summary>
+    /// The verdict: UserSession.IsActive with the idle timeout widened by the
+    /// SAME tolerance the per-request check applies. One definition of session
+    /// validity, reused rather than restated in SQL.
+    /// </summary>
+    private static IReadOnlyList<UserSession> ActiveOnly(
+        IEnumerable<UserSession> candidates, DateTimeOffset now, TimeSpan idleTimeout)
+    {
+        var window = idleTimeout + CallerEstablisher.EnforcementTolerance;
+
+        return [.. candidates.Where(x => x.IsActive(now, window))];
+    }
+
+    /// <inheritdoc />
     public async Task RecordActivityAsync(
         UserSessionId sessionId,
         DateTimeOffset now,

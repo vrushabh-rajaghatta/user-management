@@ -7,6 +7,9 @@ using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
 using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
+using Ligature.Platform.Application.Users.Commands.RevokeSession;
+using Ligature.Platform.Application.Users.Commands.RevokeUserSessions;
+using Ligature.Platform.Application.Users.Commands.SignOutEverywhere;
 using Ligature.Platform.Application.Users.Commands.UnlockAccount;
 
 namespace Ligature.Platform.Application.Tests.Audit;
@@ -51,6 +54,24 @@ public sealed class AuditDeclarationsTests
         Assert.Equal(
             ["TokenConsumed", "PasswordSet", "AccountActivated", "TokenRejected"],
             declaration.Codes);
+    }
+
+    /// <summary>
+    /// SES-C3 and both SES-C4 commands — SessionRevoked, one per session ended.
+    /// SignOutEverywhere in particular must never list SignedOut, which belongs
+    /// to SES-C2.
+    /// </summary>
+    [Theory]
+    [InlineData(typeof(RevokeSessionCommand))]
+    [InlineData(typeof(RevokeUserSessionsCommand))]
+    [InlineData(typeof(SignOutEverywhereCommand))]
+    public void Session_revocation_commands_declare_only_SessionRevoked(Type command)
+    {
+        var declaration = AuditDeclarations.For(command);
+
+        Assert.Equal("UserManagement", declaration!.OwningContext);
+
+        Assert.Equal(["SessionRevoked"], declaration.Codes);
     }
 
     /// <summary>
@@ -138,6 +159,8 @@ public sealed class AuditDeclarationsTests
                 typeof(RequestPasswordResetCommand), typeof(ResetPasswordCommand),
                 typeof(AdminResetPasswordCommand), typeof(ChangePasswordCommand),
                 typeof(UnlockAccountCommand),
+                typeof(RevokeSessionCommand), typeof(RevokeUserSessionsCommand),
+                typeof(SignOutEverywhereCommand),
                 typeof(PlatformProvisioning),
             }
             .SelectMany(x => AuditDeclarations.For(x)!.Codes)

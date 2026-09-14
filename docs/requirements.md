@@ -490,6 +490,56 @@ the Audit Event Catalogue; add `SessionRevoked (n)` to CRD-C4's audit-events
 column and record A5 as closed in the UM command catalogue. Neither workbook is
 edited by the implementing story.
 
+## Session revocation — reason semantics and SES-C4 command split (change control)
+
+Recorded by owner ruling while implementing SES-C3 and SES-C4. **No workbook is
+edited**; each item below is outstanding change control against the frozen
+documents.
+
+**D2 — the two reason fields (R1, locked).** `user_session.RevocationReason` is
+a controlled revocation code describing why the session was terminated. Audit
+`audit_record.Reason` is the human explanation supplied by the command. For
+`SessionRevoked`, the controlled code is persisted in the session Before/After
+representation; the audit Reason remains the explanatory text. `SessionRevoked`
+remains BeforeAfter-shaped and gains no payload. SES-C3 and administrator SES-C4
+use `AdminRevoked`; self SES-C4 uses `SignOutEverywhere`. Self SES-C4 accepts an
+optional explanation; when omitted, the command supplies `Signed out of all
+sessions by the account holder` as the audit Reason.
+
+**The vocabulary is not a database invariant.** `RevocationReason` is a
+normative controlled vocabulary, but V1 does not enforce it with a database
+CHECK constraint: the column is plain TEXT. Vocabulary enforcement remains an
+application/domain responsibility (the codes are held in `SessionRevocations`
+and in the handlers that predate it) until separately amended.
+
+**Change-control items:**
+
+1. **SES-C4 command split.** SES-C4 is split into two concrete commands because
+   its frozen self/admin authorization contract cannot be represented by one
+   fixed-permission command under pipeline behaviour 3. The command catalogue
+   needs two command identities: `RevokeUserSessions` (administrator,
+   `session.revoke`) and `SignOutEverywhere` (self). SES-C4 remains the
+   capability grouping.
+2. **SES-C4 self `Reason`.** Changed from a required input to an optional input,
+   with the default explanation above.
+3. **`SessionRevoked` Audit note.** *"Reason = RevocationReason"* should read that
+   the audit Reason is the command's explanation and the controlled
+   `RevocationReason` is carried in Before/After — consistent with the
+   `audit_record.Reason` column's own definition ("a human explanation … never a
+   code").
+4. **UM `RevocationReason` vocabulary.** Formally establish the controlled
+   vocabulary. Codes in use: `Logout` (SES-C2), `PasswordChanged` (CRD-C4),
+   `AdminRevoked` (SES-C3, administrator SES-C4), `SignOutEverywhere` (self
+   SES-C4), `UserDeactivated` (USR-C4, not yet implemented). The entity model's
+   list currently ends open ("…").
+5. **USR-C4 spelling.** Its command steps write `RevocationReason='User
+   deactivated'` for role assignments and `'UserDeactivated'` for sessions;
+   reconcile before USR-C4 is implemented.
+6. **CRD-C4 departure.** CRD-C4 writes the code `PasswordChanged` into both the
+   session's `RevocationReason` and the audit Reason. That contradicts R1, since
+   the audit Reason should be an explanation. Known departure, deliberately not
+   changed by SES-C3/SES-C4; reconcile in a follow-up.
+
 ## The unlock permission disagrees between the Audit and UM specifications
 
 **The discrepancy.** Audit operator walkthrough §18.5 refers to
