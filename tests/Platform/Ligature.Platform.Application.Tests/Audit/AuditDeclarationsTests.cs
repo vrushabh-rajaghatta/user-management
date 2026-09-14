@@ -7,6 +7,7 @@ using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
 using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
+using Ligature.Platform.Application.Users.Commands.UnlockAccount;
 
 namespace Ligature.Platform.Application.Tests.Audit;
 
@@ -50,6 +51,19 @@ public sealed class AuditDeclarationsTests
         Assert.Equal(
             ["TokenConsumed", "PasswordSet", "AccountActivated", "TokenRejected"],
             declaration.Codes);
+    }
+
+    /// <summary>
+    /// CRD-C6 — one record per real unlock; refusals declare nothing.
+    /// </summary>
+    [Fact]
+    public void CRD_C6_declares_AccountUnlocked()
+    {
+        var declaration = AuditDeclarations.For(typeof(UnlockAccountCommand));
+
+        Assert.Equal("UserManagement", declaration!.OwningContext);
+
+        Assert.Equal(["AccountUnlocked"], declaration.Codes);
     }
 
     /// <summary>
@@ -123,6 +137,7 @@ public sealed class AuditDeclarationsTests
                 typeof(ActivateAccountCommand), typeof(SignInCommand),
                 typeof(RequestPasswordResetCommand), typeof(ResetPasswordCommand),
                 typeof(AdminResetPasswordCommand), typeof(ChangePasswordCommand),
+                typeof(UnlockAccountCommand),
                 typeof(PlatformProvisioning),
             }
             .SelectMany(x => AuditDeclarations.For(x)!.Codes)
