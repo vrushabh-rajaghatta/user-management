@@ -66,6 +66,10 @@ src/
     └── Ligature.Regulatory.Persistence
 ```
 
+## The web client
+
+The browser client lives at `web/ligature-web/`. It consumes the host's HTTP contract and is **not** a second implementation of any module. Its structure, layering and rules are governed by **`docs/frontend-architecture.md`**, which mirrors this section's module boundaries on the client: platform modules first, business modules later, with the same dependency direction (§10).
+
 ---
 
 # 3. Modular Monolith
