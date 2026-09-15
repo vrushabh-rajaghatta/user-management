@@ -416,6 +416,8 @@ Avoid: premature microservices, unnecessary abstractions, cross-module database 
 
 **Status:** Architectural decision, **implemented** by `src/Host/Ligature.Host` and `CallerEstablisher`. Resolves the `AGENTS.md` §17 escalation recorded in `docs/requirements.md` under *"Access token issuance is unspecified"*.
 
+**Amended** by the cookie transport decision (web client design, 2026-09-14). See *Amendment: cookie transport* at the end of this section. The statements it changes are marked *Amended* where they stand, not rewritten.
+
 The enforcement tolerance and the activity-staleness threshold are both 60 seconds, and both live on `CallerEstablisher` as named constants.
 
 ## The constraint that settles most of this
@@ -472,11 +474,13 @@ Rotation costs nothing structurally: because sessions are server-side, retiring 
 Authorization: Bearer <carrier>
 ```
 
+> **Amended (cookie transport).** This was the only transport. It is still supported, but it is no longer the only one: browsers present the same carrier in the `__Host-ligature` cookie, and a non-blank `Authorization` header takes precedence with no fallback. See *Amendment: cookie transport*.
+
 ## Ownership boundary
 
 | Owner | Responsibility |
 | --- | --- |
-| **Host / infrastructure** | HTTP authentication, bearer extraction, signature verification, carrier issuance |
+| **Host / infrastructure** | HTTP authentication, ~~bearer extraction~~ credential extraction — bearer header or carrier cookie (*amended*), cross-site refusal (*amended*), signature verification, carrier issuance |
 | **User Management** | Session lookup and validity, user and identity validity, establishing the caller |
 
 The Host must not decide independently whether a session is active or whether a user has been deactivated. It extracts a `SessionId` and asks the platform.
@@ -484,6 +488,8 @@ The Host must not decide independently whether a session is active or whether a 
 ### Issuance
 
 SES-C1 returns `Succeeded` and a `SessionId`. The Host mints the carrier from that. `SignInCommandHandler` knows nothing of tokens, signing keys or HTTP headers, which keeps sign-in usable outside HTTP.
+
+> **Amended (cookie transport).** The minted carrier is no longer returned in a response body. Successful sign-in answers `204 No Content` and delivers the carrier only in the `Set-Cookie` header. A caller that is not a browser takes it from there and may present it as `Authorization: Bearer`. The handler is unchanged: delivery is still entirely the Host's concern.
 
 ## Per-request caller establishment
 
@@ -536,21 +542,97 @@ authenticated command + no caller      → AuthenticationBehavior rejects
 authenticated command + invalid carrier → no caller → AuthenticationBehavior rejects
 ```
 
+> **Amended (cookie transport).** Read "absent `Authorization` header" as "absent credential": a request that presents neither a bearer header nor the carrier cookie establishes no caller. An invalid cookie is treated exactly like an invalid header, and that includes a cookie presented twice or under a differently cased name. How the credential is chosen is set out in *Amendment: cookie transport*.
+
 Caller establishment **returns a result; it does not throw**. It is middleware, not a command, and an exception escaping to a client is how internal detail leaks.
 
 ## Explicit non-decisions
 
 This section deliberately does **not** decide, and code must not assume:
 
-- **browser token storage** — a UI security decision, made when a UI exists
-- **cookie transport** — not required by anything today
+- ~~**browser token storage** — a UI security decision, made when a UI exists~~ — **decided** by the owner when the web client was designed: not application-managed. See *Amendment: cookie transport*.
+- ~~**cookie transport** — not required by anything today~~ — **decided** by the owner when the web client was designed: an approved browser transport. See *Amendment: cookie transport*.
 - **any standard token container**, or the terminology that comes with one
 - **self-contained authorization claims** of any kind
 - **a token or verifier column on `user_session`** — the frozen entity is unchanged
 - **a query dispatcher or query pipeline** — see §11
 - **asymmetric signing** — revisit only when something outside the Host must verify
 
-Reopening any of these is an architectural change, not an implementation detail.
+Reopening any of these is an architectural change, not an implementation detail. The two struck through above were reopened that way — by owner decision, not inside a feature story — and the decision is recorded below. The others remain non-decisions.
+
+## Amendment: cookie transport
+
+**Status:** Owner decision, taken with the web client design (v2, decisions O1–O3, approved 2026-09-14). **Implemented** by `src/Host/Ligature.Host` on `feature/host-cookie-transport`: `CarrierCookie`, credential selection in `CallerMiddleware`, `CrossSiteMiddleware`, and the sign-in and sign-out endpoints.
+
+Nothing earlier in this section has been deleted. Every statement this amendment changes stays where it was, marked *Amended*, so the record shows what was decided first and what changed.
+
+### Why
+
+The web client is a browser application. A carrier held where page script can read it can be stolen by any script that runs on the page, so one injection becomes session theft. An `HttpOnly` cookie is not readable by script.
+
+The cookie is a second transport for the **same carrier**. Its format, the signing and keys, the session row as the only authority on validity, and the single indistinguishable failure outcome are all unchanged.
+
+### Two transports, one carrier
+
+```text
+Authorization: Bearer <carrier>        non-browser callers — unchanged
+Cookie: __Host-ligature=<carrier>      browsers
+```
+
+- **Bearer remains supported.** Nothing that worked with the header stops working.
+- **Cookie transport is an approved browser transport.** `CarrierCookie` is the one place that names the cookie and sets its attributes: `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`, and no `Domain`. It has no `Expires` and no `Max-Age`, because the session row stays the only record of lifetime.
+- **Browser token storage is not application-managed.** The browser holds the cookie. The web client never reads, stores or forwards the carrier, and no client-side token store exists.
+
+### Choosing the credential
+
+The source is chosen by **presence**, before either one is interpreted:
+
+```text
+a non-blank Authorization header   → that header alone; never falls back to the cookie
+otherwise, the carrier cookie      → exact name, presented exactly once
+otherwise                          → no credential
+```
+
+A forged bearer header next to a valid cookie authenticates nothing. Every invalid state of either transport is the one outcome described in *Failure behaviour*.
+
+### Issuance and removal
+
+| Operation | Carrier cookie |
+| --- | --- |
+| `POST /api/auth/sign-in`, success | `204 No Content`, no body; the carrier is set **only** in `Set-Cookie` |
+| sign-in refused (`400`, `401`, `403`) | not set |
+| `POST /api/auth/sign-out` | the session is revoked, **then** the cookie is cleared — whichever transport presented the carrier |
+| sign-out refused (`401`) | nothing cleared |
+| `POST /api/account/sign-out-everywhere` | cleared when `keepCurrentSession` is false, omitted or null; left alone when true |
+| `POST /api/users/{userId}/sign-out-everywhere`, `POST /api/sessions/{sessionId}/revoke` | never cleared — an administrator's action is not a sign-out of the browser making the request, even when it ends that administrator's own session |
+
+**A caller that is not a browser gets the carrier from `Set-Cookie`** on the sign-in response. It may then present it as `Authorization: Bearer`. No response body carries it any more.
+
+Revoke, then clear, is the contract. `ProblemMiddleware` clears the response on every mapped failure, which would also remove a deletion written too early. That is a second line of enforcement, not the reason for the order.
+
+### Cross-site requests
+
+A browser attaches the cookie to requests the page did not make. The Host therefore refuses cross-site state-changing requests **before the caller is established**: `CrossSiteMiddleware` runs ahead of `CallerMiddleware`, so a refused request never reaches the session store.
+
+```text
+GET, HEAD, OPTIONS                              → allowed
+a non-blank Sec-Fetch-Site                      → decides alone; only "same-origin" is allowed
+otherwise, no non-blank Origin                  → allowed
+otherwise, exactly one http(s) origin whose
+host[:port] equals Request.Host                 → allowed
+anything else                                   → 403
+```
+
+- **A blank `Sec-Fetch-Site` is treated as absent** and falls through to the `Origin` rule. A non-blank value is authoritative: `same-site`, `cross-site` and `none` are refused, and weaker evidence never overrides it.
+- **A safe method never changes state.** The rule allows `GET`, `HEAD` and `OPTIONS` unconditionally, and that is sound only while none of them has a side effect. An operation that changes state must not be exposed on a safe method, and that includes any future query.
+- `SameSite=Strict` is not enough on its own. It is scoped to the site, so a request from a sibling subdomain still carries the cookie; and sign-in, activation and reset carry no cookie for it to withhold.
+- A refusal is `403` with the same `{"error": …}` body shape as every other failure. It is logged with bounded values, and the `Cookie` and `Authorization` headers are never logged.
+
+### Signing in while signed in
+
+Sign-in, activation and password reset do not run under an established caller (§11), whichever transport established it and whether the target identity is the same or a different one. They are refused with the same `401`, and no cookie is set or cleared.
+
+A browser that is signed in must therefore **end its current session first**. Tabs share the cookie, so signing out and back in rotates the session for all of them. A cookie that names a revoked or unknown session establishes no caller, so it never locks a browser out of signing in. That needs no special handling at sign-in.
 
 ---
 

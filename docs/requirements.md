@@ -163,6 +163,12 @@ standard token container, self-contained authorization claims, a token column on
 non-decisions; reopening one is an architectural change, not an implementation
 detail.
 
+**Amended (2026-09-15):** browser token storage and cookie transport are no
+longer open. The owner decided both with the web client design: cookie transport
+is an approved browser transport, and browser token storage is not
+application-managed. Both are recorded in `docs/architecture.md` §17,
+*Amendment: cookie transport*. The other four remain open.
+
 
 ## Audit emission covers every implemented command
 
