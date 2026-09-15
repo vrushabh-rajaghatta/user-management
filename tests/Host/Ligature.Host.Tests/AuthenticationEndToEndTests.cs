@@ -1179,6 +1179,126 @@ public sealed class AuthenticationEndToEndTests
                     ])
                     .Build()));
 
+    // ---------------------------------------- cross-site protection (B3)
+
+    private const string CrossSiteRefusal = "Cross-site requests are not accepted.";
+
+    /// <summary>
+    /// A forged sign-in — the one CSRF that SameSite cannot stop, because the
+    /// request carries no cookie to withhold — is refused before the command
+    /// runs: with credentials that are genuinely valid, no session row exists
+    /// afterwards.
+    ///
+    /// The control sends the same credentials from the same origin and expects
+    /// a session, so the refusal cannot be explained by credentials that would
+    /// have failed anyway.
+    /// </summary>
+    [Fact]
+    public async Task A_cross_site_sign_in_is_refused_before_any_session_is_created()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            await ActivateAsync(client, actor.Token);
+
+            var credentials = new { Username = actor.Username, Password };
+
+            var refused = await SendWithHeadersAsync(
+                client, "/api/auth/sign-in", credentials, ("Sec-Fetch-Site", "cross-site"));
+
+            Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+            Assert.Equal(CrossSiteRefusal, await ErrorAsync(refused));
+            Assert.Null(await TryFindSessionIdAsync(actor.IdentityId));
+
+            var accepted = await SendWithHeadersAsync(
+                client, "/api/auth/sign-in", credentials, ("Sec-Fetch-Site", "same-origin"));
+
+            Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+            Assert.NotNull(await TryFindSessionIdAsync(actor.IdentityId));
+        });
+    }
+
+    /// <summary>
+    /// The sibling-subdomain case: SameSite=Strict still sends the cookie on a
+    /// same-site request. It is refused, and refused BEFORE CallerMiddleware —
+    /// proved by the session's activity, which establishment would have
+    /// written. That is the ordering decision, not merely its status code.
+    ///
+    /// The probe is sign-in with an empty body, so an accepted request answers
+    /// 400 from binding and a refused one 403 from this middleware; the control
+    /// repeats it from the same origin and expects the activity to move.
+    /// </summary>
+    [Fact]
+    public async Task A_same_site_request_is_refused_before_the_caller_is_established()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            await ActivateAsync(client, actor.Token);
+
+            var carrier = await SignInAsync(client, actor.Username)
+                ?? throw new InvalidOperationException("Sign-in failed.");
+
+            var session = SessionOf(carrier);
+            var stale = await MakeStaleAsync(session);
+
+            var refused = await SendWithHeadersAsync(
+                client, "/api/auth/sign-in", new { },
+                ("Cookie", CarrierCookie(carrier)), ("Sec-Fetch-Site", "same-site"));
+
+            Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+            Assert.Equal(CrossSiteRefusal, await ErrorAsync(refused));
+            Assert.False(await WasEstablishedAsync(session, stale));
+
+            var accepted = await SendWithHeadersAsync(
+                client, "/api/auth/sign-in", new { },
+                ("Cookie", CarrierCookie(carrier)), ("Sec-Fetch-Site", "same-origin"));
+
+            Assert.Equal(HttpStatusCode.BadRequest, accepted.StatusCode);
+            Assert.True(await WasEstablishedAsync(session, stale));
+        });
+    }
+
+    /// <summary>
+    /// The Origin fallback against the real Request.Host the server derives,
+    /// rather than one a unit test chose. The test server is addressed as
+    /// localhost.
+    /// </summary>
+    [Fact]
+    public async Task Without_fetch_metadata_the_origin_is_compared_with_the_request_host_over_http()
+    {
+        await RunAsync(async (client, _) =>
+        {
+            var ownHost = client.BaseAddress!.Authority;
+
+            var accepted = await SendWithHeadersAsync(
+                client, "/api/auth/sign-in", new { }, ("Origin", $"http://{ownHost}"));
+
+            Assert.Equal(HttpStatusCode.BadRequest, accepted.StatusCode);
+
+            var refused = await SendWithHeadersAsync(
+                client, "/api/auth/sign-in", new { }, ("Origin", "https://evil.example"));
+
+            Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+            Assert.Equal(CrossSiteRefusal, await ErrorAsync(refused));
+        });
+    }
+
+    private static async Task<HttpResponseMessage> SendWithHeadersAsync(
+        HttpClient client,
+        string path,
+        object? body,
+        params (string Name, string Value)[] headers)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path);
+
+        foreach (var (name, value) in headers)
+            request.Headers.TryAddWithoutValidation(name, value);
+
+        if (body is not null)
+            request.Content = JsonContent.Create(body);
+
+        return await client.SendAsync(request);
+    }
+
     /// <summary>
     /// Fixed identifiers, because this suite's actor cannot be thrown away any
     /// more. Activating and signing out are both audited, so the user and the
