@@ -136,6 +136,107 @@ public sealed class SessionRevocationEndpointTests
         });
     }
 
+    // ------------------------------------------------- the carrier cookie (B4)
+
+    /// <summary>
+    /// When the presenting session ends, the browser must not be left holding a
+    /// cookie that names it. False, an omitted body and an explicit null all
+    /// mean "include this session", so all three clear.
+    /// </summary>
+    [Theory]
+    [InlineData("false")]
+    [InlineData("omitted")]
+    [InlineData("null")]
+    public async Task Signing_out_everywhere_including_this_session_clears_the_carrier_cookie(string keep)
+    {
+        await RunAsync(async (client, _, _) =>
+        {
+            var here = await SignInHolderAsync(client);
+
+            object? payload = keep switch
+            {
+                "false" => new { KeepCurrentSession = false },
+                "null" => new { KeepCurrentSession = (bool?)null },
+                _ => null,
+            };
+
+            var response = await PostAsync(client, here, "/api/account/sign-out-everywhere", payload);
+
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+            IssuedCarrier.AssertCleared(response);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, (await SignOutAsync(client, here)).StatusCode);
+        });
+    }
+
+    /// <summary>
+    /// Keeping the current session keeps its cookie: nothing is issued and
+    /// nothing is cleared. The kept session still works afterwards, so the
+    /// absent deletion is the right answer rather than an accident.
+    /// </summary>
+    [Fact]
+    public async Task Signing_out_everywhere_but_this_session_leaves_the_carrier_cookie_alone()
+    {
+        await RunAsync(async (client, _, _) =>
+        {
+            var here = await SignInHolderAsync(client);
+            var elsewhere = await SignInHolderAsync(client);
+            const string Path = "/api/account/sign-out-everywhere";
+
+            var anonymous = await PostAsync(client, null, Path, new { });
+
+            Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+            Assert.True(IssuedCarrier.IsAbsent(anonymous));
+
+            var keep = await PostAsync(client, here, Path, new { KeepCurrentSession = true });
+
+            Assert.Equal(HttpStatusCode.NoContent, keep.StatusCode);
+            Assert.True(IssuedCarrier.IsAbsent(keep));
+
+            Assert.Equal(HttpStatusCode.Unauthorized, (await SignOutAsync(client, elsewhere)).StatusCode);
+            Assert.Equal(HttpStatusCode.NoContent, (await SignOutAsync(client, here)).StatusCode);
+        });
+    }
+
+    /// <summary>
+    /// The administrator form never clears, even when the administrator targets
+    /// themselves and their own session is among those ended. What an
+    /// administrator does to an account is not a sign-out of the requesting
+    /// browser, and the endpoint does not look at whose sessions it ended.
+    /// </summary>
+    [Fact]
+    public async Task An_administrator_signing_themselves_out_everywhere_is_sent_no_cookie_deletion()
+    {
+        await RunAsync(async (client, admin, _) =>
+        {
+            var response = await PostAsync(
+                client, admin, $"/api/users/{Administrator.User}/sign-out-everywhere", new { Reason = "SUP-3" });
+
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+            Assert.True(IssuedCarrier.IsAbsent(response));
+
+            // Their own session did end — the absent deletion is not explained
+            // by nothing having happened.
+            Assert.Equal(HttpStatusCode.Unauthorized, (await SignOutAsync(client, admin)).StatusCode);
+        });
+    }
+
+    [Fact]
+    public async Task An_administrator_revoking_their_own_current_session_is_sent_no_cookie_deletion()
+    {
+        await RunAsync(async (client, admin, _) =>
+        {
+            var own = await LatestSessionAsync(Administrator.Identity);
+
+            var response = await PostAsync(client, admin, $"/api/sessions/{own}/revoke", new { Reason = "SUP-4" });
+
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+            Assert.True(IssuedCarrier.IsAbsent(response));
+
+            Assert.Equal(HttpStatusCode.Unauthorized, (await SignOutAsync(client, admin)).StatusCode);
+        });
+    }
+
     [Fact]
     public async Task The_endpoints_appear_in_the_api_document()
     {
@@ -290,19 +391,19 @@ public sealed class SessionRevocationEndpointTests
 
         response.EnsureSuccessStatusCode();
 
-        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-
-        return document.RootElement.GetProperty("accessToken").GetString();
+        return IssuedCarrier.From(response);
     }
 
-    private static async Task<Guid> LatestHolderSessionAsync()
+    private static Task<Guid> LatestHolderSessionAsync() => LatestSessionAsync(Holder.Identity);
+
+    private static async Task<Guid> LatestSessionAsync(Guid identity)
     {
         await using var connection = await TestDatabase.OpenAsync();
 
         await using var command = new NpgsqlCommand(
             "SELECT id FROM user_session WHERE user_identity_id = @id ORDER BY created_at DESC LIMIT 1", connection);
 
-        command.Parameters.AddWithValue("id", Holder.Identity);
+        command.Parameters.AddWithValue("id", identity);
 
         return (Guid)(await command.ExecuteScalarAsync())!;
     }

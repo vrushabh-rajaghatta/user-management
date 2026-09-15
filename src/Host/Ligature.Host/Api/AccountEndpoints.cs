@@ -107,9 +107,11 @@ public static class AccountEndpoints
             .WithSummary("Sign out of every session of the signed-in account.")
             .WithDescription(
                 "Requires a carrier. Ends every active session of the account, "
-                + "INCLUDING this one, unless keepCurrentSession is true. The "
-                + "body is optional; a reason may be given but is not required. "
-                + "Success is 204 with no body, including when nothing was active.")
+                + "INCLUDING this one, unless keepCurrentSession is true. When "
+                + "this session is ended, the carrier cookie is cleared as well; "
+                + "when it is kept, so is the cookie. The body is optional; a "
+                + "reason may be given but is not required. Success is 204 with "
+                + "no body, including when nothing was active.")
             .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status401Unauthorized)
 
@@ -125,18 +127,28 @@ public static class AccountEndpoints
     private static async Task<IResult> SignOutEverywhereAsync(
         SignOutEverywhereRequest? request,
         CurrentCarrier currentCarrier,
+        HttpContext context,
         ICommandDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
         if (currentCarrier.SessionId is null)
             return Results.Json(new { Error = Rejected }, statusCode: 401);
 
+        // One value, so the command and the cookie decision cannot disagree
+        // about whether this session was included.
+        var keepCurrentSession = request?.KeepCurrentSession ?? false;
+
         await dispatcher.SendAsync<SignOutEverywhereCommand, SignOutEverywhereResult>(
             new SignOutEverywhereCommand(
                 currentCarrier.SessionId,
-                request?.KeepCurrentSession ?? false,
+                keepCurrentSession,
                 request?.Reason),
             cancellationToken);
+
+        // This session ended with the others, so the cookie naming it goes too —
+        // after the revocation, as at sign-out. Kept, it keeps its cookie.
+        if (!keepCurrentSession)
+            CarrierCookie.Clear(context.Response);
 
         return Results.NoContent();
     }
