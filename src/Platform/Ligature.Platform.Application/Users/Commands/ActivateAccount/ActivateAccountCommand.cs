@@ -15,4 +15,4 @@ namespace Ligature.Platform.Application.Users.Commands.ActivateAccount;
 public sealed record ActivateAccountCommand(
     string TokenPlainText,
     string NewPassword)
-    : IAnonymousCommand<ActivateAccountResult>;
+    : IBearerAuthenticatedCommand<ActivateAccountResult>;

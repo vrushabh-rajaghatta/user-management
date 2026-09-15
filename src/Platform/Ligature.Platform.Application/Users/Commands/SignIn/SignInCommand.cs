@@ -4,8 +4,9 @@ namespace Ligature.Platform.Application.Users.Commands.SignIn;
 
 /// <summary>
 /// SES-C1. Anonymous by definition — sign-in is what produces an authenticated
-/// caller, so it cannot require one. Reuses the marker CRD-C1 introduced rather
-/// than adding a second authentication path.
+/// caller, so it cannot require one. Bearer-authenticated as well: the password
+/// is its credential, and the caller it establishes is that password's owner, so
+/// it may not start under a caller who is already established.
 /// </summary>
 /// <param name="Username">
 /// The LOCAL identity's username. Not an email address: the catalogue names
@@ -18,4 +19,4 @@ public sealed record SignInCommand(
     string Password,
     string? IpAddress,
     string? UserAgent)
-    : IAnonymousCommand<SignInResult>;
+    : IBearerAuthenticatedCommand<SignInResult>;

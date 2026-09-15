@@ -342,6 +342,51 @@ governs, and it would risk becoming a pre-check — reintroducing the
 if it is ever wanted, should be designed deliberately rather than smuggled in
 here.
 
+## Bearer-authenticated commands ran under an established caller — RESOLVED
+
+**Was:** sign-in (SES-C1), activation (CRD-C1) and password reset (CRD-C3) are
+anonymous commands that establish the caller from their own credential. The
+pipeline let them run in a scope that already had a caller — which every
+request carrying a live session does — and two frozen rules then collided: the
+established identity cannot be rebound (E2a), and a record's origin follows the
+scope's caller, while `SignInFailed` and `TokenRejected` permit only an
+Anonymous origin (EO5).
+
+Under a live session for A:
+
+- **B's correct password** verified, then `Unlock()` and any rehash of B's
+  credential committed, and only afterwards did `BearerActorEstablisher` decline
+  to act as B — **401**, with the counter reset and nothing recorded.
+- **B's wrong password** (and an unknown username, and a locked account)
+  counted a failed attempt against B, committed it, and then failed on the
+  audit emission defect — **500**, with the attempt unrecorded.
+- **Together, a password oracle:** any holder of a session could test other
+  accounts' passwords by the difference, and leave no `SignInFailed` behind.
+- A's own mistyped password was a 500. Activation and reset kept their 400, but
+  lost their `TokenRejected` record.
+
+Reachable with a bearer header; the cookie transport would have made it routine.
+
+**Resolved.** A bearer-authenticated identity-establishing command may execute
+only when no caller is already established in the execution context. Such
+commands declare `IBearerAuthenticatedCommand`, and `AuthenticationBehavior`
+refuses them with `AuthenticationFailedException` before they start — outside
+the transaction, so an execution-strategy retry of a command that did start is
+unaffected. Nothing is verified, consumed, mutated or declared, so a correct and
+a wrong password now produce the same answer. Plain `IAnonymousCommand`
+(CRD-C2) is unchanged. The sign-in handler also establishes the actor before its
+rehash and unlock, so it holds the invariant on its own. Recorded in
+`docs/architecture.md` §11.
+
+**Client consequence.** A signed-in browser ends its session before signing in,
+activating or resetting — as any account, its own included.
+
+**Where proved:** `BearerCommandUnderEstablishedCallerTests` (no mutation of the
+credential or token, and a forced same-scope replay still succeeds),
+`SignInCredentialMutationTests`, `AnonymousCommandTests`,
+`BearerAuthenticatedCommandMarkerTests`, and the Host oracle test in
+`AuthenticationEndToEndTests`.
+
 ## Authorization failures are not distinguishable from validation failures
 
 **State:** `AuthorizationBehavior` raises `BusinessRuleViolationException` when a

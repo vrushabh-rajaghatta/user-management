@@ -167,6 +167,20 @@ public sealed class SignInCommandHandler
                     return SignInResult.Failure();
                 }
 
+                // The password verified, so this caller IS authenticated, and
+                // the record of it must say who by name. The identity is the
+                // one whose credential just verified — passed through, never
+                // looked up again (AUD-D28).
+                //
+                // BEFORE the rehash and the unlock. An attempt that cannot
+                // establish the authenticated identity must not mutate the
+                // credential as though authentication had succeeded. The
+                // pipeline already refuses this command under an established
+                // caller; this ordering holds the invariant in the handler as
+                // well, whatever reaches it.
+                if (!await _bearerActorEstablisher.EstablishAsync(resolved.Identity.Id, ct))
+                    return SignInResult.Failure();
+
                 // Step 5. Same password, newer encoding — before the counters
                 // are cleared, so a stale algorithm cannot affect that reset.
                 if (verification.NeedsRehash)
@@ -178,13 +192,6 @@ public sealed class SignInCommandHandler
 
                 // Step 6. Clears FailedAttemptCount and LockedUntil together.
                 credential.Unlock();
-
-                // The password verified, so this caller IS authenticated, and
-                // the record of it must say who by name. The identity is the
-                // one whose credential just verified — passed through, never
-                // looked up again (AUD-D28).
-                if (!await _bearerActorEstablisher.EstablishAsync(resolved.Identity.Id, ct))
-                    return SignInResult.Failure();
 
                 var sessionId = await CreateSessionAsync(
                     resolved.Identity, command, now, policy, ct);

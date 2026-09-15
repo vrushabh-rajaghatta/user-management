@@ -13,4 +13,4 @@ namespace Ligature.Platform.Application.Users.Commands.ResetPassword;
 public sealed record ResetPasswordCommand(
     string TokenPlainText,
     string NewPassword)
-    : IAnonymousCommand<ResetPasswordResult>;
+    : IBearerAuthenticatedCommand<ResetPasswordResult>;
