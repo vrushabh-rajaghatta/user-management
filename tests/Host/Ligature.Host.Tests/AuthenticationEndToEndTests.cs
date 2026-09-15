@@ -861,6 +861,324 @@ public sealed class AuthenticationEndToEndTests
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
+    // ------------------------------------------ credential presentation (B2)
+
+    /// <summary>
+    /// The contract cookie name, as a literal rather than CarrierCookie.Name.
+    /// </summary>
+    private const string CarrierCookieName = "__Host-ligature";
+
+    /// <summary>
+    /// The transport added for browsers works through the real pipe: a carrier
+    /// presented only as the cookie establishes its session.
+    ///
+    /// Observed through activity rather than through any endpoint's behaviour.
+    /// Both sessions are made stale, so establishment writes last_activity_at
+    /// for exactly the session it established and for no other; the probe
+    /// request is refused before any command runs, so nothing else can move it.
+    /// </summary>
+    [Fact]
+    public async Task A_carrier_cookie_alone_establishes_its_session_over_http()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+            var stale = await MakeStaleAsync(sessions.A, sessions.B);
+
+            await ProbeAsync(client, authorization: null, cookie: CarrierCookie(sessions.CarrierB));
+
+            Assert.True(await WasEstablishedAsync(sessions.B, stale));
+            Assert.False(await WasEstablishedAsync(sessions.A, stale));
+        });
+    }
+
+    /// <summary>
+    /// The existing transport is unchanged by the new one.
+    /// </summary>
+    [Fact]
+    public async Task A_bearer_carrier_alone_still_establishes_its_session_over_http()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+            var stale = await MakeStaleAsync(sessions.A, sessions.B);
+
+            await ProbeAsync(client, authorization: $"Bearer {sessions.CarrierA}", cookie: null);
+
+            Assert.True(await WasEstablishedAsync(sessions.A, stale));
+            Assert.False(await WasEstablishedAsync(sessions.B, stale));
+        });
+    }
+
+    [Fact]
+    public async Task Over_http_the_authorization_header_wins_over_the_cookie()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+            var stale = await MakeStaleAsync(sessions.A, sessions.B);
+
+            await ProbeAsync(
+                client,
+                authorization: $"Bearer {sessions.CarrierA}",
+                cookie: CarrierCookie(sessions.CarrierB));
+
+            Assert.True(await WasEstablishedAsync(sessions.A, stale));
+            Assert.False(await WasEstablishedAsync(sessions.B, stale));
+        });
+    }
+
+    /// <summary>
+    /// The locked rule, end to end. A forged Bearer header beside a perfectly
+    /// valid cookie must not authenticate the request as the cookie's user.
+    ///
+    /// Proved three ways: the probe establishes nothing, an authenticated
+    /// endpoint answers 401, and the cookie's session is neither touched nor
+    /// revoked. A 401 alone would not show that the cookie was ignored.
+    ///
+    /// The final positive control presents the same cookie on its own and
+    /// expects it to work, so the negative result cannot be explained by a
+    /// cookie that was never presentable.
+    /// </summary>
+    [Fact]
+    public async Task A_forged_bearer_header_never_falls_back_to_a_valid_cookie()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+            var stale = await MakeStaleAsync(sessions.B);
+
+            var forged = $"Bearer {Forge(sessions.CarrierA)}";
+            var cookie = CarrierCookie(sessions.CarrierB);
+
+            await ProbeAsync(client, forged, cookie);
+
+            Assert.False(await WasEstablishedAsync(sessions.B, stale));
+
+            var signOut = await PresentAsync(client, "/api/auth/sign-out", forged, cookie);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, signOut.StatusCode);
+            Assert.Equal("Authentication is required.", await ErrorAsync(signOut));
+
+            var row = await ReadSessionAsync(sessions.B);
+
+            Assert.Null(row.RevokedAt);
+            Assert.False(await WasEstablishedAsync(sessions.B, stale));
+
+            await ProbeAsync(client, authorization: null, cookie);
+
+            Assert.True(await WasEstablishedAsync(sessions.B, stale));
+        });
+    }
+
+    /// <summary>
+    /// D-B2-2 at the real HTTP layer, where whether an empty header survives is
+    /// the server's decision rather than the test harness's.
+    /// </summary>
+    [Fact]
+    public async Task A_blank_authorization_header_lets_the_cookie_establish_over_http()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+            var stale = await MakeStaleAsync(sessions.B);
+
+            await ProbeAsync(client, authorization: "", cookie: CarrierCookie(sessions.CarrierB));
+
+            Assert.True(await WasEstablishedAsync(sessions.B, stale));
+        });
+    }
+
+    [Fact]
+    public async Task A_carrier_cookie_presented_twice_establishes_nothing_over_http()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+            var stale = await MakeStaleAsync(sessions.A, sessions.B);
+
+            await ProbeAsync(
+                client,
+                authorization: null,
+                cookie: $"{CarrierCookie(sessions.CarrierA)}; {CarrierCookie(sessions.CarrierB)}");
+
+            Assert.False(await WasEstablishedAsync(sessions.A, stale));
+            Assert.False(await WasEstablishedAsync(sessions.B, stale));
+
+            await ProbeAsync(client, authorization: null, CarrierCookie(sessions.CarrierB));
+
+            Assert.True(await WasEstablishedAsync(sessions.B, stale));
+        });
+    }
+
+    [Fact]
+    public async Task A_case_variant_cookie_name_establishes_nothing_over_http()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+            var stale = await MakeStaleAsync(sessions.B);
+
+            await ProbeAsync(
+                client, authorization: null, cookie: $"__host-ligature={sessions.CarrierB}");
+
+            Assert.False(await WasEstablishedAsync(sessions.B, stale));
+
+            await ProbeAsync(client, authorization: null, CarrierCookie(sessions.CarrierB));
+
+            Assert.True(await WasEstablishedAsync(sessions.B, stale));
+        });
+    }
+
+    /// <summary>
+    /// A cookie naming a session that has ended is refused by the platform, and
+    /// the pipeline answers exactly as it does for no credential at all.
+    ///
+    /// Asserted by status, not by activity: RecordActivityAsync never writes a
+    /// revoked session, so unchanged activity would pass even if the caller had
+    /// been wrongly established. The 401 from an authenticated endpoint is the
+    /// evidence here.
+    /// </summary>
+    [Fact]
+    public async Task A_revoked_sessions_carrier_cookie_establishes_nothing()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+
+            // Setup only: end session A through the existing transport.
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await SendAsync(client, "/api/auth/sign-out", sessions.CarrierA)).StatusCode);
+
+            var response = await PresentAsync(
+                client, "/api/auth/sign-out",
+                authorization: null, cookie: CarrierCookie(sessions.CarrierA));
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            Assert.Equal("Authentication is required.", await ErrorAsync(response));
+        });
+    }
+
+    private sealed record TwoSessions(string CarrierA, Guid A, string CarrierB, Guid B);
+
+    /// <summary>
+    /// Two live sessions for the same actor, told apart by the carrier each
+    /// sign-in returned rather than by row order.
+    /// </summary>
+    private static async Task<TwoSessions> TwoSessionsAsync(HttpClient client, Actor actor)
+    {
+        await ActivateAsync(client, actor.Token);
+
+        var carrierA = await SignInAsync(client, actor.Username)
+            ?? throw new InvalidOperationException("The first sign-in failed.");
+
+        var carrierB = await SignInAsync(client, actor.Username)
+            ?? throw new InvalidOperationException("The second sign-in failed.");
+
+        return new TwoSessions(carrierA, SessionOf(carrierA), carrierB, SessionOf(carrierB));
+    }
+
+    /// <summary>
+    /// Five minutes of silence: stale enough that establishment writes activity
+    /// (the throttle is 60 seconds), and well inside the 15-minute idle window.
+    /// Returns the stale instant so a later write can be recognised.
+    /// </summary>
+    private static async Task<DateTimeOffset> MakeStaleAsync(params Guid[] sessionIds)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var activity = now.AddMinutes(-5);
+
+        foreach (var sessionId in sessionIds)
+        {
+            await BackdateAsync(
+                sessionId,
+                createdAt: now.AddMinutes(-10),
+                lastActivityAt: activity,
+                expiresAt: now.AddHours(11));
+        }
+
+        return activity;
+    }
+
+    /// <summary>
+    /// True when activity has moved past the stale instant — which happens only
+    /// when the per-request check established this session.
+    /// </summary>
+    private static async Task<bool> WasEstablishedAsync(Guid sessionId, DateTimeOffset stale)
+        => (await ReadSessionAsync(sessionId)).LastActivityAt > stale.AddMinutes(1);
+
+    /// <summary>
+    /// Sign-in with an empty body is refused as a binding failure before any
+    /// command is dispatched, so it has no side effect of its own — but the
+    /// request still passes through CallerMiddleware first.
+    /// </summary>
+    private static async Task ProbeAsync(HttpClient client, string? authorization, string? cookie)
+    {
+        var response = await PresentAsync(
+            client, "/api/auth/sign-in", authorization, cookie, body: new { });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Headers are added without validation so the test controls exactly what
+    /// is sent, including values HttpClient would otherwise reshape.
+    /// </summary>
+    private static async Task<HttpResponseMessage> PresentAsync(
+        HttpClient client,
+        string path,
+        string? authorization,
+        string? cookie,
+        object? body = null)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path);
+
+        if (authorization is not null)
+            request.Headers.TryAddWithoutValidation("Authorization", authorization);
+
+        if (cookie is not null)
+            request.Headers.TryAddWithoutValidation("Cookie", cookie);
+
+        if (body is not null)
+            request.Content = JsonContent.Create(body);
+
+        return await client.SendAsync(request);
+    }
+
+    private static string CarrierCookie(string carrier) => $"{CarrierCookieName}={carrier}";
+
+    private static Guid SessionOf(string carrier)
+        => HostCarrier().Verify(carrier)?.Value
+           ?? throw new InvalidOperationException("The carrier did not verify.");
+
+    /// <summary>Changes one character of the signature component only.</summary>
+    private static string Forge(string carrier)
+    {
+        var components = carrier.Split('.');
+
+        components[2] = Tamper(components[2]);
+
+        return string.Join('.', components);
+    }
+
+    /// <summary>
+    /// An AccessCarrier over the same keys HostFactory configures, so a carrier
+    /// the host issued can be verified here to learn which session it names.
+    /// </summary>
+    private static AccessCarrier HostCarrier()
+        => new(
+            SigningKeyRing.Load(
+                new ConfigurationBuilder()
+                    .AddInMemoryCollection(
+                    [
+                        new KeyValuePair<string, string?>(
+                            SigningKeyRing.CurrentKeySetting, HostFactory.PrimaryKeyId),
+                        new KeyValuePair<string, string?>(
+                            "LIGATURE_SIGNING_KEY_V1", HostFactory.PrimaryKey),
+                    ])
+                    .Build()));
+
     /// <summary>
     /// Fixed identifiers, because this suite's actor cannot be thrown away any
     /// more. Activating and signing out are both audited, so the user and the
