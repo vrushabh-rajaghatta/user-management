@@ -21,9 +21,18 @@ const APP_ROOT = path.resolve(import.meta.dirname, "..");
 
 const FIXTURE_SOURCE = path.join(import.meta.dirname, "lint-fixtures", "project", "src");
 
-const ARCHITECTURE_RULES = new Set(["boundaries/dependencies", "no-restricted-globals", "no-restricted-properties"]);
+const ARCHITECTURE_RULES = new Set([
+  "boundaries/dependencies",
+  "no-restricted-globals",
+  "no-restricted-properties",
+  "no-restricted-imports",
+  "no-restricted-syntax",
+]);
 
 const VIOLATIONS: [file: string, rule: string, reason: string][] = [
+  ["app/importsApiClient.ts", "boundaries/dependencies", "app/ imports the API client"],
+  ["modules/platform/users/hooks/readsPermissions.ts", "no-restricted-syntax", "a module inspects permissions outside shared/auth"],
+  ["modules/platform/users/pages/usesReactRouterDom.ts", "no-restricted-imports", "an import from react-router-dom"],
   ["shared/components/LeakyBadge.ts", "boundaries/dependencies", "shared/ imports a module"],
   ["components/ui/usesShared.ts", "boundaries/dependencies", "a vendored primitive imports shared/"],
   ["app/reachesIntoPages.ts", "boundaries/dependencies", "app/ imports a module internal"],
@@ -43,6 +52,7 @@ const VIOLATIONS: [file: string, rule: string, reason: string][] = [
 const CONTROLS: [file: string, reason: string][] = [
   ["shared/api/client.ts", "the API client may use the network"],
   ["shared/auth/SessionHintSource.ts", "shared/auth may import the API client, and the hint source may use web storage"],
+  ["shared/auth/checksPermissions.ts", "shared/auth may read effective permissions"],
   ["lib/utils.ts", "a pure helper"],
   ["components/ui/button.ts", "a vendored primitive may use lib/"],
   ["app/router.ts", "app/ may use a module's routes and public surface"],

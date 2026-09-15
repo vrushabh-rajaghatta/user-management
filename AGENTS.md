@@ -358,6 +358,20 @@ A small number of tests against a running host will cover the cookie and
 authentication transport; they do not exist yet, and nothing else in the web
 suite may depend on one.
 
+**Test helpers.** `src/test/renderWithApp.tsx` renders routes inside the
+application's real providers (`app/providers.tsx`) with a memory router, a fresh
+query client and `TestSessionSource` (`src/test/sessions.ts`), which can hold a
+session in "unknown" until the test settles it. `src/test/axe.ts` checks
+rendered accessibility semantics with `axe-core`; its colour-contrast rule is off
+because jsdom cannot lay out a page.
+
+**Colour contrast is a separate check.** `tooling/theme-contrast.test.ts` reads
+the real `src/index.css` and holds every required theme-token pair to WCAG 2.2
+AA in both themes (4.5:1 text, 3:1 non-text, including the focus ring and input
+borders on each surface they are used on). A missing token fails it. Change a
+token and this test decides whether the change is allowed; `--border` is the one
+named decorative exemption.
+
 **Development server.** `npm run dev` serves `https://localhost:5173`
 **over HTTPS only**. The carrier cookie is `Secure` and `__Host-` prefixed
 (`docs/architecture.md` §17), and browsers disagree about accepting that over

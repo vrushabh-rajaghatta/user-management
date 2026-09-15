@@ -206,6 +206,35 @@ export default defineConfig([
     },
   },
 
+  // §9: no code inspects permissions except shared/auth, and React Router 8
+  // has no react-router-dom package to import from.
+  {
+    files: SOURCE,
+    ignores: TESTS,
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "react-router-dom",
+              message: "React Router 8 has no react-router-dom. Import from \"react-router\", and RouterProvider from \"react-router/dom\".",
+            },
+          ],
+        },
+      ],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "MemberExpression[property.name='permissions']",
+          message:
+            "Only shared/auth reads effective permissions (docs/frontend-architecture.md §9). Use can(), useCan() or <Can> — and remember they decide visibility, never authorization.",
+        },
+      ],
+    },
+  },
+  { files: ["**/src/shared/auth/**/*.{ts,tsx}"], rules: { "no-restricted-syntax": "off" } },
+
   // §6 and §8: the network and web storage, each with its one permitted home.
   { files: SOURCE, rules: restrictedEverything() },
   { files: ["**/src/shared/api/client.ts"], rules: restricted(STORAGE_GLOBALS, STORAGE_MESSAGE) },
