@@ -63,17 +63,18 @@ public sealed class BearerActorEstablisher : IBearerActorEstablisher
         // here would change what activation accepts under cover of an audit
         // story (recorded as a User Management gap in docs/requirements.md).
 
-        // A caller may already be established: a retried unit of work replays
-        // the handler in the same scope, a scope may dispatch the command
-        // twice, and a request carrying a live session establishes one before
-        // the pipeline runs. The context refuses to be rebound — deliberately,
-        // it is what stops an identity changing midway — so the question here
-        // is whether the caller already established IS this bearer.
+        // The established-caller tolerance exists only to permit
+        // execution-strategy retries of the same identity within the same
+        // execution scope. AuthenticationBehavior prevents bearer-authenticated
+        // identity-establishing commands from starting when a caller is already
+        // established.
         //
-        // Same user and same subject: nothing to do, and the records that
-        // follow carry the actor this bearer authenticated as. Anyone else:
-        // refuse, because the alternative is a record attributing the
-        // activation to whoever happened to hold the scope.
+        // So a caller found here is this command's own earlier attempt. The
+        // context refuses to be rebound — deliberately, it is what stops an
+        // identity changing midway. Same user and same subject: nothing to do,
+        // and the records that follow carry the actor this bearer authenticated
+        // as. Anyone else reached here past the behaviour, which is a defect:
+        // refuse, rather than attribute the act to whoever held the scope.
         if (_executionContext.IsAuthenticated)
         {
             return _executionContext.UserId == snapshot.UserId

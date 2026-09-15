@@ -513,10 +513,17 @@ public sealed class AuthenticationEndToEndTests
     /// successful completion of business work — "a failed command is still
     /// legitimate activity".
     ///
-    /// So: present a valid carrier to an ANONYMOUS endpoint and send it a token
-    /// that cannot possibly work. The command fails with a 400 and the activity
-    /// timestamp must move anyway. If activity were recorded by the handler
-    /// rather than by request infrastructure, it would not.
+    /// So: present a valid carrier to a command that reaches its handler and
+    /// fails there — a password change giving the wrong current password. It
+    /// answers 400, counts no attempt and records nothing (CRD-C4), and the
+    /// activity timestamp must move anyway. If activity were recorded by the
+    /// handler rather than by request infrastructure, it would not.
+    ///
+    /// It used to send a useless token to activation instead. That no longer
+    /// reaches a handler: a bearer-authenticated identity-establishing command
+    /// may execute only when no caller is already established, so activation
+    /// under a live carrier is refused before it starts — which would prove
+    /// less than this test claims.
     /// </summary>
     [Fact]
     public async Task A_failed_command_still_records_activity()
@@ -540,8 +547,12 @@ public sealed class AuthenticationEndToEndTests
                 expiresAt: now.AddHours(11));
 
             var response = await SendAsync(
-                client, "/api/account/activate", carrier,
-                new { Token = "still-not-a-token", NewPassword = Password });
+                client, "/api/account/change-password", carrier,
+                new
+                {
+                    CurrentPassword = "not-the-current-password",
+                    NewPassword = "an-entirely-different-password-3",
+                });
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
@@ -696,6 +707,159 @@ public sealed class AuthenticationEndToEndTests
         UserIdentityId IdentityId,
         string Username,
         string Token);
+
+    // ------------------- bearer commands under an established caller
+
+    /// <summary>
+    /// The oracle, closed at the HTTP boundary. A caller signed in as A tries
+    /// B's password twice — once right, once wrong. The two answers must be
+    /// byte-identical 401s, and B must be untouched: no session, no counted
+    /// failure. Before the invariant held, the right password answered 401 and
+    /// the wrong one 500, and the difference was the answer to the guess.
+    /// </summary>
+    [Fact]
+    public async Task A_signed_in_caller_cannot_tell_a_correct_password_for_another_account_from_a_wrong_one()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            await ActivateAsync(client, actor.Token);
+
+            var established = await EnsureEstablishedCallerAsync(client);
+
+            try
+            {
+                var correct = await SendAsync(
+                    client, "/api/auth/sign-in", established,
+                    new { Username = actor.Username, Password });
+
+                var wrong = await SendAsync(
+                    client, "/api/auth/sign-in", established,
+                    new { Username = actor.Username, Password = "not-the-password-at-all" });
+
+                Assert.Equal(
+                    (correct.StatusCode, await correct.Content.ReadAsStringAsync()),
+                    (wrong.StatusCode, await wrong.Content.ReadAsStringAsync()));
+
+                Assert.Equal(HttpStatusCode.Unauthorized, correct.StatusCode);
+
+                Assert.Null(await TryFindSessionIdAsync(actor.IdentityId));
+                Assert.Equal(0, await FailedAttemptsAsync(actor.IdentityId));
+            }
+            finally
+            {
+                await EndEstablishedCallerSessionsAsync();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Opening someone else's activation link while signed in is refused
+    /// before the token is read, so the token is not spent and works as soon
+    /// as the request carries no session.
+    /// </summary>
+    [Fact]
+    public async Task A_signed_in_caller_cannot_activate_another_account_and_the_token_survives()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var established = await EnsureEstablishedCallerAsync(client);
+
+            try
+            {
+                var refused = await SendAsync(
+                    client, "/api/account/activate", established,
+                    new { Token = actor.Token, NewPassword = Password });
+
+                Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+                Assert.Equal("Authentication is required.", await ErrorAsync(refused));
+
+                var accepted = await ActivateAsync(client, actor.Token);
+
+                Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+            }
+            finally
+            {
+                await EndEstablishedCallerSessionsAsync();
+            }
+        });
+    }
+
+    /// <summary>
+    /// A second person, distinct from the pending actor, who is permanently
+    /// able to sign in. Pinned, because once they have signed in they are the
+    /// actor of audit records and cannot be removed.
+    /// </summary>
+    private static readonly Guid EstablishedCallerUser =
+        Guid.Parse("3f6d2a1c-9b84-4e57-a0c3-7d1e5b92f468");
+
+    private static readonly Guid EstablishedCallerIdentity =
+        Guid.Parse("b2c7e815-4d3a-4f96-8e21-c5a09d7f3b64");
+
+    private const string EstablishedCallerUsername = "permanent-auth-established-caller";
+
+    /// <summary>Signs the established caller in and returns their carrier.</summary>
+    private static async Task<string> EnsureEstablishedCallerAsync(HttpClient client)
+    {
+        await using (var context = CreateContext())
+        {
+            if (!await context.Set<User>().AnyAsync(x => x.Id == new UserId(EstablishedCallerUser)))
+            {
+                var now = DateTimeOffset.UtcNow;
+
+                var user = User.CreateHuman(
+                    new UserId(EstablishedCallerUser), "Established", "Caller",
+                    "Established Caller", "permanent-auth-established-caller@example.test",
+                    now, User.SystemUserId);
+
+                var identity = UserIdentity.CreateLocal(
+                    new UserIdentityId(EstablishedCallerIdentity), user.Id, ActorType.Human,
+                    EstablishedCallerUsername, now, User.SystemUserId);
+
+                var tokenId = UserTokenId.New();
+                var material = new UserTokenService().Generate(tokenId);
+
+                context.AddRange(
+                    user,
+                    identity,
+                    UserToken.Create(
+                        tokenId, identity.Id, TokenType.Activation, material.Hash,
+                        now, now.AddHours(72), User.SystemUserId));
+
+                await context.SaveChangesAsync(CancellationToken.None);
+
+                (await ActivateAsync(client, material.PlainText)).EnsureSuccessStatusCode();
+            }
+        }
+
+        return await SignInAsync(client, EstablishedCallerUsername)
+            ?? throw new InvalidOperationException("The established caller could not sign in.");
+    }
+
+    /// <summary>Sessions are not actors; the person stays, their sessions go.</summary>
+    private static async Task EndEstablishedCallerSessionsAsync()
+    {
+        await using var connection = await TestDatabase.OpenAsync();
+
+        await using var command = new NpgsqlCommand(
+            "DELETE FROM user_session WHERE user_identity_id = @id", connection);
+
+        command.Parameters.AddWithValue("id", EstablishedCallerIdentity);
+
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<int> FailedAttemptsAsync(UserIdentityId identityId)
+    {
+        await using var connection = await TestDatabase.OpenAsync();
+
+        await using var command = new NpgsqlCommand(
+            "SELECT failed_attempt_count FROM credential WHERE user_identity_id = @id",
+            connection);
+
+        command.Parameters.AddWithValue("id", identityId.Value);
+
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
 
     /// <summary>
     /// Fixed identifiers, because this suite's actor cannot be thrown away any

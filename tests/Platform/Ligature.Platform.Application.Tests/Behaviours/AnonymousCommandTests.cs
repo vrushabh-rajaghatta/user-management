@@ -38,7 +38,8 @@ public sealed class AnonymousCommandTests
 
     /// <summary>
     /// The marker declares "no caller required", not "no caller permitted". A
-    /// signed-in user following an activation link must not be refused.
+    /// signed-in user asking for a password-reset email must not be refused.
+    /// The exception is the narrower bearer marker, below.
     /// </summary>
     [Fact]
     public async Task An_anonymous_command_also_runs_with_a_caller_established()
@@ -74,6 +75,47 @@ public sealed class AnonymousCommandTests
         Assert.Contains("IHumanActorOnlyCommand", failure.Message);
     }
 
+    [Fact]
+    public async Task A_bearer_authenticated_command_runs_without_a_caller()
+    {
+        var behavior = Behavior<BearerCmd>(new ScopedExecutionContext());
+
+        var result = await behavior.Handle(
+            new BearerCmd(), CancellationToken.None, Reached);
+
+        Assert.Equal("reached", result.Value);
+    }
+
+    /// <summary>
+    /// A bearer-authenticated identity-establishing command may execute only
+    /// when no caller is already established. Refused before the command
+    /// starts: next is never called, so nothing downstream — the transaction,
+    /// the handler, the audit pipeline — is reached.
+    /// </summary>
+    [Fact]
+    public async Task A_bearer_authenticated_command_is_refused_before_it_starts_when_a_caller_is_established()
+    {
+        var context = new ScopedExecutionContext();
+        context.Establish(UserId.New(), ActorType.Human, TestActorIdentity.Human());
+
+        var behavior = Behavior<BearerCmd>(context);
+
+        var reached = false;
+
+        await Assert.ThrowsAsync<AuthenticationFailedException>(
+            () => behavior.Handle(
+                new BearerCmd(),
+                CancellationToken.None,
+                _ =>
+                {
+                    reached = true;
+
+                    return Reached(CancellationToken.None);
+                }));
+
+        Assert.False(reached, "A refused command must never reach the rest of the pipeline.");
+    }
+
     private static AuthenticationBehavior<TCommand, TestResult> Behavior<TCommand>(
         IExecutionContext context)
         where TCommand : ICommand<TestResult>
@@ -87,6 +129,8 @@ public sealed class AnonymousCommandTests
     private sealed record AuthenticatedCommand : ICommand<TestResult>;
 
     private sealed record AnonymousCmd : IAnonymousCommand<TestResult>;
+
+    private sealed record BearerCmd : IBearerAuthenticatedCommand<TestResult>;
 
     private sealed record Contradictory
         : IAnonymousCommand<TestResult>, IHumanActorOnlyCommand<TestResult>;

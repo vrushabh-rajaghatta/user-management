@@ -105,11 +105,9 @@ public sealed class ActivateAccountIntegrationTests
 
             var failure = await Assert
                 .ThrowsAsync<BusinessRuleViolationException>(
-                    () => dispatcher
-                        .SendAsync<ActivateAccountCommand, ActivateAccountResult>(
-                            new ActivateAccountCommand(
-                                fixture.TokenPlainText, "another-long-password"),
-                            CancellationToken.None));
+                    () => DispatchInFreshScopeAsync(
+                        new ActivateAccountCommand(
+                            fixture.TokenPlainText, "another-long-password")));
 
             Assert.Equal("The activation token is not valid.", failure.Message);
 
@@ -141,10 +139,8 @@ public sealed class ActivateAccountIntegrationTests
             Assert.Equal(0, await CountHistoryAsync(fixture.IdentityId));
 
             // The same token still works, which is the whole point.
-            var result = await dispatcher
-                .SendAsync<ActivateAccountCommand, ActivateAccountResult>(
-                    new ActivateAccountCommand(fixture.TokenPlainText, GoodPassword),
-                    CancellationToken.None);
+            var result = await DispatchInFreshScopeAsync(
+                new ActivateAccountCommand(fixture.TokenPlainText, GoodPassword));
 
             Assert.Equal(fixture.IdentityId, result.UserIdentityId);
             Assert.NotNull(await ReadTokenUsedAtAsync(fixture.TokenId));
@@ -169,10 +165,9 @@ public sealed class ActivateAccountIntegrationTests
             Assert.Contains(floor.ToString(), failure.Message);
 
             // Exactly at the floor is acceptable.
-            await dispatcher.SendAsync<ActivateAccountCommand, ActivateAccountResult>(
+            await DispatchInFreshScopeAsync(
                 new ActivateAccountCommand(
-                    fixture.TokenPlainText, new string('x', floor)),
-                CancellationToken.None);
+                    fixture.TokenPlainText, new string('x', floor)));
 
             Assert.Equal(1, await CountCredentialsAsync(fixture.IdentityId));
         });
@@ -793,6 +788,30 @@ public sealed class ActivateAccountIntegrationTests
         await body(
             scope.ServiceProvider.GetRequiredService<ICommandDispatcher>(),
             fixture);
+    }
+
+    /// <summary>
+    /// A second attempt, in a scope of its own — which is what a second request
+    /// gets behind a host.
+    ///
+    /// Required, not a convenience. A first attempt that consumed the token has
+    /// already established the bearer on its scope, and a refused password
+    /// rolls back the transaction but not the scope. A bearer-authenticated
+    /// identity-establishing command may execute only when no caller is already
+    /// established, so a second dispatch in that scope would be refused before
+    /// the token was ever read — and the test would pass or fail for a reason
+    /// unrelated to the token.
+    /// </summary>
+    private async Task<ActivateAccountResult> DispatchInFreshScopeAsync(
+        ActivateAccountCommand command)
+    {
+        await using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        return await scope.ServiceProvider
+            .GetRequiredService<ICommandDispatcher>()
+            .SendAsync<ActivateAccountCommand, ActivateAccountResult>(
+                command, CancellationToken.None);
     }
 
     private ServiceProvider BuildProvider()
