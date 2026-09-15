@@ -104,7 +104,9 @@ Each tier is composed into the one below it.
 
 > **Rule.** Once an application component exists for a pattern, features must use it and may not rebuild it from primitives. Features may use primitives directly for anything no application component covers, such as a single Button.
 
-Application components are added when a second feature needs the pattern, with one exception: `Page`, `PageHeader`, `FormField`, `EmptyState`, `ErrorState` and `ConfirmAction` are built with the foundation, because the reference module needs them straight away. `DataTable` waits for the first list endpoint, since a table built without real data guesses its API.
+Application components are added when a second feature needs the pattern. The exception is the foundation's own: an application component the foundation itself renders (`Page`, `PageHeader` and `ErrorState`, used by its shells and error routes) is built with the foundation.
+
+> **Amended (W2).** Every other application component is **built with its first user**, never ahead of it: `FormField` with the first form, `ConfirmAction` with the first confirmation, `EmptyState` with the first collection, `StatusBadge` and `DateDisplay` with the first data that needs them, and `DataTable` with the first list endpoint. A component built before a real flow uses it guesses its API. Accessibility work is never a reason to build one early: tokens are tested as tokens (§15), and components are tested when they exist.
 
 **Theme:** colours, radius and typography come from tokens in `index.css` and nowhere else. Features never use raw colour values. This is also what makes the contrast requirement in §15 checkable.
 
@@ -143,15 +145,66 @@ export const userRoutes: RouteObject[] = [
 | **Component** | Renders and handles events. Never imports the API client or an API operation. |
 | **Hook** | e.g. `useCreateUser()`: wraps TanStack Query and owns cache invalidation and query keys. |
 | **API operation** | e.g. `modules/…/api/createUser.ts`: one function per endpoint. It parses the response against its schema (§16). |
-| **API client** | `shared/api/client.ts`: fetch, JSON, status mapping, `ApiError`, and 401 reporting to `AuthSession`. |
+| **API client** | `shared/api/client.ts`: the HTTP operation boundary described below. It reports 401s; it never changes authentication state. |
 
 Each layer calls only the one below it.
 
 ```ts
 // modules/platform/users/api/createUser.ts
 export const createUser = (request: CreateUserRequest) =>
-  api.post("/api/users", request, createUserResponseSchema);
+  api.post("/api/users", { body: request, response: createUserResponseSchema });
 ```
+
+### The HTTP operation boundary
+
+> **Rule.** Feature code communicates with the backend **only** through `shared/api`.
+
+The boundary describes an HTTP operation, not today's endpoint inventory. Every operation goes through one method-agnostic call, and the method helpers are thin conveniences over it:
+
+```ts
+api.request(method, path, { body?, response?, unauthorized?, signal? })
+api.get(path, options)    api.post(path, options)    api.put(path, options)
+api.patch(path, options)  api.delete(path, options)
+```
+
+**The boundary owns:**
+
+- **same-origin, relative paths** — an absolute URL is refused, so a credential can never be sent anywhere but the application's own origin;
+- **credential transport** — the carrier cookie travels with same-origin credentials; the client never sets an `Authorization` header;
+- **JSON** serialisation of request bodies and parsing of responses; a `GET` or `DELETE` with a body is refused;
+- **response contract validation** (below);
+- **normalised errors** — `ApiError` and `ApiContractError` (§7);
+- **unauthorized reporting** (below);
+- **abort handling** — an aborted request rethrows the platform's `AbortError` untouched; it is never converted into an `ApiError` and never reported.
+
+**It does not own authentication state.** `shared/api` never imports `shared/auth` and never changes a session. Authentication state listens to the boundary, not the other way round:
+
+```text
+feature → shared/api → HTTP
+shared/auth → subscribes to shared/api's unauthorized report
+```
+
+#### The response contract
+
+Status and body are separate questions, and the contract states both. `204` is not a special case.
+
+| The operation declares | The response must | A contract violation (`ApiContractError`) |
+| --- | --- | --- |
+| a `response` schema | contain a JSON body that matches the schema | a `204`; a missing body; a body that is not JSON; a body that does not match |
+| no `response` schema | contain no body the client consumes | any response body |
+
+So a `204` is valid only for an operation that declares no response schema, and a response schema on a `204` is a violation. A contract violation names the method, the path and the failing field, and fails loudly at the boundary.
+
+#### Unauthorized reporting
+
+`onUnauthorized(handler)` holds **exactly one** registration; registering a second is a defect and throws. `AuthProvider` registers it (§8). Each operation chooses how its `401` is treated:
+
+| Mode | On a `401` |
+| --- | --- |
+| `"report"` (the default) | 1. the result is `ApiError(401)`; 2. the registered handler is invoked **once** for that response; 3. `AuthProvider` transitions to `unauthenticated`; 4. `AuthProvider` clears the query cache; 5. the error continues to the caller |
+| `"return"` | 1. the result is `ApiError(401)`; 2. the handler is **not** invoked; 3. authentication state is not changed; 4. the query cache is not cleared |
+
+`"return"` exists for operations where a `401` is an expected answer rather than evidence that an established session has ended — sign-in, activation, password reset and sign-out (§13). A failed sign-in says nothing about any other session.
 
 **Enforced by lint:**
 
@@ -169,17 +222,22 @@ The backend returns every failure in the same shape, and those uniform responses
 
 | Status | Client behaviour | User sees |
 | --- | --- | --- |
-| `2xx` | Parse the body against the operation's schema. A mismatch is a contract defect (§16). | — |
+| `2xx` | Validate against the response contract (§6). A violation is `ApiContractError`, a contract defect (§16). | — |
 | `400` | `ApiError(400, message)` | The server's message, word for word, next to the action that failed |
-| `401` | Report it to `AuthSession`, which moves to `unauthenticated` (§8) | Redirect to sign-in. No reason is given. |
-| `403` | Handled as a permission refusal. The backend doesn't send 403 for authorization yet. | Server message |
-| `5xx`, network | `ApiError(status)`. The session is not changed. | `ErrorState` with retry, or an inline error on a form |
+| `401` | `ApiError(401)`, reported or returned as the operation declares (§6) | For a reported 401: a redirect to sign-in. No reason is given. |
+| `403` | `ApiError(403, message)`. The session is not changed. | Server message |
+| `5xx`, network | `ApiError(status)`, or an `ApiError` of kind network. The session is not changed. | `ErrorState` with retry, or an inline error on a form |
+| aborted | The platform's `AbortError`, untouched. Never reported, never shown. | — |
+
+> **Amended (W2).** The row for `403` used to read "handled as a permission refusal; the backend doesn't send 403 for authorization yet". The host's only `403` today is its **cross-site refusal** (`docs/architecture.md` §17), which a same-origin client sees only when a deployment is misconfigured — a proxy rewriting `Host`, for example. It is therefore an ordinary error, not a permission state. A missing permission is still refused with `400`.
 
 > **Rule.** Logic branches on status codes, never on message text. A message is shown to the user and never interpreted.
 
 ---
 
 ## 8. Authentication state
+
+`AuthSession` answers one question: **what does the client currently believe about authentication?** It is not a source of authorization (§9).
 
 The `HttpOnly` cookie can't be read by script, which is the reason for choosing it. The UI still has to decide what to render. That decision sits behind one abstraction, so no route or component knows how the answer was obtained.
 
@@ -201,7 +259,7 @@ interface AuthSessionSource {   // the only thing that changes when GET /me arri
 | --- | --- | --- |
 | App starts | `unknown` → whatever `resolve()` returns | `AuthProvider` |
 | Sign-in succeeds | `authenticated` | `platform/auth` hook |
-| Any 401 (except on sign-in itself) | `unauthenticated`; the query cache is cleared | API client |
+| A reported 401 (§6) | `unauthenticated`; the query cache is cleared | `AuthProvider`, on the API client's unauthorized report |
 | Sign-out settles, whether or not the call succeeded | `unauthenticated`; the query cache is cleared | `platform/auth` hook |
 
 `RequireAuth` renders nothing while the state is `unknown`, the app shell when `authenticated`, and a redirect with a return path when `unauthenticated`. Components read `useAuthSession()` and never find out which source is in use.
@@ -213,9 +271,11 @@ interface AuthSessionSource {   // the only thing that changes when GET /me arri
 | `resolve()` | answers immediately from the flag | asks the server; `unknown` lasts until it answers |
 
 - **The hint is never authoritative.** Until a server-backed source exists, the client cannot reliably know the authenticated user's identity after a reload. The server's answer to each request — a 401 in particular — always wins over the hint.
+- **`sessionStorage` remains the session hint source. It is not an identity-discovery mechanism and cannot establish whether the browser's carrier cookie represents a live session. W3 identity-establishing flows must end any existing session before proceeding. B6 remains the eventual authoritative mechanism for resolving this ambiguity.**
+- **This mitigates the new-tab ambiguity; it does not resolve it.** `sessionStorage` belongs to one tab, so a tab opened on its own starts without a hint while the shared cookie may still be live. Ending the session first (§13) keeps identity-establishing flows correct in that state. Nothing else can tell the two apart until B6 provides a server-backed source.
 - Lint bans `sessionStorage` and `localStorage` everywhere except the hint source's own file, so the hint can't spread into the rest of the app.
 - The hint source's file header says it is **not a security control**. Setting the flag by hand gets you an empty shell and a redirect on the first request.
-- Switching sources changes one line in `app/providers.tsx`. Routes, guards and components stay as they are.
+- Switching sources changes one line in the composition root (`app/`). Routes, guards and components stay as they are.
 
 ---
 
@@ -231,9 +291,13 @@ interface AuthSessionSource {   // the only thing that changes when GET /me arri
 
 A hidden button protects nothing, and a visible one permits nothing.
 
+> **A hidden UI element is not authorization. Every protected operation remains server-authorized.**
+
+Authentication and authorization are separate. `AuthSession` holds what the client believes about authentication; when a source supplies effective permissions, `AuthSession` carries them **as presentation input only** — it never becomes the authoritative source of permissions. `can()`, `useCan()` and `<Can>` are presentation mechanisms. They are never a security boundary, and no code may treat their answer as permission to do anything.
+
 ### Permission state
 
-Authorization state and visibility are two different questions, and the architecture keeps them apart. `AuthSession` holds the authorization state of each permission and scope. `can()` answers a presentation question: should this capability be visible right now?
+Authorization state and visibility are two different questions, and the architecture keeps them apart. `AuthSession` holds the server-reported authorization state of each permission and scope, as presentation input. `can()` answers a presentation question: should this capability be visible right now?
 
 | Authorization state | Meaning | Visibility (`can()`) |
 | --- | --- | --- |
@@ -251,7 +315,7 @@ So `can(code) === true` must never be read as "the user has this permission". Co
 
 | Check | Kind | Use |
 | --- | --- | --- |
-| `can()` | Imperative | Event handlers and plain functions |
+| `can()` | Imperative | Event handlers and plain functions; obtained from `useAuthSession()`, never from global mutable state |
 | `useCan()` | Reactive | Component logic; re-renders when the permissions change |
 | `<Can>` | Declarative | A rendering boundary that shows or hides its children |
 
@@ -368,7 +432,18 @@ Emailed links put a credential in the **URL fragment**. Browsers never send a fr
 
 **A route's path is part of the backend contract when the backend builds links to it.** `/activate` and `/reset-password` are built by `NotificationTemplates`. Renaming either breaks every link already sent.
 
-**A signed-in browser ends its session first.** Sign-in, activation and password reset are refused under an established caller (`docs/architecture.md` §11, §17). The client signs out before starting any of them; it never tries to work around the refusal.
+**A signed-in browser ends its session first.** Sign-in, activation and password reset are refused under an established caller (`docs/architecture.md` §11, §17). The client ends any existing session before starting any of them; it never tries to work around the refusal.
+
+> **Amended (W2).** How the session is ended, exactly. Because sign-out is itself a state-changing operation, its response is examined rather than ignored. It happens **when the form is submitted**, never when the page loads, so merely opening an emailed link while signed in changes nothing.
+
+| `POST /api/auth/sign-out` with `unauthorized: "return"` | Then |
+| --- | --- |
+| `204` — a session existed and has been revoked | `signedOut()` (hint and query cache cleared), then submit the identity-establishing request |
+| `401` — no live session; the hint was stale or absent | `signedOut()`, then submit |
+| `400`, `403`, `5xx`, a network failure, or a contract violation | **Stop.** Do not submit the identity-establishing request. Show the error inline, and leave authentication state unchanged, because whether a revocation happened cannot be known. The user may retry. |
+| aborted | Stop, silently |
+
+The identity-establishing request itself also uses `unauthorized: "return"`: its `401` is an answer about the credentials presented, not about any session. This is implemented with the flows in W3.
 
 ---
 
@@ -408,11 +483,18 @@ The shadcn and Base UI primitives handle much of the mechanical work. Ligature r
 | Every form field has a label; errors are tied to their field | `FormField` |
 | Dialogs trap focus and return it when closed; Esc closes them | Base UI primitives; tested on `ConfirmAction` |
 | Status changes are announced: loading, errors, toasts | `aria-live` in `ErrorState`, form errors and the toaster |
-| Contrast of at least 4.5:1 for text and 3:1 for UI in both themes | Theme tokens, checked when tokens change |
+| Contrast of at least 4.5:1 for text and 3:1 for UI in both themes | Theme tokens, proved by the token contrast test (below) |
 | Reduced motion is respected | A global `prefers-reduced-motion` rule |
 | Route changes move focus to the page heading and set the document title | `Page` |
 
 Accessibility is tested at the level of components, not page by page (§16): if the application components are accessible, features built from them mostly are too.
+
+> **Amended (W2).** Two separate accessibility contracts, and neither stands in for the other:
+>
+> - **Rendered semantics — axe.** `axe-core` runs over rendered components and shells. jsdom cannot lay out a page, so axe's colour-contrast rule is off there, and a passing axe run makes no claim about contrast.
+> - **Theme tokens — the token contrast test.** A deterministic invariant: token pair → contrast ratio → WCAG threshold, in both themes, for every surface a token is used on. A required token that is missing fails the test. It proves the tokens; it does not prove every rendered combination.
+>
+> The keyboard focus indicator is an application-level solid outline in `var(--ring)`, because a vendored primitive's translucent ring cannot meet 3:1. `--border` is **decorative** — dividers and outlines of containers that are identified by other means — and is exempt from the 3:1 non-text requirement; anything that is the only visible boundary of a control uses `--input`, which is not exempt.
 
 ---
 
@@ -423,7 +505,8 @@ Accessibility is tested at the level of components, not page by page (§16): if 
 | Behaviour | Vitest + Testing Library | Anything that makes a decision: the API client, `AuthSession` changes, `can`, token pages, the unsaved-changes guard, forms |
 | Network isolation | MSW | Every request a unit or component test makes is answered by a handler; an unhandled request fails the test instead of reaching the network |
 | Boundaries | ESLint + fixtures that break the rules | §2, §6 and §8 import and global bans |
-| Accessibility | axe + keyboard tests | Every application component; each flow's main path |
+| Accessibility, rendered | `axe-core` + keyboard tests | Every application component and shell; each flow's main path. Colour contrast is not evaluated in jsdom. |
+| Accessibility, theme tokens | The token contrast test | Every required token pair in both themes against WCAG 2.2 AA thresholds (§15) |
 | Contract, at the boundary | zod response schemas | Each API operation checks the response shape it receives |
 | Real host | A small number of tests against a running host | Only where the cookie and authentication transport matter; the rest of the suite never needs PostgreSQL or .NET |
 | Contract, against the document | Schemas compared with `/openapi/v1.json` | **Deferred (O8)** — it reopens `docs/architecture.md` §18's non-decisions and needs CI |
@@ -431,7 +514,7 @@ Accessibility is tested at the level of components, not page by page (§16): if 
 
 ### Contract validation
 
-Every API operation declares a response schema, and the client parses the response against it. If the backend returns `201 {userId, userIdentityId}` and the client expects `{id}`, the result is an `ApiContractError` that names the operation and the path of the mismatch. It fails loudly at the boundary rather than showing up later as `undefined` deep in a component. This needs no generated clients and reopens no backend decision.
+Every API operation that returns a body declares a response schema, and the client parses the response against it (§6). If the backend returns `201 {userId, userIdentityId}` and the client expects `{id}`, the result is an `ApiContractError` that names the operation and the path of the mismatch. It fails loudly at the boundary rather than showing up later as `undefined` deep in a component. This needs no generated clients and reopens no backend decision.
 
 Catching drift before anything runs means comparing those schemas with the host's OpenAPI document in a test. The backend's §18 currently lists document generation at build time, generated clients and document linting as explicit non-decisions, and there's no CI yet. Using the document this way reopens part of that, so it is deferred and not assumed here.
 
