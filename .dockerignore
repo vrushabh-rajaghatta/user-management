@@ -31,6 +31,10 @@ coverage*.json
 coverage*.xml
 coverage*.info
 
+# The web client. No image builds it yet, and its node_modules would otherwise
+# be sent with every host build — along with any local development certificate.
+web/
+
 # Docker's own files: changing compose.yaml must not invalidate build layers.
 compose.yaml
 docker/

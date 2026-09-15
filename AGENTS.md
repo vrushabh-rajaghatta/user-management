@@ -313,12 +313,90 @@ dotnet ef database update        --project src/Platform/Ligature.Platform.Persis
 
 Do not introduce a separate design-time configuration mechanism.
 
+### Web client (`web/ligature-web`)
+
+React, TypeScript and Vite, governed by **`docs/frontend-architecture.md`**.
+Read it before changing anything under `web/`. Everything below runs from
+`web/ligature-web`.
+
+**Toolchain.** Node `^22.22.2 || ^24.15.0 || >=26` (jsdom and Vitest set the
+floor) and npm. `.npmrc` sets `engine-strict` and `save-exact`: dependencies are
+exact versions, and `package-lock.json` is committed. Install with `npm ci`,
+never `npm install`, unless you are deliberately changing a dependency.
+TypeScript is pinned to 6.0.x because `typescript-eslint` does not support 7,
+and ESLint to 9 because `eslint-plugin-jsx-a11y` does not support 10.
+
+```bash
+npm ci
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm run dev
+```
+
+**Validate in that order:** typecheck → lint → test → build, every one exiting
+0. In the report, say which ran. `npm run lint` uses `--max-warnings 0`: a
+warning fails it, so do not add one.
+
+**The web suite needs neither PostgreSQL nor .NET.** `npm test` runs two Vitest
+projects:
+
+| Project | Environment | Covers |
+| --- | --- | --- |
+| `web` | jsdom | The application. MSW answers every request; a request no handler answers fails the test rather than reaching the network. |
+| `tooling` | Node | The development environment itself: the dev server's proxy and certificate handling, and the architecture lint rules. |
+
+The architecture rules (`docs/frontend-architecture.md` §2, §6, §8) are
+enforced by `eslint.config.js` and **proved** by
+`tooling/architecture-lint.test.ts`, which lints a deliberately broken fixture
+project (`tooling/lint-fixtures/`) with the real configuration. A rule that is
+switched off or loosened fails that test. When a rule is added, add a fixture
+that breaks it and a control that does not.
+
+A small number of tests against a running host will cover the cookie and
+authentication transport; they do not exist yet, and nothing else in the web
+suite may depend on one.
+
+**Development server.** `npm run dev` serves `https://localhost:5173`
+**over HTTPS only**. The carrier cookie is `Secure` and `__Host-` prefixed
+(`docs/architecture.md` §17), and browsers disagree about accepting that over
+plain `http://localhost`, so there is no HTTP fallback. Without a certificate
+the server refuses to start and prints these steps. Create one once per machine
+with mkcert, installed by you — it adds a local certificate authority to the
+system trust store, so it is not something an agent or a package script does:
+
+```bash
+brew install mkcert nss
+mkcert -install
+mkcert -cert-file .certs/localhost.pem -key-file .certs/localhost-key.pem localhost
+```
+
+`.certs/` holds a private key and is gitignored. Nothing downloads mkcert or a
+certificate at runtime.
+
+**API proxy.** The dev server forwards `/api` to `http://localhost:8080` (the
+`./up.sh` host). Point it at a host started with `dotnet run` instead:
+
+```bash
+LIGATURE_WEB_API_ORIGIN=http://localhost:5000 npm run dev
+```
+
+The proxy leaves the browser's `Host` header unchanged (no `changeOrigin`) and
+rewrites no cookies. That is load-bearing, not incidental: the host's cross-site
+protection compares `Origin` with the `Host` it receives, so a proxy that
+rewrote `Host` would have every state-changing request refused.
+`tooling/dev-server.test.ts` proves both through a real Vite server.
+
+**Docker.** No image builds the web client yet; `.dockerignore` excludes
+`web/` so its `node_modules` never enter the host build context.
+
 ### Repository hygiene
 
 There is no CI pipeline, no `global.json`, no `.editorconfig` and no
 `Directory.Build.props`. A clean build emits `CS8618`/`CS8620` warnings on
 EF-materialised aggregates and nullable ID converters; do not add new
-categories of warning.
+categories of warning. The web client's lint admits no warnings at all.
 
 ---
 

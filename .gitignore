@@ -45,6 +45,16 @@ appsettings.Local.json
 .env.*
 secrets.json
 
+## Web client (web/ligature-web)
+node_modules/
+web/**/dist/
+web/**/coverage/
+web/**/.vite/
+# Development HTTPS certificates are generated per machine by mkcert and
+# contain a private key; they are never committed.
+web/**/.certs/
+web/**/*.local
+
 ## OS junk
 .DS_Store
 .DS_Store?
