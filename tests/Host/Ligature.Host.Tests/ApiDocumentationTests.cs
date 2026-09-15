@@ -127,6 +127,24 @@ public sealed class ApiDocumentationTests
                 signIn.GetProperty("description").GetString()));
     }
 
+    /// <summary>
+    /// Sign-in succeeds with 204 and no body. A document that still promised a
+    /// 200 would send a generated client looking for a carrier in a body that
+    /// no longer exists.
+    /// </summary>
+    [Fact]
+    public async Task The_sign_in_operation_documents_204_and_not_200()
+    {
+        var responses = (await DocumentAsync()).RootElement
+            .GetProperty("paths")
+            .GetProperty("/api/auth/sign-in")
+            .GetProperty("post")
+            .GetProperty("responses");
+
+        Assert.True(responses.TryGetProperty("204", out _), "Sign-in does not document its 204.");
+        Assert.False(responses.TryGetProperty("200", out _), "Sign-in still documents a 200.");
+    }
+
     [Fact]
     public async Task The_scalar_reference_is_served_when_enabled()
     {
@@ -197,38 +215,88 @@ public sealed class ApiDocumentationTests
 
         Assert.Contains("no independent expiry", description, StringComparison.Ordinal);
         Assert.Contains("not an error", description, StringComparison.Ordinal);
+
+        // Sign-in no longer returns the carrier in a body, so a bearer caller
+        // must be told where to take it from.
+        Assert.Contains("Set-Cookie", description, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// The authenticated operations require the scheme; the anonymous ones
-    /// declare nothing. That split is the documented half of section 17's rule
-    /// that an absent header is not a failure — a reader can see which
-    /// operations still run without one.
+    /// The browser transport is documented as a scheme of its own: an API key
+    /// carried in the __Host-ligature cookie. Without it the document would
+    /// describe only the transport browsers do not use.
     /// </summary>
     [Fact]
-    public async Task Only_the_authenticated_operations_require_the_scheme()
+    public async Task The_document_declares_the_carrier_cookie_scheme()
+    {
+        var document = await DocumentAsync();
+
+        var scheme = document.RootElement
+            .GetProperty("components")
+            .GetProperty("securitySchemes")
+            .GetProperty("carrierCookie");
+
+        Assert.Equal("apiKey", scheme.GetProperty("type").GetString());
+        Assert.Equal("cookie", scheme.GetProperty("in").GetString());
+        Assert.Equal("__Host-ligature", scheme.GetProperty("name").GetString());
+
+        Assert.False(
+            string.IsNullOrWhiteSpace(scheme.GetProperty("description").GetString()));
+    }
+
+    /// <summary>
+    /// The authenticated operations accept either transport; the anonymous ones
+    /// declare nothing. That split is the documented half of section 17's rule
+    /// that an absent credential is not a failure — a reader can see which
+    /// operations still run without one.
+    ///
+    /// Either transport means TWO requirement objects. OpenAPI reads the array
+    /// as alternatives and the members of one object as all required together,
+    /// so a single object naming both schemes would document a request that
+    /// must present the bearer header AND the cookie — which is not the API.
+    /// </summary>
+    [Fact]
+    public async Task Only_the_authenticated_operations_require_a_carrier_by_either_scheme()
     {
         var paths = (await DocumentAsync()).RootElement.GetProperty("paths");
 
-        foreach (var route in new[] { "/api/auth/sign-out", "/api/users" })
+        foreach (var route in new[]
+                 {
+                     "/api/auth/sign-out",
+                     "/api/users",
+                     "/api/account/change-password",
+                     "/api/account/sign-out-everywhere",
+                 })
         {
             var requirements = paths.GetProperty(route).GetProperty("post")
-                .GetProperty("security");
+                .GetProperty("security")
+                .EnumerateArray()
+                .ToList();
 
-            var requirement = Assert.Single(requirements.EnumerateArray());
+            Assert.Equal(2, requirements.Count);
 
-            // REGRESSION GUARD. A requirement built without the host document
-            // serialises as an empty object: present, but naming no scheme.
-            // That is worse than omitting it — a reader sees "secured" and
-            // cannot tell by what, and Scalar cannot link it to the token
-            // field. Asserting the array is non-empty would not have caught it.
-            Assert.True(
-                requirement.TryGetProperty("bearer", out var scopes),
-                $"{route} declares a security requirement that names no scheme.");
+            var named = new List<string>();
 
-            // Scopes are meaningless for a bearer carrier that carries no
-            // claims; the array must be empty rather than invented.
-            Assert.Empty(scopes.EnumerateArray());
+            foreach (var requirement in requirements)
+            {
+                // REGRESSION GUARD. A requirement built without the host
+                // document serialises as an empty object: present, but naming
+                // no scheme. That is worse than omitting it — a reader sees
+                // "secured" and cannot tell by what, and Scalar cannot link it
+                // to the token field. Exactly one scheme per object, so neither
+                // an empty object nor a combined one passes.
+                var scheme = Assert.Single(requirement.EnumerateObject());
+
+                named.Add(scheme.Name);
+
+                // Scopes are meaningless for a carrier that carries no claims;
+                // the array must be empty rather than invented.
+                Assert.Empty(scheme.Value.EnumerateArray());
+            }
+
+            Assert.Equal(
+                ["bearer", "carrierCookie"],
+                named.Order(StringComparer.Ordinal));
         }
 
         foreach (var route in new[] { "/api/auth/sign-in", "/api/account/activate" })

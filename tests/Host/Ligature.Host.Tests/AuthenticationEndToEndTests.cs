@@ -120,6 +120,9 @@ public sealed class AuthenticationEndToEndTests
             var response = await SendAsync(client, "/api/auth/sign-out", carrier: null);
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+
+            // Nothing was revoked, so nothing is cleared.
+            Assert.True(IssuedCarrier.IsAbsent(response));
         });
     }
 
@@ -672,6 +675,10 @@ public sealed class AuthenticationEndToEndTests
                 await wrongPassword.Content.ReadAsStringAsync(),
                 await unknownUser.Content.ReadAsStringAsync());
 
+            // No carrier cookie either way — neither issued nor cleared.
+            Assert.True(IssuedCarrier.IsAbsent(wrongPassword));
+            Assert.True(IssuedCarrier.IsAbsent(unknownUser));
+
             // And no session was created for the failed attempt.
             Assert.Null(await TryFindSessionIdAsync(actor.IdentityId));
         });
@@ -741,6 +748,9 @@ public sealed class AuthenticationEndToEndTests
                     (wrong.StatusCode, await wrong.Content.ReadAsStringAsync()));
 
                 Assert.Equal(HttpStatusCode.Unauthorized, correct.StatusCode);
+
+                Assert.True(IssuedCarrier.IsAbsent(correct));
+                Assert.True(IssuedCarrier.IsAbsent(wrong));
 
                 Assert.Null(await TryFindSessionIdAsync(actor.IdentityId));
                 Assert.Equal(0, await FailedAttemptsAsync(actor.IdentityId));
@@ -859,6 +869,793 @@ public sealed class AuthenticationEndToEndTests
         command.Parameters.AddWithValue("id", identityId.Value);
 
         return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    // ------------------------------------------ credential presentation (B2)
+
+    /// <summary>
+    /// The contract cookie name, as a literal rather than CarrierCookie.Name.
+    /// </summary>
+    private const string CarrierCookieName = "__Host-ligature";
+
+    /// <summary>
+    /// The transport added for browsers works through the real pipe: a carrier
+    /// presented only as the cookie establishes its session.
+    ///
+    /// Observed through activity rather than through any endpoint's behaviour.
+    /// Both sessions are made stale, so establishment writes last_activity_at
+    /// for exactly the session it established and for no other; the probe
+    /// request is refused before any command runs, so nothing else can move it.
+    /// </summary>
+    [Fact]
+    public async Task A_carrier_cookie_alone_establishes_its_session_over_http()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+            var stale = await MakeStaleAsync(sessions.A, sessions.B);
+
+            await ProbeAsync(client, authorization: null, cookie: CarrierCookie(sessions.CarrierB));
+
+            Assert.True(await WasEstablishedAsync(sessions.B, stale));
+            Assert.False(await WasEstablishedAsync(sessions.A, stale));
+        });
+    }
+
+    /// <summary>
+    /// The existing transport is unchanged by the new one.
+    /// </summary>
+    [Fact]
+    public async Task A_bearer_carrier_alone_still_establishes_its_session_over_http()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+            var stale = await MakeStaleAsync(sessions.A, sessions.B);
+
+            await ProbeAsync(client, authorization: $"Bearer {sessions.CarrierA}", cookie: null);
+
+            Assert.True(await WasEstablishedAsync(sessions.A, stale));
+            Assert.False(await WasEstablishedAsync(sessions.B, stale));
+        });
+    }
+
+    [Fact]
+    public async Task Over_http_the_authorization_header_wins_over_the_cookie()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+            var stale = await MakeStaleAsync(sessions.A, sessions.B);
+
+            await ProbeAsync(
+                client,
+                authorization: $"Bearer {sessions.CarrierA}",
+                cookie: CarrierCookie(sessions.CarrierB));
+
+            Assert.True(await WasEstablishedAsync(sessions.A, stale));
+            Assert.False(await WasEstablishedAsync(sessions.B, stale));
+        });
+    }
+
+    /// <summary>
+    /// The locked rule, end to end. A forged Bearer header beside a perfectly
+    /// valid cookie must not authenticate the request as the cookie's user.
+    ///
+    /// Proved three ways: the probe establishes nothing, an authenticated
+    /// endpoint answers 401, and the cookie's session is neither touched nor
+    /// revoked. A 401 alone would not show that the cookie was ignored.
+    ///
+    /// The final positive control presents the same cookie on its own and
+    /// expects it to work, so the negative result cannot be explained by a
+    /// cookie that was never presentable.
+    /// </summary>
+    [Fact]
+    public async Task A_forged_bearer_header_never_falls_back_to_a_valid_cookie()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+            var stale = await MakeStaleAsync(sessions.B);
+
+            var forged = $"Bearer {Forge(sessions.CarrierA)}";
+            var cookie = CarrierCookie(sessions.CarrierB);
+
+            await ProbeAsync(client, forged, cookie);
+
+            Assert.False(await WasEstablishedAsync(sessions.B, stale));
+
+            var signOut = await PresentAsync(client, "/api/auth/sign-out", forged, cookie);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, signOut.StatusCode);
+            Assert.Equal("Authentication is required.", await ErrorAsync(signOut));
+
+            var row = await ReadSessionAsync(sessions.B);
+
+            Assert.Null(row.RevokedAt);
+            Assert.False(await WasEstablishedAsync(sessions.B, stale));
+
+            await ProbeAsync(client, authorization: null, cookie);
+
+            Assert.True(await WasEstablishedAsync(sessions.B, stale));
+        });
+    }
+
+    /// <summary>
+    /// D-B2-2 at the real HTTP layer, where whether an empty header survives is
+    /// the server's decision rather than the test harness's.
+    /// </summary>
+    [Fact]
+    public async Task A_blank_authorization_header_lets_the_cookie_establish_over_http()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+            var stale = await MakeStaleAsync(sessions.B);
+
+            await ProbeAsync(client, authorization: "", cookie: CarrierCookie(sessions.CarrierB));
+
+            Assert.True(await WasEstablishedAsync(sessions.B, stale));
+        });
+    }
+
+    [Fact]
+    public async Task A_carrier_cookie_presented_twice_establishes_nothing_over_http()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+            var stale = await MakeStaleAsync(sessions.A, sessions.B);
+
+            await ProbeAsync(
+                client,
+                authorization: null,
+                cookie: $"{CarrierCookie(sessions.CarrierA)}; {CarrierCookie(sessions.CarrierB)}");
+
+            Assert.False(await WasEstablishedAsync(sessions.A, stale));
+            Assert.False(await WasEstablishedAsync(sessions.B, stale));
+
+            await ProbeAsync(client, authorization: null, CarrierCookie(sessions.CarrierB));
+
+            Assert.True(await WasEstablishedAsync(sessions.B, stale));
+        });
+    }
+
+    [Fact]
+    public async Task A_case_variant_cookie_name_establishes_nothing_over_http()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+            var stale = await MakeStaleAsync(sessions.B);
+
+            await ProbeAsync(
+                client, authorization: null, cookie: $"__host-ligature={sessions.CarrierB}");
+
+            Assert.False(await WasEstablishedAsync(sessions.B, stale));
+
+            await ProbeAsync(client, authorization: null, CarrierCookie(sessions.CarrierB));
+
+            Assert.True(await WasEstablishedAsync(sessions.B, stale));
+        });
+    }
+
+    /// <summary>
+    /// A cookie naming a session that has ended is refused by the platform, and
+    /// the pipeline answers exactly as it does for no credential at all.
+    ///
+    /// Asserted by status, not by activity: RecordActivityAsync never writes a
+    /// revoked session, so unchanged activity would pass even if the caller had
+    /// been wrongly established. The 401 from an authenticated endpoint is the
+    /// evidence here.
+    /// </summary>
+    [Fact]
+    public async Task A_revoked_sessions_carrier_cookie_establishes_nothing()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            var sessions = await TwoSessionsAsync(client, actor);
+
+            // Setup only: end session A through the existing transport.
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await SendAsync(client, "/api/auth/sign-out", sessions.CarrierA)).StatusCode);
+
+            var response = await PresentAsync(
+                client, "/api/auth/sign-out",
+                authorization: null, cookie: CarrierCookie(sessions.CarrierA));
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            Assert.Equal("Authentication is required.", await ErrorAsync(response));
+
+            // A sign-out that revoked nothing clears nothing (B4).
+            Assert.True(IssuedCarrier.IsAbsent(response));
+        });
+    }
+
+    private sealed record TwoSessions(string CarrierA, Guid A, string CarrierB, Guid B);
+
+    /// <summary>
+    /// Two live sessions for the same actor, told apart by the carrier each
+    /// sign-in returned rather than by row order.
+    /// </summary>
+    private static async Task<TwoSessions> TwoSessionsAsync(HttpClient client, Actor actor)
+    {
+        await ActivateAsync(client, actor.Token);
+
+        var carrierA = await SignInAsync(client, actor.Username)
+            ?? throw new InvalidOperationException("The first sign-in failed.");
+
+        var carrierB = await SignInAsync(client, actor.Username)
+            ?? throw new InvalidOperationException("The second sign-in failed.");
+
+        return new TwoSessions(carrierA, SessionOf(carrierA), carrierB, SessionOf(carrierB));
+    }
+
+    /// <summary>
+    /// Five minutes of silence: stale enough that establishment writes activity
+    /// (the throttle is 60 seconds), and well inside the 15-minute idle window.
+    /// Returns the stale instant so a later write can be recognised.
+    /// </summary>
+    private static async Task<DateTimeOffset> MakeStaleAsync(params Guid[] sessionIds)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var activity = now.AddMinutes(-5);
+
+        foreach (var sessionId in sessionIds)
+        {
+            await BackdateAsync(
+                sessionId,
+                createdAt: now.AddMinutes(-10),
+                lastActivityAt: activity,
+                expiresAt: now.AddHours(11));
+        }
+
+        return activity;
+    }
+
+    /// <summary>
+    /// True when activity has moved past the stale instant — which happens only
+    /// when the per-request check established this session.
+    /// </summary>
+    private static async Task<bool> WasEstablishedAsync(Guid sessionId, DateTimeOffset stale)
+        => (await ReadSessionAsync(sessionId)).LastActivityAt > stale.AddMinutes(1);
+
+    /// <summary>
+    /// Sign-in with an empty body is refused as a binding failure before any
+    /// command is dispatched, so it has no side effect of its own — but the
+    /// request still passes through CallerMiddleware first.
+    /// </summary>
+    private static async Task ProbeAsync(HttpClient client, string? authorization, string? cookie)
+    {
+        var response = await PresentAsync(
+            client, "/api/auth/sign-in", authorization, cookie, body: new { });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Headers are added without validation so the test controls exactly what
+    /// is sent, including values HttpClient would otherwise reshape.
+    /// </summary>
+    private static async Task<HttpResponseMessage> PresentAsync(
+        HttpClient client,
+        string path,
+        string? authorization,
+        string? cookie,
+        object? body = null)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path);
+
+        if (authorization is not null)
+            request.Headers.TryAddWithoutValidation("Authorization", authorization);
+
+        if (cookie is not null)
+            request.Headers.TryAddWithoutValidation("Cookie", cookie);
+
+        if (body is not null)
+            request.Content = JsonContent.Create(body);
+
+        return await client.SendAsync(request);
+    }
+
+    private static string CarrierCookie(string carrier) => $"{CarrierCookieName}={carrier}";
+
+    private static Guid SessionOf(string carrier)
+        => HostCarrier().Verify(carrier)?.Value
+           ?? throw new InvalidOperationException("The carrier did not verify.");
+
+    /// <summary>Changes one character of the signature component only.</summary>
+    private static string Forge(string carrier)
+    {
+        var components = carrier.Split('.');
+
+        components[2] = Tamper(components[2]);
+
+        return string.Join('.', components);
+    }
+
+    /// <summary>
+    /// An AccessCarrier over the same keys HostFactory configures, so a carrier
+    /// the host issued can be verified here to learn which session it names.
+    /// </summary>
+    private static AccessCarrier HostCarrier()
+        => new(
+            SigningKeyRing.Load(
+                new ConfigurationBuilder()
+                    .AddInMemoryCollection(
+                    [
+                        new KeyValuePair<string, string?>(
+                            SigningKeyRing.CurrentKeySetting, HostFactory.PrimaryKeyId),
+                        new KeyValuePair<string, string?>(
+                            "LIGATURE_SIGNING_KEY_V1", HostFactory.PrimaryKey),
+                    ])
+                    .Build()));
+
+    // ---------------------------------------- cross-site protection (B3)
+
+    private const string CrossSiteRefusal = "Cross-site requests are not accepted.";
+
+    /// <summary>
+    /// A forged sign-in — the one CSRF that SameSite cannot stop, because the
+    /// request carries no cookie to withhold — is refused before the command
+    /// runs: with credentials that are genuinely valid, no session row exists
+    /// afterwards.
+    ///
+    /// The control sends the same credentials from the same origin and expects
+    /// a session, so the refusal cannot be explained by credentials that would
+    /// have failed anyway.
+    /// </summary>
+    [Fact]
+    public async Task A_cross_site_sign_in_is_refused_before_any_session_is_created()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            await ActivateAsync(client, actor.Token);
+
+            var credentials = new { Username = actor.Username, Password };
+
+            var refused = await SendWithHeadersAsync(
+                client, "/api/auth/sign-in", credentials, ("Sec-Fetch-Site", "cross-site"));
+
+            Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+            Assert.Equal(CrossSiteRefusal, await ErrorAsync(refused));
+            Assert.True(IssuedCarrier.IsAbsent(refused));
+            Assert.Null(await TryFindSessionIdAsync(actor.IdentityId));
+
+            var accepted = await SendWithHeadersAsync(
+                client, "/api/auth/sign-in", credentials, ("Sec-Fetch-Site", "same-origin"));
+
+            Assert.Equal(HttpStatusCode.NoContent, accepted.StatusCode);
+            Assert.NotNull(await TryFindSessionIdAsync(actor.IdentityId));
+        });
+    }
+
+    /// <summary>
+    /// The sibling-subdomain case: SameSite=Strict still sends the cookie on a
+    /// same-site request. It is refused, and refused BEFORE CallerMiddleware —
+    /// proved by the session's activity, which establishment would have
+    /// written. That is the ordering decision, not merely its status code.
+    ///
+    /// The probe is sign-in with an empty body, so an accepted request answers
+    /// 400 from binding and a refused one 403 from this middleware; the control
+    /// repeats it from the same origin and expects the activity to move.
+    /// </summary>
+    [Fact]
+    public async Task A_same_site_request_is_refused_before_the_caller_is_established()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            await ActivateAsync(client, actor.Token);
+
+            var carrier = await SignInAsync(client, actor.Username)
+                ?? throw new InvalidOperationException("Sign-in failed.");
+
+            var session = SessionOf(carrier);
+            var stale = await MakeStaleAsync(session);
+
+            var refused = await SendWithHeadersAsync(
+                client, "/api/auth/sign-in", new { },
+                ("Cookie", CarrierCookie(carrier)), ("Sec-Fetch-Site", "same-site"));
+
+            Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+            Assert.Equal(CrossSiteRefusal, await ErrorAsync(refused));
+            Assert.False(await WasEstablishedAsync(session, stale));
+
+            var accepted = await SendWithHeadersAsync(
+                client, "/api/auth/sign-in", new { },
+                ("Cookie", CarrierCookie(carrier)), ("Sec-Fetch-Site", "same-origin"));
+
+            Assert.Equal(HttpStatusCode.BadRequest, accepted.StatusCode);
+            Assert.True(await WasEstablishedAsync(session, stale));
+        });
+    }
+
+    /// <summary>
+    /// The Origin fallback against the real Request.Host the server derives,
+    /// rather than one a unit test chose. The test server is addressed as
+    /// localhost.
+    /// </summary>
+    [Fact]
+    public async Task Without_fetch_metadata_the_origin_is_compared_with_the_request_host_over_http()
+    {
+        await RunAsync(async (client, _) =>
+        {
+            var ownHost = client.BaseAddress!.Authority;
+
+            var accepted = await SendWithHeadersAsync(
+                client, "/api/auth/sign-in", new { }, ("Origin", $"http://{ownHost}"));
+
+            Assert.Equal(HttpStatusCode.BadRequest, accepted.StatusCode);
+
+            var refused = await SendWithHeadersAsync(
+                client, "/api/auth/sign-in", new { }, ("Origin", "https://evil.example"));
+
+            Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+            Assert.Equal(CrossSiteRefusal, await ErrorAsync(refused));
+        });
+    }
+
+    private static async Task<HttpResponseMessage> SendWithHeadersAsync(
+        HttpClient client,
+        string path,
+        object? body,
+        params (string Name, string Value)[] headers)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path);
+
+        foreach (var (name, value) in headers)
+            request.Headers.TryAddWithoutValidation(name, value);
+
+        if (body is not null)
+            request.Content = JsonContent.Create(body);
+
+        return await client.SendAsync(request);
+    }
+
+    // ------------------------------------------- carrier cookie lifecycle (B4)
+
+    /// <summary>
+    /// Success is 204 with no body, and the carrier travels only in the
+    /// __Host-ligature cookie — the only cookie on the response. The value is
+    /// the carrier for the session this sign-in created, not merely a
+    /// well-formed one.
+    /// </summary>
+    [Fact]
+    public async Task A_successful_sign_in_is_204_with_the_carrier_only_in_the_host_cookie()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            await ActivateAsync(client, actor.Token);
+
+            var response = await client.PostAsJsonAsync(
+                "/api/auth/sign-in", new { actor.Username, Password });
+
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+            Assert.Equal(string.Empty, await response.Content.ReadAsStringAsync());
+
+            Assert.Single(response.Headers.GetValues("Set-Cookie"));
+
+            var cookie = IssuedCarrier.Header(response);
+
+            Assert.True(cookie.HttpOnly);
+            Assert.True(cookie.Secure);
+            Assert.Equal(Microsoft.Net.Http.Headers.SameSiteMode.Strict, cookie.SameSite);
+            Assert.Equal("/", cookie.Path.Value);
+            Assert.False(cookie.Domain.HasValue);
+            Assert.Null(cookie.Expires);
+            Assert.Null(cookie.MaxAge);
+
+            Assert.Equal(
+                await SessionIdAsync(actor.IdentityId),
+                SessionOf(IssuedCarrier.From(response)));
+        });
+    }
+
+    /// <summary>
+    /// A request refused before any command runs issues nothing.
+    /// </summary>
+    [Fact]
+    public async Task A_sign_in_refused_at_binding_issues_no_cookie()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            await ActivateAsync(client, actor.Token);
+
+            foreach (var body in new object[] { new { }, new { actor.Username }, new { Password } })
+            {
+                var response = await client.PostAsJsonAsync("/api/auth/sign-in", body);
+
+                Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+                Assert.True(IssuedCarrier.IsAbsent(response));
+            }
+
+            Assert.Null(await TryFindSessionIdAsync(actor.IdentityId));
+        });
+    }
+
+    /// <summary>
+    /// Signing out with the cookie as the only credential revokes the session
+    /// and then removes the cookie — asserted on the header a browser receives
+    /// and on what a cookie container is left holding after applying it.
+    /// </summary>
+    [Fact]
+    public async Task Signing_out_with_the_cookie_revokes_the_session_then_clears_the_cookie()
+    {
+        await RunInBrowserAsync(async (_, browser, jar, actor) =>
+        {
+            await ActivateAsync(browser, actor.Token);
+
+            var signIn = await browser.PostAsJsonAsync(
+                "/api/auth/sign-in", new { actor.Username, Password });
+
+            Assert.Equal(HttpStatusCode.NoContent, signIn.StatusCode);
+
+            var session = SessionOf(
+                Held(jar) ?? throw new InvalidOperationException("The browser holds no carrier."));
+
+            // No Authorization header: the cookie is the only credential.
+            var signOut = await browser.PostAsync("/api/auth/sign-out", content: null);
+
+            Assert.Equal(HttpStatusCode.NoContent, signOut.StatusCode);
+            IssuedCarrier.AssertCleared(signOut);
+            Assert.Null(Held(jar));
+
+            var row = await ReadSessionAsync(session);
+
+            Assert.NotNull(row.RevokedAt);
+            Assert.Equal(actor.UserId.Value, row.RevokedBy);
+            Assert.Equal("Logout", row.RevocationReason);
+        });
+    }
+
+    /// <summary>
+    /// Transport is not part of sign-out's decision: a revocation made with a
+    /// bearer carrier clears the cookie too.
+    /// </summary>
+    [Fact]
+    public async Task Signing_out_with_a_bearer_carrier_also_clears_the_cookie()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            await ActivateAsync(client, actor.Token);
+
+            var carrier = await SignInAsync(client, actor.Username)
+                ?? throw new InvalidOperationException("Sign-in failed.");
+
+            var signOut = await SendAsync(client, "/api/auth/sign-out", carrier);
+
+            Assert.Equal(HttpStatusCode.NoContent, signOut.StatusCode);
+            IssuedCarrier.AssertCleared(signOut);
+            Assert.NotNull((await ReadSessionAsync(SessionOf(carrier))).RevokedAt);
+        });
+    }
+
+    /// <summary>
+    /// A sign-out whose carrier no longer names a live session is refused, and
+    /// a refused sign-out clears nothing: the cookie is cleared only after a
+    /// revocation succeeds.
+    /// </summary>
+    [Fact]
+    public async Task A_sign_out_that_revokes_nothing_clears_nothing()
+    {
+        await RunAsync(async (client, actor) =>
+        {
+            await ActivateAsync(client, actor.Token);
+
+            var carrier = await SignInAsync(client, actor.Username)
+                ?? throw new InvalidOperationException("Sign-in failed.");
+
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await SendAsync(client, "/api/auth/sign-out", carrier)).StatusCode);
+
+            var again = await SendAsync(client, "/api/auth/sign-out", carrier);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, again.StatusCode);
+            Assert.Equal("Authentication is required.", await ErrorAsync(again));
+            Assert.True(IssuedCarrier.IsAbsent(again));
+        });
+    }
+
+    /// <summary>
+    /// D-B4-7, the whole sequence a browser goes through. Signed in, it cannot
+    /// sign in again — with the same person's own credentials — and is neither
+    /// issued nor cleared anything. Once it signs out, the same sign-in
+    /// succeeds with a new session and a new cookie, and that cookie alone
+    /// authenticates.
+    /// </summary>
+    [Fact]
+    public async Task A_signed_in_browser_must_sign_out_before_it_can_sign_in_again()
+    {
+        await RunInBrowserAsync(async (_, browser, jar, actor) =>
+        {
+            await ActivateAsync(browser, actor.Token);
+
+            var credentials = new { actor.Username, Password };
+
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await browser.PostAsJsonAsync("/api/auth/sign-in", credentials)).StatusCode);
+
+            var first = Held(jar)
+                ?? throw new InvalidOperationException("The browser holds no carrier.");
+
+            var refused = await browser.PostAsJsonAsync("/api/auth/sign-in", credentials);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+            Assert.Equal("Authentication is required.", await ErrorAsync(refused));
+            Assert.True(IssuedCarrier.IsAbsent(refused));
+
+            Assert.Equal(first, Held(jar));
+            Assert.Null((await ReadSessionAsync(SessionOf(first))).RevokedAt);
+            Assert.Equal(0, await FailedAttemptsAsync(actor.IdentityId));
+
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await browser.PostAsync("/api/auth/sign-out", content: null)).StatusCode);
+
+            Assert.Null(Held(jar));
+
+            var accepted = await browser.PostAsJsonAsync("/api/auth/sign-in", credentials);
+
+            Assert.Equal(HttpStatusCode.NoContent, accepted.StatusCode);
+
+            var second = Held(jar)
+                ?? throw new InvalidOperationException("The browser holds no new carrier.");
+
+            Assert.NotEqual(SessionOf(first), SessionOf(second));
+            Assert.NotNull((await ReadSessionAsync(SessionOf(first))).RevokedAt);
+
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await browser.PostAsync("/api/auth/sign-out", content: null)).StatusCode);
+
+            Assert.NotNull((await ReadSessionAsync(SessionOf(second))).RevokedAt);
+        });
+    }
+
+    /// <summary>
+    /// D-B4-7 for activation. A browser signed in as someone else opens an
+    /// activation link: refused before the token is read, nothing issued or
+    /// cleared. After signing out, the same token activates the account.
+    /// </summary>
+    [Fact]
+    public async Task A_signed_in_browser_cannot_activate_until_it_signs_out_and_the_token_survives()
+    {
+        await RunInBrowserAsync(async (_, browser, jar, actor) =>
+        {
+            var established = await EnsureEstablishedCallerAsync(browser);
+
+            try
+            {
+                Assert.Equal(established, Held(jar));
+
+                var refused = await ActivateAsync(browser, actor.Token);
+
+                Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+                Assert.Equal("Authentication is required.", await ErrorAsync(refused));
+                Assert.True(IssuedCarrier.IsAbsent(refused));
+
+                Assert.Equal(
+                    HttpStatusCode.NoContent,
+                    (await browser.PostAsync("/api/auth/sign-out", content: null)).StatusCode);
+
+                Assert.Null(Held(jar));
+
+                Assert.Equal(HttpStatusCode.OK, (await ActivateAsync(browser, actor.Token)).StatusCode);
+            }
+            finally
+            {
+                await EndEstablishedCallerSessionsAsync();
+            }
+        });
+    }
+
+    /// <summary>
+    /// A browser still holding the cookie of a session that was ended elsewhere
+    /// is not locked out. The cookie verifies but names a revoked session, so
+    /// no caller is established — a B2 and session-establishment property, not
+    /// anything sign-in does about stale cookies — and sign-in proceeds and
+    /// replaces it.
+    /// </summary>
+    [Fact]
+    public async Task A_browser_holding_a_revoked_sessions_cookie_can_still_sign_in()
+    {
+        await RunInBrowserAsync(async (api, browser, jar, actor) =>
+        {
+            await ActivateAsync(browser, actor.Token);
+
+            var credentials = new { actor.Username, Password };
+
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await browser.PostAsJsonAsync("/api/auth/sign-in", credentials)).StatusCode);
+
+            var dead = Held(jar)
+                ?? throw new InvalidOperationException("The browser holds no carrier.");
+
+            // Ended through another client, so this browser is never told.
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await SendAsync(api, "/api/auth/sign-out", dead)).StatusCode);
+
+            Assert.Equal(dead, Held(jar));
+
+            await AssertSignInReplacesAsync(browser, jar, credentials, dead);
+        });
+    }
+
+    /// <summary>
+    /// The same for a cookie that is correctly signed but names a session that
+    /// never existed.
+    /// </summary>
+    [Fact]
+    public async Task A_browser_holding_a_cookie_for_an_unknown_session_can_still_sign_in()
+    {
+        await RunInBrowserAsync(async (_, browser, jar, actor) =>
+        {
+            await ActivateAsync(browser, actor.Token);
+
+            var unknown = CarrierFor(Guid.NewGuid());
+
+            jar.Add(
+                HostFactory.BrowserAddress,
+                new System.Net.Cookie(IssuedCarrier.CookieName, unknown) { Secure = true, HttpOnly = true, Path = "/" });
+
+            Assert.Equal(unknown, Held(jar));
+
+            await AssertSignInReplacesAsync(browser, jar, new { actor.Username, Password }, unknown);
+        });
+    }
+
+    private static async Task AssertSignInReplacesAsync(
+        HttpClient browser, System.Net.CookieContainer jar, object credentials, string held)
+    {
+        var accepted = await browser.PostAsJsonAsync("/api/auth/sign-in", credentials);
+
+        Assert.Equal(HttpStatusCode.NoContent, accepted.StatusCode);
+
+        var replacement = Held(jar)
+            ?? throw new InvalidOperationException("The browser holds no carrier.");
+
+        Assert.NotEqual(held, replacement);
+        Assert.Null((await ReadSessionAsync(SessionOf(replacement))).RevokedAt);
+    }
+
+    /// <summary>
+    /// The live, non-empty carrier cookie a browser client is holding for the
+    /// host, or null.
+    /// </summary>
+    private static string? Held(System.Net.CookieContainer jar)
+        => jar.GetCookies(HostFactory.BrowserAddress)[IssuedCarrier.CookieName]
+            is { Expired: false, Value.Length: > 0 } cookie
+            ? cookie.Value
+            : null;
+
+    /// <summary>
+    /// RunAsync, with a browser client from the same host alongside the default
+    /// bearer client.
+    /// </summary>
+    private static async Task RunInBrowserAsync(
+        Func<HttpClient, HttpClient, System.Net.CookieContainer, Actor, Task> body)
+    {
+        await TestDatabase.EnsureProvisionedAsync();
+
+        var actor = await SeedPendingAsync();
+
+        try
+        {
+            await using var factory = new HostFactory();
+
+            var (browser, jar) = factory.CreateBrowser();
+
+            await body(factory.CreateClient(), browser, jar, actor);
+        }
+        finally
+        {
+            await ResetPendingAsync();
+        }
     }
 
     /// <summary>
@@ -1023,13 +1820,10 @@ public sealed class AuthenticationEndToEndTests
         var response = await client.PostAsJsonAsync(
             "/api/auth/sign-in", new { Username = username, Password });
 
-        if (response.StatusCode != HttpStatusCode.OK)
+        if (response.StatusCode != HttpStatusCode.NoContent)
             return null;
 
-        using var document = JsonDocument.Parse(
-            await response.Content.ReadAsStringAsync());
-
-        return document.RootElement.GetProperty("accessToken").GetString();
+        return IssuedCarrier.From(response);
     }
 
     private static async Task<HttpResponseMessage> SendAsync(

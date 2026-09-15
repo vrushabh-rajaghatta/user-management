@@ -25,7 +25,40 @@ internal sealed class HostFactory : WebApplicationFactory<Program>
     /// a malformed value is part of the contract.
     /// </summary>
     internal HostFactory(string? apiDocumentation = null)
-        => _apiDocumentation = apiDocumentation;
+    {
+        _apiDocumentation = apiDocumentation;
+
+        // No ambient cookie state. The default client authenticates with a
+        // bearer carrier and nothing else; were it to keep the cookie sign-in
+        // sets, a second sign-in on the same client would present a live
+        // session and be refused, and unrelated tests would acquire state from
+        // whichever sign-in ran before them. Browser semantics are opted into
+        // explicitly, through CreateBrowser.
+        ClientOptions.HandleCookies = false;
+    }
+
+    /// <summary>
+    /// A client that behaves as a browser does with the carrier cookie: HTTPS,
+    /// so the Secure cookie is replayed, and a cookie container that stores
+    /// what Set-Cookie says and applies deletions. The container is returned
+    /// so a test can see what the client was left holding.
+    ///
+    /// It is not a browser. It enforces neither the __Host- prefix nor
+    /// SameSite, and sends no Origin or Sec-Fetch-Site; CarrierCookieTests and
+    /// the cross-site tests cover those.
+    /// </summary>
+    internal (HttpClient Client, System.Net.CookieContainer Jar) CreateBrowser()
+    {
+        var jar = new System.Net.CookieContainer();
+
+        var client = CreateDefaultClient(
+            BrowserAddress,
+            new Microsoft.AspNetCore.Mvc.Testing.Handlers.CookieContainerHandler(jar));
+
+        return (client, jar);
+    }
+
+    internal static readonly Uri BrowserAddress = new("https://localhost");
 
     /// <summary>
     /// Thirty-two bytes exactly — the section 17 minimum — so the tests run

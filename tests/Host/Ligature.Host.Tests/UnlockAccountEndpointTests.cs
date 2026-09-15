@@ -154,9 +154,7 @@ public sealed class UnlockAccountEndpointTests
 
         signIn.EnsureSuccessStatusCode();
 
-        using var document = JsonDocument.Parse(await signIn.Content.ReadAsStringAsync());
-
-        return document.RootElement.GetProperty("accessToken").GetString()!;
+        return IssuedCarrier.From(signIn);
     }
 
     private static async Task SeedCallerAsync(

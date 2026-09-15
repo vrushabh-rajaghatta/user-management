@@ -40,14 +40,18 @@ public static class AuthEndpoints
         // the handlers withhold.
         routes.MapPost("/api/auth/sign-in", SignInAsync)
             .WithTags("Authentication")
-            .WithSummary("Sign in and obtain an access carrier.")
+            .WithSummary("Sign in and receive the access carrier as a cookie.")
             .WithDescription(
-                "Anonymous. On success returns a short-lived signed carrier "
-                + "for the server-side session. Every failure — unknown user, "
-                + "wrong password, locked, inactive — returns the same 401 "
-                + "with the same message, and the attempt is recorded either "
-                + "way.")
-            .Produces(StatusCodes.Status200OK)
+                "Anonymous. On success returns 204 with no body and sets the "
+                + "signed carrier for the server-side session in the "
+                + "__Host-ligature cookie. A caller that is not a browser reads "
+                + "the carrier from that Set-Cookie header and presents it as "
+                + "'Authorization: Bearer'. Every failure — unknown user, wrong "
+                + "password, locked, inactive, or a request that already "
+                + "presents a live session — returns the same 401 with the same "
+                + "message and sets no cookie, and the attempt is recorded "
+                + "either way.")
+            .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized);
 
@@ -57,8 +61,10 @@ public static class AuthEndpoints
             .WithDescription(
                 "Requires a carrier. The session is ended by revocation, not "
                 + "deletion: the row survives with the actor, reason and "
-                + "instant that ended it. The response is empty whether or not "
-                + "this call was the one that revoked the session.")
+                + "instant that ended it. Once it is ended the carrier cookie "
+                + "is cleared, however the carrier was presented. The response "
+                + "is empty whether or not this call was the one that revoked "
+                + "the session.")
             .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status401Unauthorized)
 
@@ -103,7 +109,15 @@ public static class AuthEndpoints
         // Step 8, and the only place it lives. The Host mints the carrier from
         // the SessionId SES-C1 produced; nothing about signing keys reaches the
         // handler.
-        return Results.Ok(new { AccessToken = carrier.Issue(result.SessionId) });
+        //
+        // The carrier leaves only as the cookie, never in a body: a body is
+        // readable by any script on the page, and the HttpOnly cookie is not. A
+        // caller that is not a browser takes it from Set-Cookie and presents it
+        // as a bearer. Written here, after success and nowhere else, so no
+        // failure path can issue one.
+        CarrierCookie.Write(context.Response, carrier.Issue(result.SessionId));
+
+        return Results.NoContent();
     }
 
     /// <summary>
@@ -115,6 +129,7 @@ public static class AuthEndpoints
     /// </summary>
     private static async Task<IResult> SignOutAsync(
         CurrentCarrier currentCarrier,
+        HttpContext context,
         ICommandDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
@@ -128,6 +143,18 @@ public static class AuthEndpoints
         await dispatcher.SendAsync<SignOutCommand, SignOutResult>(
             new SignOutCommand(currentCarrier.SessionId),
             cancellationToken);
+
+        // Revoke first, clear second. A browser must not keep a cookie for a
+        // session that has ended, and must not lose the cookie for one that
+        // has not. A failed revocation leaves this method before the clear;
+        // ProblemMiddleware's Response.Clear() would also remove a deletion
+        // written earlier, but that is the second line, not the reason for the
+        // order.
+        //
+        // Cleared whichever transport presented the carrier. Which one it was is
+        // not this endpoint's decision, and a deletion is harmless to a caller
+        // that never held the cookie.
+        CarrierCookie.Clear(context.Response);
 
         // SignOutResult is deliberately empty, and so is this. Reporting
         // whether this call was the one that revoked the session would

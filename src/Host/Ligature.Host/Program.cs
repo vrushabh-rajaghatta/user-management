@@ -69,14 +69,16 @@ if (apiDocumentationEnabled)
     // Only registered when it is going to be used. Off, the host carries no
     // document generator at all rather than one nothing maps.
     //
-    // The bearer scheme is declared here rather than left implicit: a document
-    // that describes an authenticated API without describing its
-    // authentication cannot be used to call it.
+    // The carrier's schemes — the bearer header and the browser cookie — are
+    // declared here rather than left implicit: a document that describes an
+    // authenticated API without describing its authentication cannot be used
+    // to call it.
     builder.Services.AddOpenApi(options => options.AddCarrierSecurity());
 }
 
 builder.Services.AddScoped<CurrentCarrier>();
 builder.Services.AddScoped<CallerMiddleware>();
+builder.Services.AddScoped<CrossSiteMiddleware>();
 builder.Services.AddScoped<ProblemMiddleware>();
 
 var app = builder.Build();
@@ -96,14 +98,20 @@ AuditDeclarations.VerifyAgainst(
 // downstream of it — an AuthenticationFailedException raised by a behaviour
 // several layers in still becomes a 401 rather than an unhandled 500.
 //
-// CallerMiddleware sits inside it and before the endpoints, because the caller
-// must be established on the request scope before any command is dispatched
-// under it.
+// CrossSiteMiddleware sits inside it and BEFORE CallerMiddleware, so a
+// cross-site request is refused before the session store is consulted. After
+// it, a same-site request carrying the Strict cookie would be looked up and
+// would refresh the victim's idle timer before being turned away.
+//
+// CallerMiddleware sits inside that and before the endpoints, because the
+// caller must be established on the request scope before any command is
+// dispatched under it.
 //
 // No developer exception page is registered in any environment. One would turn
 // the deliberate no-detail 500 into a stack trace the moment somebody ran the
 // host with ASPNETCORE_ENVIRONMENT=Development.
 app.UseMiddleware<ProblemMiddleware>();
+app.UseMiddleware<CrossSiteMiddleware>();
 app.UseMiddleware<CallerMiddleware>();
 
 app.MapAuthEndpoints();

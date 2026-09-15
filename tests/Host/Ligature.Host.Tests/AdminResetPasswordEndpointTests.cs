@@ -181,9 +181,7 @@ public sealed class AdminResetPasswordEndpointTests
 
         signIn.EnsureSuccessStatusCode();
 
-        using var document = JsonDocument.Parse(await signIn.Content.ReadAsStringAsync());
-
-        return new Caller(userId, document.RootElement.GetProperty("accessToken").GetString()!);
+        return new Caller(userId, IssuedCarrier.From(signIn));
     }
 
     private static async Task SeedCallerAsync(

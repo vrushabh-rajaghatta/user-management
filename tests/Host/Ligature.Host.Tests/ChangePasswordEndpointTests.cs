@@ -240,12 +240,10 @@ public sealed class ChangePasswordEndpointTests
         var response = await client.PostAsJsonAsync(
             "/api/auth/sign-in", new { Username, Password = password });
 
-        if (response.StatusCode != HttpStatusCode.OK)
+        if (response.StatusCode != HttpStatusCode.NoContent)
             return null;
 
-        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-
-        return document.RootElement.GetProperty("accessToken").GetString();
+        return IssuedCarrier.From(response);
     }
 
     private static Task<HttpResponseMessage> ChangeAsync(
