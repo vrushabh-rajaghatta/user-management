@@ -82,6 +82,137 @@ Suggested structure:
 <Important constraints or decisions>
 -->
 
+## PRV-C2 — Catalogue synchronisation
+
+**Status:** Approved. Contract frozen 2026-09-16 by owner decision; **not yet implemented**.
+
+### Requirement
+
+The permission catalogue, the role catalogue and the role-permission grants a release defines must reach **every existing database**, not only databases provisioned after the change.
+
+Today they do not. `PlatformProvisioner.ProvisionAsync` returns as soon as the System actor exists — before it reaches any permission, role or grant seeding — so the whole catalogue sits behind a first-provision-only gate. A permission added to `GetPermissionSeeds()` changes nothing for any existing tenant, silently. `CatalogueDriftTests` detects the divergence; nothing repairs it, and the only remedy is hand-written SQL.
+
+PRV-C2 resolves this by **removing catalogue evolution from the first-provision lifecycle**, not by making `ProvisionAsync` progressively more complicated. `ProvisionAsync` remains first-provision logic and does not become the synchronisation mechanism.
+
+### The governing principle
+
+> **Catalogue synchronisation is monotonic with respect to authorization.** It may introduce new catalogue entries and new grants, and it may reconcile metadata that carries no authorization semantics. It must never silently remove, reactivate, or weaken existing authorization state.
+
+**Monotonic does not mean "always succeeds".** Synchronisation refuses rather than resolving anything it is not entitled to change. A bad catalogue must not be able to reduce *or* expand existing authorization semantics.
+
+```text
+Seed:      permission A, permission B
+Database:  permission A, permission C
+
+NOT  ->  A, B
+BUT  ->  REFUSED: C exists in the database but not in the catalogue
+```
+
+```text
+Seed:      RequiresHumanActor = true
+Database:  RequiresHumanActor = false
+
+REFUSED, not repaired.
+```
+
+```text
+Seed:      grant X -> role Y
+Database:  grant X -> role Y, revoked
+
+REFUSED, not re-granted.
+```
+
+### Permitted mutations
+
+Exhaustive. Anything not listed here is forbidden.
+
+| # | Mutation |
+| --- | --- |
+| M1 | INSERT a permission |
+| M2 | INSERT a role |
+| M3 | INSERT a role-permission grant |
+| M4 | UPDATE permission metadata — `Name`, `Description` |
+| M5 | UPDATE role metadata — `Name`, `Description` |
+
+### Forbidden — each is a refusal, never a repair
+
+| # | Condition | Why |
+| --- | --- | --- |
+| F1 | DELETE anything | History and audit reference these rows |
+| F2 | A permission or role exists in the database but not in the catalogue | Far more often a bad merge or a rename than a deliberate retirement. Auto-deactivating would remove authorization from every holder at deploy time |
+| F3 | Deactivate an existing permission or role | As F2 |
+| F4 | Reactivate an existing permission or role | Deactivation is an operational act, possibly an incident response. A deploy must not undo it |
+| F5 | Revoke an existing grant | An authorization contraction for every holder of that role |
+| F6 | Re-create a revoked grant | Revoked means a human decided. Re-granting is an authorization expansion a deploy is not entitled to make |
+| F7 | Modify an immutable or security-semantic field — `Code`, `Resource`, `Action`, `RequiresHumanActor`, `IsSystemRole` | Identity and security semantics. Flipping `RequiresHumanActor` false→true makes every agent holding that permission non-compliant under RP6; true→false silently weakens a human-only control |
+
+**F7 is already enforced by the domain and must stay that way.** `Permission.Code`, `Resource`, `Action` and `RequiresHumanActor` are get-only, as are `Role.IsSystemRole`. The only mutators are `UpdateMetadata` (name and description) and `Deactivate`/`Reactivate`. Synchronisation therefore *cannot* change authorization semantics without someone first adding a domain mutator — a visible, reviewable act. No mutator may be added for the convenience of this process.
+
+### Scope
+
+`permission`, `role` and `role_permission`. All three, because a release that adds `user.read` to `access-reviewer` is a **grant** change, and because `CatalogueDriftTests` already asserts all three. Permissions alone would not close the gap this requirement exists to close.
+
+### Execution
+
+| | |
+| --- | --- |
+| **Authority** | `migration_role`. PE2 requires `permission` to be writable only by a migration role; running this as `provisioning_role` would entrench the opposite |
+| **Placement** | An explicit one-shot step in the deployment chain, beside `migrator` and `audit-schema`, so it runs on every deployment rather than when someone remembers |
+| **Not** | Inside `ProvisionAsync`, which owns the System actor, `TenantProvisioned` and first-tenant semantics |
+| **Atomicity** | One transaction. A refusal rolls back every mutation in the run; there is no partial synchronisation |
+| **Order** | Permissions, then roles, then grants — foreign-key order |
+| **Identity** | A permission and a role are matched by `Code`; a grant by the pair `(role code, permission code)` |
+
+**An unprovisioned database is a no-op, not a refusal.** The provisioner sits behind the `bootstrap` Compose profile, so `./up.sh` reaches a database with schema and no System actor. With no catalogue there is nothing to reconcile and first provision will create it, so the step reports that and exits 0. Refusing would break the documented path from a clean clone to a running system.
+
+**A run that changes nothing is a success, not a no-op to be skipped.** Idempotence is required: a second run against an unchanged database performs no mutation and still reports success.
+
+### Audit
+
+One `CatalogueSynchronised` audit event **per execution** — including runs that change nothing and runs that refuse. The absence of an event then means the step did not run, which is itself informative.
+
+The event records **that reconciliation happened and what its outcome was**. The database remains the source of truth for what the catalogue now contains, so the event carries counts and a reference, never the changed rows:
+
+| Field | Content |
+| --- | --- |
+| Release identifier | The synchronisation tool's assembly informational version — deterministic, and requires nothing of the operator |
+| Database identity | `current_database()` |
+| Actor | The System actor, as `TenantProvisioned` uses |
+| Outcome | `Succeeded` or `Refused` |
+| Counts | permissions inserted; permission metadata reconciled; roles inserted; role metadata reconciled; grants inserted |
+| Drift detected | Whether any refusal condition was found |
+| Drift reference | On refusal, a SHA-256 over the canonical, sorted list of refusal findings (condition and code), hex-encoded |
+
+**The human-readable drift detail goes to the operator's output and the exit code, not into the audit trail.** The digest lets two refusals be compared without putting catalogue contents into audit.
+
+**A refused run must still record its event.** The mutations roll back; the audit record must not. Precedent exists: `AuditCommandScopeBehavior` wraps the transaction for exactly this reason — what it writes must outlive the transaction's fate — and `TenantProvisioned` is already emitted by the provisioning tool on its own transaction, outside the command pipeline.
+
+### Acceptance criteria
+
+- **A1** A permission in the catalogue and absent from the database is inserted.
+- **A2** A role in the catalogue and absent from the database is inserted.
+- **A3** A grant in the catalogue and absent from the database is inserted.
+- **A4** A permission or role whose `Name` or `Description` differs from the catalogue is updated to match.
+- **A5** A permission or role in the database and absent from the catalogue causes refusal, naming it.
+- **A6** A difference in `Resource`, `Action`, `RequiresHumanActor` or `IsSystemRole` causes refusal, naming the field.
+- **A7** A permission or role that is inactive in the database and present in the catalogue causes refusal — it is neither reactivated nor ignored.
+- **A8** A grant present in the catalogue and revoked in the database causes refusal — it is not re-granted.
+- **A9** A refusal leaves the database byte-identical to its pre-run state.
+- **A10** A second run against an unchanged database mutates nothing and succeeds.
+- **A11** A run against a database with no System actor exits 0 without mutating anything.
+- **A12** Every run emits exactly one `CatalogueSynchronised` event, including a refused run and a run that changed nothing.
+- **A13** The event's counts equal the mutations actually committed.
+- **A14** The process exits non-zero on refusal, so a deployment stops.
+- **A15** `CatalogueDriftTests` passes after a successful synchronisation of a purely additive divergence.
+
+### Notes
+
+**This is the first entry in this section.** The catalogue is being back-filled; PRV-C2 is defined here because its contract was frozen before implementation rather than after.
+
+**PE2's premise is not yet met.** `permission` is not yet writable only by a migration role — that enforcement is tracked in the enforcement-layer entry under Known Gaps. It does not block PRV-C2: writing this step to run as `migration_role` costs nothing now and does not depend on the enforcement work landing first.
+
+**`CatalogueSynchronised` is a new audit event type**, and the type set is release-controlled: the host verifies its compiled audit declarations against the deployed catalogue and refuses to start on a mismatch. Adding it is part of this requirement, not a follow-up. The spelling follows the audit catalogue's convention for event codes, which is British (`AuthorisationDenied`); confirm against the deployed catalogue before the code is written.
+
 ---
 
 # Known Gaps and Deliberate Deferrals
@@ -705,19 +836,26 @@ analyzer).
 **Deferred to:** the Notifications capability, which owns delivery — User Management does not own email infrastructure (`docs/architecture.md` §8).
 **Where recorded:** TODO in `CreateUserCommandHandler`.
 
-## PRV-C2 — a provisioned tenant never receives new permissions
+## PRV-C2 — a provisioned tenant never receives new permissions — CONTRACT FROZEN
 
-**Rule:** every release that adds permissions runs `SeedPermissionCatalog`, under the migration role (PE2).
+**State:** still not implemented, but no longer undefined. The contract was
+frozen by owner decision on 2026-09-16 and is specified in full under
+**Requirements → PRV-C2 — Catalogue synchronisation** above. This entry stays
+until the implementation lands.
 
-**State:** not implemented. `PlatformProvisioner.ProvisionAsync` seeds the catalogue once and then no-ops forever, so adding a permission to `GetPermissionSeeds()` changes nothing for any existing tenant database — silently.
+**The defect, unchanged:** `PlatformProvisioner.ProvisionAsync` returns as soon
+as the System actor exists, before it reaches any catalogue seeding, so adding a
+permission to `GetPermissionSeeds()` changes nothing for any existing tenant
+database — silently. `CatalogueDriftTests` detects the divergence; nothing fixes
+it, and the only current remedy is hand-written SQL.
 
-`CatalogueDriftTests` detects the divergence; nothing fixes it, and the only current remedy is hand-written SQL.
-
-**No longer blocked, still not implemented.** Both blockers are now gone: the
-provisioning entry point was resolved above, and role separation now exists
-(`docs/architecture.md` §19). PE2's own premise — `permission` writable only by
-a migration role — is not yet met (see the enforcement-layer entry below), but
-that does not prevent PRV-C2 being written.
+**What the frozen contract settles:** synchronisation is monotonic with respect
+to authorization — it may insert permissions, roles and grants and reconcile
+name and description, and it refuses on everything else rather than repairing
+it. It runs as `migration_role` in the deployment chain, covers all three
+tables, emits one `CatalogueSynchronised` audit event per execution, and
+`ProvisionAsync` is left alone: catalogue evolution is removed from the
+first-provision lifecycle rather than bolted onto it.
 
 **Deferred to:** its own story. Deliberately kept out of AUD-S01, which
 established the deployment's security boundary and nothing else.
