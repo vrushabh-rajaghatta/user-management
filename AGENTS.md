@@ -254,8 +254,35 @@ that exited four days earlier. So five criteria are probed, and a failure names
 which one: `.env` holds every secret; the prerequisites are present; `roles`,
 `migrator` and `audit-schema` each exited 0; the API answers on 8080; and
 `https://localhost:5173` completes a TLS handshake **and serves the application
-shell**. Success does not claim anyone can sign in — there are no users until
-`./bootstrap.sh`.
+shell**; and the web container reports itself healthy. Success does not claim
+anyone can sign in — there are no users until `./bootstrap.sh`.
+
+**A startup proof says nothing about the minutes after it.** Every criterion
+above is checked once, at startup, and the environment has been seen to degrade
+behind them: a development server that came back on plain HTTP sat there reading
+`Up` while being unreachable through the published port. So `web` and `host`
+carry healthchecks, and a degraded service now reads `unhealthy`:
+
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml ps
+```
+
+The web check probes **HTTPS** deliberately — a server that lost its TLS
+configuration answers plain HTTP perfectly well, so only a TLS request tells the
+two apart — and is written in `node`, the only HTTP client its image has.
+
+**It reports; it does not repair.** Compose's `restart:` policy acts on process
+exit, not on health, so nothing restarts an unhealthy container. The cure is
+yours:
+
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml restart web
+```
+
+The sixth criterion exists because the other probes run from your machine and
+would pass even if the healthcheck itself were wired wrongly — pointed at the
+wrong port, or written with a client the image does not have, which would report
+a working server as broken forever.
 
 **Development is an explicit overlay.** `./up.sh` runs
 `docker compose -f compose.yaml -f compose.dev.yaml`. Plain `docker compose up`

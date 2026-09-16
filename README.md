@@ -85,9 +85,14 @@ The database is on **55432**, not 5432, so it will not collide with a
 PostgreSQL you already run.
 
 `./up.sh` does not just start containers — it **proves** they are up: that each
-one-shot step exited cleanly, that the API answers, and that
-`https://localhost:5173` serves the application. If something is wrong it says
-which check failed and how to look at that service's logs.
+one-shot step exited cleanly, that the API answers, that
+`https://localhost:5173` serves the application, and that the web container
+reports itself healthy. If something is wrong it says which check failed and how
+to look at that service's logs.
+
+That proof is taken at startup, so the services also carry healthchecks and keep
+reporting afterwards. `docker compose -f compose.yaml -f compose.dev.yaml ps`
+shows `healthy` or `unhealthy` for each.
 
 ```bash
 ./up.sh --check      # check the prerequisites only, change nothing
@@ -161,6 +166,7 @@ docker compose -f compose.yaml -f compose.dev.yaml down -v    # deletes the data
 | The browser warns the certificate is untrusted | `mkcert -install` did not complete. Run it again and give it your password |
 | A port is already in use | Something else holds 5173, 8080 or 55432 — often a `npm run dev` you left running |
 | A step failed | `docker compose -f compose.yaml -f compose.dev.yaml logs <service>` |
+| The site cannot be reached, and `ps` shows `web` as `unhealthy` | The dev server is no longer serving HTTPS. Nothing restarts it for you: `docker compose -f compose.yaml -f compose.dev.yaml restart web` |
 
 ---
 

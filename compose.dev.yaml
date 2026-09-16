@@ -46,6 +46,25 @@ services:
       - persistence-bin:/source/src/Platform/Ligature.Platform.Persistence/bin
       - sharedkernel-obj:/source/src/Shared/Ligature.SharedKernel/obj
       - sharedkernel-bin:/source/src/Shared/Ligature.SharedKernel/bin
+    healthcheck:
+      # LIVENESS, not readiness. It proves Kestrel is listening and the request
+      # pipeline runs. It says nothing about the database, and it deliberately
+      # asserts no particular status: an unauthenticated /api/me answers 401,
+      # and a probe that pinned that would start failing the day the endpoint's
+      # contract changed, for no gain.
+      #
+      # Only the development image. The production `host` target is built from
+      # the aspnet runtime image, which has no curl, so the base compose.yaml
+      # keeps its production shape and adds nothing.
+      test: ["CMD-SHELL", "curl -sS -o /dev/null http://localhost:8080/api/me"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+      # Generous: `dotnet watch` builds the solution before it serves anything,
+      # and a cold container with an empty obj/ volume takes minutes. A failure
+      # inside the grace period does not count against retries.
+      start_period: 180s
 
   # ------------------------------------------------------------ web client
 
@@ -81,10 +100,42 @@ services:
       # which is where the browser looks, and the container needs no trust
       # store of its own.
       - ./web/ligature-web/.certs:/app/.certs:ro
+    healthcheck:
+      # WHAT THIS EXISTS FOR. ./up.sh proves five criteria at STARTUP and says
+      # nothing about the minutes after. A dev server that comes back on plain
+      # HTTP still reads `Up` here while being unreachable through the published
+      # port — that happened, and it cost an afternoon. This makes the state
+      # visible as `unhealthy`.
+      #
+      # It does NOT cure it. Compose's restart policy acts on process EXIT, not
+      # on health, so nothing restarts an unhealthy container; the cure is a
+      # developer running `restart web`, and AGENTS.md says so.
+      #
+      # HTTPS on purpose: a server that lost its TLS configuration answers
+      # http://localhost:5173 perfectly well, so only a TLS request tells the
+      # two apart. rejectUnauthorized is false because TRUST is not what is
+      # being tested — the certificate is trusted by the developer's keychain,
+      # where the browser looks, and the container needs no trust store.
+      #
+      # Written in node because node:24-bookworm-slim carries neither curl nor
+      # wget. A probe using either would never pass, and would report a working
+      # server as broken.
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          require('node:https').get({host:'localhost',port:5173,path:'/',rejectUnauthorized:false},
+          r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     depends_on:
-      # Ordering, not readiness. Vite proxies lazily, so the API need only exist
-      # by the first request the browser makes; there is no health endpoint and
-      # this slice adds none.
+      # Ordering, not readiness, and it stays that way now that the API has a
+      # healthcheck. Vite proxies lazily, so the API need only exist by the
+      # first request the browser makes; waiting for service_healthy would hold
+      # the browser back for a `dotnet watch` build that nothing yet needs.
       host:
         condition: service_started
 

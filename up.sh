@@ -149,6 +149,29 @@ web_serves_the_shell() {
     [[ "$body" == *'id="root"'* ]] && [[ "$body" == *'/src/main.tsx'* ]]
 }
 
+# Docker's own verdict, not ours. The two probes above run from the developer's
+# machine and would pass even if the container's healthcheck were wired wrongly
+# — pointed at the wrong port, or written with a client the image does not have,
+# which would report a working server as broken forever. This asserts that the
+# check itself runs and passes.
+#
+# `starting` is not `healthy`: a service inside its grace period has not been
+# judged yet, so this keeps waiting rather than accepting it.
+reports_healthy() {
+    local container status
+    container="$("${COMPOSE[@]}" ps -aq "$1" 2>/dev/null | head -n1)"
+
+    [ -n "$container" ] || return 1
+
+    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container" 2>/dev/null || true)"
+
+    [ "$status" = "healthy" ]
+}
+
+web_is_healthy() {
+    reports_healthy web
+}
+
 wait_for() {
     local description="$1" probe="$2" deadline=$((SECONDS + READY_TIMEOUT))
 
@@ -241,6 +264,7 @@ done
 
 wait_for "the API answers on ${API_ORIGIN}" api_answers || failed=1
 wait_for "${WEB_ORIGIN} serves the application" web_serves_the_shell || failed=1
+wait_for "the web container reports itself healthy" "web_is_healthy" || failed=1
 
 if [ "$failed" -ne 0 ]; then
     echo >&2
