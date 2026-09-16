@@ -337,6 +337,18 @@ interface AuthSessionSource {   // the only thing that changes when GET /me arri
 > The retry re-asks `/me`. It does **not** clear authentication state or the query cache, because nothing has been established about the session — a retry is not a sign-out.
 >
 > **`/me` is called on application and authentication-boundary resolution, and on explicit retry. Never on a timer.** It is an authenticated request and therefore counts as session activity, so polling it would keep an idle session alive indefinitely and quietly defeat the idle timeout. It must not be used as a heartbeat or liveness probe.
+>
+> **The event table's `Sign-in succeeds | authenticated | platform/auth hook` row is superseded.** A successful sign-in is an authentication boundary, so it *resolves* the session rather than declaring it:
+>
+> | Event | Next state | Emitted by |
+> | --- | --- | --- |
+> | Sign-in succeeds | `unauthenticated` → whatever `/me` then returns | `platform/auth` hook, through `AuthSession` |
+>
+> Accepted credentials establish that the password was right. They do not establish **who the caller is**, and the difference is not academic: a session entered on the strength of the `204` alone has a `null` principal, so every permission is `unknown`, so §9's optimistic visibility — which applies only *while resolution is in flight* — becomes permanent for the life of that session.
+>
+> The intermediate state is therefore **not** `authenticated` with a `null` principal: that claims an established caller before anything has established one. The sign-in surface stays on screen while `/me` resolves, so the authenticated application is never rendered without an answer, and a sign-in whose caller cannot be resolved is an authentication-resolution failure — stated as one, and never reported as a rejected sign-in.
+>
+> **The pre-flight sign-out of §13 is unchanged.** `/me` does not replace it. The browser cannot inspect the `HttpOnly` cookie, so an earlier `401` from `/me` is not grounds to conclude that no session exists now, and identity-establishing commands are still refused while a caller is established.
 
 ---
 
