@@ -22,11 +22,19 @@ const OVERLAY = path.join(REPO_ROOT, "compose.dev.yaml");
 
 const DOCKERIGNORE = path.join(REPO_ROOT, ".dockerignore");
 
+interface ComposeHealthcheck {
+  readonly test?: readonly string[] | string;
+  readonly interval?: string;
+  readonly retries?: number;
+  readonly start_period?: string;
+}
+
 interface ComposeService {
   readonly build?: { readonly target?: string };
   readonly ports?: readonly string[];
   readonly volumes?: readonly string[];
   readonly environment?: Readonly<Record<string, string>>;
+  readonly healthcheck?: ComposeHealthcheck;
 }
 
 interface ComposeFile {
@@ -159,6 +167,64 @@ describe("the development overlay", () => {
     const mounts = host?.volumes ?? [];
 
     expect(mounts.some((mount) => mount.includes("nuget"))).toBe(true);
+  });
+
+  /**
+   * The environment reports whether it is still serving what it promised.
+   *
+   * ./up.sh proves five criteria at STARTUP and says nothing about the minutes
+   * after. A dev server that comes back on plain HTTP — which happened, and
+   * cost an afternoon — still reads `Up` in `docker compose ps` while being
+   * unreachable through the published port. These checks make that state
+   * visible.
+   *
+   * They do NOT cure it. Compose's `restart:` policy acts on process EXIT, not
+   * on health, so nothing restarts an unhealthy container here; the cure stays
+   * a developer restarting it, and the note in AGENTS.md says so.
+   */
+  describe("the health of a running environment", () => {
+    /** Compose accepts a string or an argv array; both are read the same way here. */
+    const probe = (service: ComposeService | undefined): string => {
+      const test = service?.healthcheck?.test ?? [];
+
+      return typeof test === "string" ? test : test.join(" ");
+    };
+
+    it("checks the web client's health", () => {
+      expect(web?.healthcheck).toBeDefined();
+    });
+
+    /**
+     * THE POINT OF THE CHECK. Probing http://localhost:5173 would pass in
+     * exactly the broken state this exists to catch, because a dev server that
+     * lost its TLS configuration answers plain HTTP perfectly well.
+     */
+    it("probes the web client over HTTPS, since plain HTTP is the failure it looks for", () => {
+      expect(probe(web)).toContain("https");
+      expect(probe(web)).toContain("5173");
+    });
+
+    /**
+     * node:24-bookworm-slim carries neither curl nor wget. A probe written with
+     * either is not a failing check — it is a check that can never pass, and
+     * would report a healthy server as broken forever.
+     */
+    it("probes the web client with node, the only client its image has", () => {
+      expect(probe(web)).toContain("node");
+      expect(probe(web)).not.toContain("curl");
+      expect(probe(web)).not.toContain("wget");
+    });
+
+    it("checks the API's health", () => {
+      expect(host?.healthcheck).toBeDefined();
+    });
+
+    it("gives each check an interval and a grace period, so a slow start is not a failure", () => {
+      for (const service of [web, host]) {
+        expect(service?.healthcheck?.interval).toBeDefined();
+        expect(service?.healthcheck?.start_period).toBeDefined();
+      }
+    });
   });
 
   it("declares every named volume it mounts", () => {
