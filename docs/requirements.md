@@ -122,6 +122,17 @@ Database:  grant X -> role Y, revoked
 REFUSED, not re-granted.
 ```
 
+### Direction is the whole design
+
+The two directions are never symmetric, and no rule may be written that treats them as one.
+
+| Direction | Meaning | Outcome |
+| --- | --- | --- |
+| **Seed → Database** — in the catalogue, absent from the database | This release introduces it | **Additive reconciliation** |
+| **Database → Seed** — in the database, absent from the catalogue | The database holds authorization state the catalogue does not account for | **Drift, and a refusal** |
+
+Reading the second as "the catalogue is authoritative, so remove it" is the single mistake this requirement exists to prevent. The catalogue is authoritative about what a release *introduces*; it is not authoritative about what may be *taken away*.
+
 ### Permitted mutations
 
 Exhaustive. Anything not listed here is forbidden.
@@ -145,6 +156,7 @@ Exhaustive. Anything not listed here is forbidden.
 | F5 | Revoke an existing grant | An authorization contraction for every holder of that role |
 | F6 | Re-create a revoked grant | Revoked means a human decided. Re-granting is an authorization expansion a deploy is not entitled to make |
 | F7 | Modify an immutable or security-semantic field — `Code`, `Resource`, `Action`, `RequiresHumanActor`, `IsSystemRole` | Identity and security semantics. Flipping `RequiresHumanActor` false→true makes every agent holding that permission non-compliant under RP6; true→false silently weakens a human-only control |
+| F8 | Modify an existing `role_permission` row in any way | A grant is either newly introduced or it already represents authorization state. Its revocation history is authoritative and is never edited — there is no such thing as reconciling a grant |
 
 **F7 is already enforced by the domain and must stay that way.** `Permission.Code`, `Resource`, `Action` and `RequiresHumanActor` are get-only, as are `Role.IsSystemRole`. The only mutators are `UpdateMetadata` (name and description) and `Deactivate`/`Reactivate`. Synchronisation therefore *cannot* change authorization semantics without someone first adding a domain mutator — a visible, reviewable act. No mutator may be added for the convenience of this process.
 
@@ -159,7 +171,7 @@ Exhaustive. Anything not listed here is forbidden.
 | **Authority** | `migration_role`. PE2 requires `permission` to be writable only by a migration role; running this as `provisioning_role` would entrench the opposite |
 | **Placement** | An explicit one-shot step in the deployment chain, beside `migrator` and `audit-schema`, so it runs on every deployment rather than when someone remembers |
 | **Not** | Inside `ProvisionAsync`, which owns the System actor, `TenantProvisioned` and first-tenant semantics |
-| **Atomicity** | One transaction. A refusal rolls back every mutation in the run; there is no partial synchronisation |
+| **Atomicity** | See below. There is no partial synchronisation |
 | **Order** | Permissions, then roles, then grants — foreign-key order |
 | **Identity** | A permission and a role are matched by `Code`; a grant by the pair `(role code, permission code)` |
 
@@ -167,11 +179,32 @@ Exhaustive. Anything not listed here is forbidden.
 
 **A run that changes nothing is a success, not a no-op to be skipped.** Idempotence is required: a second run against an unchanged database performs no mutation and still reports success.
 
+### The transaction boundary
+
+> Catalogue mutations are atomic. A refused synchronisation applies none of its catalogue mutations. The synchronisation audit event is retained independently of the rolled-back catalogue transaction.
+
+Stated separately, and in those words, because an implementation that puts the audit write inside the catalogue transaction destroys the evidence of every refusal — the one outcome the evidence exists for.
+
 ### Audit
 
-One `CatalogueSynchronised` audit event **per execution** — including runs that change nothing and runs that refuse. The absence of an event then means the step did not run, which is itself informative.
+`CatalogueSynchronised` is **the audit event for the synchronisation operation**, not an event for an individual mutation. One per execution — including runs that change nothing and runs that refuse. The absence of an event means the step did not run, which is itself informative.
 
-The event records **that reconciliation happened and what its outcome was**. The database remains the source of truth for what the catalogue now contains, so the event carries counts and a reference, never the changed rows:
+It is written through the **autonomous** path, outside the command pipeline, as `TenantProvisioned` already is.
+
+**It must not merely say that a sync ran.** A reviewer or investigator has to be able to distinguish these without reading the database:
+
+```text
+CatalogueSynchronised
+Outcome = Succeeded
+```
+
+```text
+CatalogueSynchronised
+Outcome  = Refused
+Reasons  = PermissionMissingFromSeed
+```
+
+The database remains the source of truth for what the catalogue now contains, so the event carries counts, reason codes and a digest — never the changed rows:
 
 | Field | Content |
 | --- | --- |
@@ -180,12 +213,42 @@ The event records **that reconciliation happened and what its outcome was**. The
 | Actor | The System actor, as `TenantProvisioned` uses |
 | Outcome | `Succeeded` or `Refused` |
 | Counts | permissions inserted; permission metadata reconciled; roles inserted; role metadata reconciled; grants inserted |
-| Drift detected | Whether any refusal condition was found |
-| Drift reference | On refusal, a SHA-256 over the canonical, sorted list of refusal findings (condition and code), hex-encoded |
+| Refusal reasons | On refusal, the distinct reason codes found and a count per code |
+| Refusal digest | On refusal, a SHA-256 over the canonical, sorted list of findings (reason code and subject code), hex-encoded |
 
-**The human-readable drift detail goes to the operator's output and the exit code, not into the audit trail.** The digest lets two refusals be compared without putting catalogue contents into audit.
+**Refusal reason codes.** A closed set, one per detectable condition, so the set stays bounded however large the drift is:
 
-**A refused run must still record its event.** The mutations roll back; the audit record must not. Precedent exists: `AuditCommandScopeBehavior` wraps the transaction for exactly this reason — what it writes must outlive the transaction's fate — and `TenantProvisioned` is already emitted by the provisioning tool on its own transaction, outside the command pipeline.
+| Code | Condition | Rule |
+| --- | --- | --- |
+| `PermissionMissingFromSeed` | A permission in the database, absent from the catalogue | F2 |
+| `RoleMissingFromSeed` | A role in the database, absent from the catalogue | F2 |
+| `GrantMissingFromSeed` | An active grant in the database, absent from the catalogue | F5 |
+| `InactiveCatalogueEntry` | A permission or role inactive in the database and listed in the catalogue | F4 |
+| `RevokedGrantInSeed` | A grant revoked in the database and listed in the catalogue | F6 |
+| `SecuritySemanticDrift` | `Code`, `Resource`, `Action`, `RequiresHumanActor` or `IsSystemRole` differs | F7 |
+
+**The human-readable detail — which permission, which role, which field — goes to the operator's output and the exit code, not into the audit trail.** The reason codes say what kind of refusal it was; the digest lets two refusals be compared for identity. Neither puts catalogue contents into audit.
+
+**A refused run must still record its event**, per the transaction boundary above. `AuditCommandScopeBehavior` wraps the transaction for exactly this reason — what it writes must outlive the transaction's fate.
+
+### The privilege expansion is a C2 security decision
+
+Not an implementation detail, and recorded here so it is deliberate rather than accidental.
+
+`migration_role` today holds **nothing at all on the trail** — an invariant asserted by `AuditConstructionVerification`. Emitting `CatalogueSynchronised` from a step that runs as `migration_role` is impossible without changing that. A new deployment script `005` therefore grants, and the verification matrix is amended to match:
+
+| Privilege | `audit.audit_record` | `audit.audit_entity_ref` |
+| --- | --- | --- |
+| `SELECT` | denied | denied |
+| `INSERT` | **granted** | **granted** |
+| `UPDATE` | denied | denied |
+| `DELETE` | denied | denied |
+
+> `migration_role` is permitted to append audit evidence for release-controlled migration operations. It has no authority to read, modify, or delete audit records.
+
+The migration principal can therefore create immutable audit evidence and can never afterwards alter or remove it — AR19 holds unchanged. This is the same shape as script `004`, which granted `provisioning_role` the same two privileges when provisioning began emitting through the audit pipeline: the privilege model, not the path, was what was out of date.
+
+**The considered alternative was running the step as `provisioning_role`**, which already holds these grants. It was rejected: it would collapse the authority boundary deliberately established around catalogue writes, and `004` removed that role's catalogue privileges for the same reason. That `migration_role` also holds `CREATE` on schema `public` is a real consideration, weighed and accepted.
 
 ### Acceptance criteria
 
@@ -202,8 +265,11 @@ The event records **that reconciliation happened and what its outcome was**. The
 - **A11** A run against a database with no System actor exits 0 without mutating anything.
 - **A12** Every run emits exactly one `CatalogueSynchronised` event, including a refused run and a run that changed nothing.
 - **A13** The event's counts equal the mutations actually committed.
-- **A14** The process exits non-zero on refusal, so a deployment stops.
-- **A15** `CatalogueDriftTests` passes after a successful synchronisation of a purely additive divergence.
+- **A14** A refused run's event carries `Outcome = Refused` and at least one refusal reason code, and the codes are the ones the findings map to.
+- **A15** An existing `role_permission` row is never updated, whatever the catalogue says.
+- **A16** `migration_role` can INSERT into `audit.audit_record` and `audit.audit_entity_ref`, and can still not SELECT, UPDATE or DELETE either.
+- **A17** The process exits non-zero on refusal, so a deployment stops.
+- **A18** `CatalogueDriftTests` passes after a successful synchronisation of a purely additive divergence.
 
 ### Notes
 
@@ -211,7 +277,13 @@ The event records **that reconciliation happened and what its outcome was**. The
 
 **PE2's premise is not yet met.** `permission` is not yet writable only by a migration role — that enforcement is tracked in the enforcement-layer entry under Known Gaps. It does not block PRV-C2: writing this step to run as `migration_role` costs nothing now and does not depend on the enforcement work landing first.
 
-**`CatalogueSynchronised` is a new audit event type**, and the type set is release-controlled: the host verifies its compiled audit declarations against the deployed catalogue and refuses to start on a mismatch. Adding it is part of this requirement, not a follow-up. The spelling follows the audit catalogue's convention for event codes, which is British (`AuthorisationDenied`); confirm against the deployed catalogue before the code is written.
+**`CatalogueSynchronised` is a new audit event type**, and adding one takes three things, not one:
+
+1. A declaration in `AuditDeclarations.ByCommand`, keyed on a marker type. `[typeof(PlatformProvisioning)] = new("UserManagement", ["TenantProvisioned"])` is the precedent for an emitter that is not a command — listed there precisely so the start-time check covers it.
+2. Rows in `audit.audit_event_type` and `audit.audit_event_origin`, deployed by `Ligature.AuditSchema` as `audit_owner` in the deployment phase, before the host starts. Script `004` moved the catalogue there deliberately: IMPL-08 makes it a precondition of the host rather than tenant data.
+3. Nothing further. `AuditDeclarations.VerifyAgainst` then passes, and the host — which refuses to start when compiled declarations and the deployed catalogue disagree — starts.
+
+**On the spelling.** All twenty currently deployed codes are spelling-neutral, so the deployed catalogue does not require British spelling and no claim is made that it does. `CatalogueSynchronised` is chosen to match the terminology the Audit specification uses throughout.
 
 ---
 
@@ -856,6 +928,12 @@ it. It runs as `migration_role` in the deployment chain, covers all three
 tables, emits one `CatalogueSynchronised` audit event per execution, and
 `ProvisionAsync` is left alone: catalogue evolution is removed from the
 first-provision lifecycle rather than bolted onto it.
+
+It also carries one **security decision**: `migration_role`, which today holds
+nothing at all on the audit trail, gains INSERT — and only INSERT — on
+`audit.audit_record` and `audit.audit_entity_ref`, so a release-controlled
+migration operation can append immutable evidence it can never afterwards read,
+alter or remove.
 
 **Deferred to:** its own story. Deliberately kept out of AUD-S01, which
 established the deployment's security boundary and nothing else.
