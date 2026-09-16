@@ -98,7 +98,11 @@ PRV-C2 resolves this by **removing catalogue evolution from the first-provision 
 
 > **Catalogue synchronisation is monotonic with respect to authorization.** It may introduce new catalogue entries and new grants, and it may reconcile metadata that carries no authorization semantics. It must never silently remove, reactivate, or weaken existing authorization state.
 
-**Monotonic does not mean "always succeeds".** Synchronisation refuses rather than resolving anything it is not entitled to change. A bad catalogue must not be able to reduce *or* expand existing authorization semantics.
+**Monotonic does not mean "always succeeds".** Synchronisation refuses rather than resolving anything it is not entitled to change.
+
+> **Authorization expansion is permitted only where explicitly represented by an additive catalogue entry; authorization reduction is never performed by synchronisation.**
+
+Stated that way rather than as "never expands", which would be false: inserting a grant the catalogue introduces *does* expand what holders of that role can do, and that is the point of the requirement. What is forbidden is expansion that no additive catalogue entry represents — re-granting a revoked grant, reactivating a deactivated permission — and reduction of any kind.
 
 ```text
 Seed:      permission A, permission B
@@ -175,7 +179,11 @@ Exhaustive. Anything not listed here is forbidden.
 | **Order** | Permissions, then roles, then grants — foreign-key order |
 | **Identity** | A permission and a role are matched by `Code`; a grant by the pair `(role code, permission code)` |
 
-**An unprovisioned database is a no-op, not a refusal.** The provisioner sits behind the `bootstrap` Compose profile, so `./up.sh` reaches a database with schema and no System actor. With no catalogue there is nothing to reconcile and first provision will create it, so the step reports that and exits 0. Refusing would break the documented path from a clean clone to a running system.
+**`Code` is the identity key, not a compared field.** It appears in F7 because it is immutable and must stay so; it is absent from A6 because a row is *matched* by `Code`, so two rows with different codes are two different rows rather than one row that drifted. A permission whose code changed in the catalogue therefore surfaces as a pair of findings — a new code absent from the database, and an old code absent from the catalogue — and the second of those is a refusal (`PermissionMissingFromSeed`). That is the intended behaviour: renaming a code is exactly the accident F2 exists to catch.
+
+**An unprovisioned database is a no-op, not a refusal — and it emits no audit event.** The provisioner sits behind the `bootstrap` Compose profile, so `./up.sh` reaches a database with schema and no System actor. With no catalogue there is nothing to reconcile and first provision will create it, so the step reports that and exits 0. Refusing would break the documented path from a clean clone to a running system.
+
+**No synchronisation occurred, so none is recorded.** There is also no System actor to attribute an event to in precisely this state, and inventing a synthetic actor to satisfy an audit rule would put a fiction in the trail to describe something that did not happen. The tool correctly determined there was nothing it could synchronise; that is a bootstrap no-op, not a synchronisation with an empty result.
 
 **A run that changes nothing is a success, not a no-op to be skipped.** Idempotence is required: a second run against an unchanged database performs no mutation and still reports success.
 
@@ -187,7 +195,9 @@ Stated separately, and in those words, because an implementation that puts the a
 
 ### Audit
 
-`CatalogueSynchronised` is **the audit event for the synchronisation operation**, not an event for an individual mutation. One per execution — including runs that change nothing and runs that refuse. The absence of an event means the step did not run, which is itself informative.
+`CatalogueSynchronised` is **the audit event for the synchronisation operation**, not an event for an individual mutation. One per synchronisation — including runs that change nothing and runs that refuse.
+
+Its absence against a **provisioned** database means the step did not run, which is itself informative. Against an unprovisioned one it means the bootstrap no-op above, where no synchronisation occurred and there is no System actor to attribute an event to.
 
 It is written through the **autonomous** path, outside the command pipeline, as `TenantProvisioned` already is.
 
@@ -210,7 +220,7 @@ The database remains the source of truth for what the catalogue now contains, so
 | --- | --- |
 | Release identifier | The synchronisation tool's assembly informational version — deterministic, and requires nothing of the operator |
 | Database identity | `current_database()` |
-| Actor | The System actor, as `TenantProvisioned` uses |
+| Actor | The System actor, as `TenantProvisioned` uses — which exists by definition wherever this event does, since an unprovisioned database emits none |
 | Outcome | `Succeeded` or `Refused` |
 | Counts | permissions inserted; permission metadata reconciled; roles inserted; role metadata reconciled; grants inserted |
 | Refusal reasons | On refusal, the distinct reason codes found and a count per code |
@@ -260,10 +270,10 @@ The migration principal can therefore create immutable audit evidence and can ne
 - **A6** A difference in `Resource`, `Action`, `RequiresHumanActor` or `IsSystemRole` causes refusal, naming the field.
 - **A7** A permission or role that is inactive in the database and present in the catalogue causes refusal — it is neither reactivated nor ignored.
 - **A8** A grant present in the catalogue and revoked in the database causes refusal — it is not re-granted.
-- **A9** A refusal leaves the database byte-identical to its pre-run state.
+- **A9** A refused run commits no mutations to `permission`, `role` or `role_permission`. Its audit record is the deliberate exception and is expected to be present.
 - **A10** A second run against an unchanged database mutates nothing and succeeds.
-- **A11** A run against a database with no System actor exits 0 without mutating anything.
-- **A12** Every run emits exactly one `CatalogueSynchronised` event, including a refused run and a run that changed nothing.
+- **A11** A run against a database with no System actor exits 0, mutates nothing, and writes no audit record.
+- **A12** Every synchronisation run against a **provisioned** database emits exactly one `CatalogueSynchronised` event, including successful no-change runs and refused runs. An unprovisioned database with no System actor is a successful bootstrap no-op and emits no synchronisation event.
 - **A13** The event's counts equal the mutations actually committed.
 - **A14** A refused run's event carries `Outcome = Refused` and at least one refusal reason code, and the codes are the ones the findings map to.
 - **A15** An existing `role_permission` row is never updated, whatever the catalogue says.
