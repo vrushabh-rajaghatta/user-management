@@ -136,6 +136,19 @@ export const userRoutes: RouteObject[] = [
 - A route that depends on a permission (§9) wraps its element in `<Can>`. Showing the page is UX; the server still decides.
 - A route whose path is part of a backend contract (§13) says so in a comment, and must not be renamed.
 
+> **Amended (W3).** The authentication flows' paths, and where each comes from:
+>
+> | Path | Origin |
+> | --- | --- |
+> | `/sign-in` | Chosen by the client |
+> | `/forgot-password` | Chosen by the client |
+> | `/activate` | **Backend contract** — built by `NotificationTemplates` |
+> | `/reset-password` | **Backend contract** — built by `NotificationTemplates` |
+>
+> The last two must not be renamed: every link already emailed points at them.
+>
+> The flows mirror the backend's own split. Sign-in and sign-out are `modules/platform/auth`; activation, forgot-password and reset-password are `modules/platform/account`. Where one needs the other's operation — activation and reset end an existing session first, and forgot-password does not (§13) — it goes through that module's **hook**, which is its public surface, never its API operation (§6).
+
 ---
 
 ## 6. API layering
@@ -232,6 +245,10 @@ The backend returns every failure in the same shape, and those uniform responses
 > **Amended (W2).** The row for `403` used to read "handled as a permission refusal; the backend doesn't send 403 for authorization yet". The host's only `403` today is its **cross-site refusal** (`docs/architecture.md` §17), which a same-origin client sees only when a deployment is misconfigured — a proxy rewriting `Host`, for example. It is therefore an ordinary error, not a permission state. A missing permission is still refused with `400`.
 
 > **Rule.** Logic branches on status codes, never on message text. A message is shown to the user and never interpreted.
+
+> **Amended (W3).** One named exception, on one page. **The sign-in page shows fixed text — "Invalid username or password." — for a `401`, and never the server's own `401` string.** `"Authentication is required."` is the pipeline's wording, addressed to an API caller rather than to a person at a sign-in form, and the backend returns it deliberately for every failure alike: unknown user, wrong password, locked, inactive, and a request that already presents a live session.
+>
+> This branches on **status**, not on message text, so the rule above stands unchanged. Every other status on that page follows the table above, and a `400` is still shown word for word.
 
 ---
 
@@ -402,6 +419,12 @@ A zod form schema plays the same role as a repository pre-check. It saves the us
 - A schema never rejects input the server would accept.
 - Fields are built with `FormField` (label, control, description, error, `aria-describedby`) and never assembled from scratch.
 
+> **Amended (W3).** **No form library.** Forms hold their input in React state and parse it with zod on submit. The `useUnsavedChangesGuard` example below is written in React Hook Form's vocabulary and describes the pattern for the first form that *edits* data; the library arrives with that form, not ahead of it.
+>
+> A **confirmation field** — "confirm your new password" — is a client affordance against mistyping a value the user cannot read back. It is not part of the request body, which carries only the new password, so it does not breach the rule that a schema never rejects input the server would accept.
+>
+> `FormField` is an accessibility presentation primitive and **knows nothing of zod, of any form library, or of API errors**. It receives an already-computed error string and does not care where it came from. Lint enforces this.
+
 ### Unsaved changes
 
 This pattern is defined for the whole app and adopted by every form that edits data.
@@ -428,6 +451,12 @@ Emailed links put a credential in the **URL fragment**. Browsers never send a fr
 5. A link without a token shows a message, not a form.
 6. Show every refusal with the server's single message. When the refusal is a password-policy `400`, the token is still valid, so keep the form open.
 
+> **Amended (W3).** Clause 1, precisely. The fragment must contain **exactly one `token` parameter whose value is non-empty and not only whitespace**. Missing, duplicated, blank or unparseable all produce clause 5's no-token state: `#token=a&token=b` is **refused**, rather than quietly taking the first, which is what `URLSearchParams.get` would do. Be explicit about credential-bearing URL syntax instead of inheriting a library default.
+>
+> The value is never trimmed or otherwise altered before it is sent. It is an opaque credential, and the backend percent-escapes it when building the link. No other fragment parameter is read, and none affects this decision.
+>
+> Clause 2 is observable: the fragment is removed on mount, preserving path and query, and **a test asserts that `window.location.hash` is empty afterwards**.
+
 > **Rule.** Don't build a generic token-handling utility. This logic stays in each feature that needs it, in plain sight, with its own tests. A shared helper would hide the security reasoning, and one change to it would weaken every page at once.
 
 **A route's path is part of the backend contract when the backend builds links to it.** `/activate` and `/reset-password` are built by `NotificationTemplates`. Renaming either breaks every link already sent.
@@ -444,6 +473,29 @@ Emailed links put a credential in the **URL fragment**. Browsers never send a fr
 | aborted | Stop, silently |
 
 The identity-establishing request itself also uses `unauthorized: "return"`: its `401` is an answer about the credentials presented, not about any session. This is implemented with the flows in W3.
+
+> **Amended (W3).** Which flows, and what the local state does *not* prove.
+>
+> Sign-in, activation and password reset end any existing session first. **Forgot-password does not**: it establishes no identity and is refused by nothing. Sign-out is the operation itself.
+>
+> **The client does not treat local `signedOut()` as proof that the server revoked anything.** It is a statement about what the client believes. If the identity-establishing request that follows still meets a live server session, the backend's `401` remains authoritative. That is a property worth keeping rather than a case to work around.
+
+> **Amended (W3). The return path is validated by `shared/auth/validateReturnPath`, and by nothing else.** `RequireAuth` captures the path and query and passes them on without judging them. **React Router's refusal to perform external navigation is not this contract**: it is a library behaviour that may change, it resolves some malformed inputs rather than rejecting them, and it is not a security boundary.
+>
+> A value is accepted only when every one of these holds; otherwise the result is `"/"`, and the function never throws:
+>
+> 1. it is a non-empty string;
+> 2. it begins with exactly one `/`, and the next character is neither `/` nor `\`;
+> 3. it contains no backslash anywhere — the URL parser reads one as `/`;
+> 4. it contains no control character (below `U+0020`, or `U+007F`) — the parser strips tabs and newlines before resolving;
+> 5. it contains no `#`;
+> 6. it still resolves to this origin.
+>
+> **The returned value is always a path with an optional query, and never contains a fragment.** It is built as `${url.pathname}${url.search}` — the normalised form the parser agreed to, never the raw input — so it cannot carry a fragment even if one reached the construction, and a test asserts this of the result directly, independently of the rules above. The fragment is where emailed credentials travel, and a return path is never allowed to become somewhere one could be parked.
+
+> **Amended (W3). A successful password reset does not revoke existing sessions.** CRD-C3's frozen contract writes the credential, the token and the password history and clears the lockout; it does not touch `user_session` and emits no `SessionRevoked`. Change-password (CRD-C4) *does* end the account's other sessions, by A5 — the two differ, and the difference is deliberate in the specification rather than an implementation oversight.
+>
+> **The client must therefore not represent a successful reset as revoking other sessions.** The success wording is "Your password has been changed. Sign in with your new password." and says nothing further. A future change to revoke sessions on reset requires backend change control and is outside this contract.
 
 ---
 
@@ -511,6 +563,21 @@ Accessibility is tested at the level of components, not page by page (§16): if 
 | Real host | A small number of tests against a running host | Only where the cookie and authentication transport matter; the rest of the suite never needs PostgreSQL or .NET |
 | Contract, against the document | Schemas compared with `/openapi/v1.json` | **Deferred (O8)** — it reopens `docs/architecture.md` §18's non-decisions and needs CI |
 | End to end | Playwright | Complete flows against a running host — a later story |
+
+> **Amended (W3).** The real-host tests are **`npm run test:host`**: a separate Vitest project and configuration, and never part of `npm test`, which stays independent of PostgreSQL, .NET, certificates and browsers.
+>
+> The command owns its whole environment — a throwaway database built with the production tooling, the host, and the HTTPS development server — and drops the database in teardown, including after a failure. It reuses nothing that happens to be running, because a host already running points at a database this suite must not touch. **A missing prerequisite fails naming which one and how to provide it; nothing skips silently.**
+>
+> Two techniques, and neither substitutes for the other:
+>
+> | Technique | Proves |
+> | --- | --- |
+> | **Chromium**, driven by Playwright (pinned, Chromium only) | What a real browser originates: how it stores and transmits a `Secure`, `__Host-` prefixed cookie, and what it actually sends for Fetch Metadata. Requests are issued **by the page**; `page.request` is not used for any proof, because it shares the cookie jar but its handling of `Secure`, `SameSite`, `__Host-` and Fetch Metadata is unstated, and an unstated behaviour cannot be evidence. |
+> | **`node:http`** | The exact `Host` / `Origin` / `Sec-Fetch-Site` matrix. Node's `fetch` silently drops `Host`. |
+>
+> A browser cannot demonstrate the cross-site refusal with a JSON `POST`: the CORS preflight stops it before the middleware sees it, so a cross-origin browser proof uses a simple request. Each matrix row asserts **"not the cross-site refusal"**, never "succeeded" — those requests may still fail on their own merits with `400` or `401`, and a proof that accepted any non-`403` would pass for the wrong reason.
+>
+> These are **transport tests**. End-to-end UI testing remains a later story.
 
 ### Contract validation
 
