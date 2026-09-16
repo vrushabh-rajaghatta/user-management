@@ -3,6 +3,8 @@ import { accountRoutes } from "@/modules/platform/account/routes";
 import { SIGN_IN_PATH, SignOutButton } from "@/modules/platform/auth";
 import { authRoutes } from "@/modules/platform/auth/routes";
 import { homeRoutes } from "@/modules/platform/home/routes";
+import { usersNavigation } from "@/modules/platform/users";
+import { userRoutes } from "@/modules/platform/users/routes";
 import { RequireAuth } from "@/shared/auth/RequireAuth";
 import { AppShell } from "@/shared/layout/AppShell";
 import { NotFound } from "@/shared/layout/NotFound";
@@ -35,7 +37,7 @@ export function composeRoutes(publicRoutes: RouteObject[], privateRoutes: RouteO
       element: <RequireAuth signInPath={SIGN_IN_PATH} />,
       children: [
         {
-          element: <AppShell actions={<SignOutButton />} />,
+          element: <AppShell actions={<SignOutButton />} navigation={usersNavigation} />,
           children: [{ errorElement: <RouteError />, children: privateRoutes }],
         },
       ],
@@ -50,7 +52,7 @@ export function composeRoutes(publicRoutes: RouteObject[], privateRoutes: RouteO
   return routes;
 }
 
-export const appRoutes = composeRoutes([...authRoutes, ...accountRoutes], [...homeRoutes]);
+export const appRoutes = composeRoutes([...authRoutes, ...accountRoutes], [...homeRoutes, ...userRoutes]);
 
 export function createAppRouter() {
   return createBrowserRouter(appRoutes);

@@ -10,6 +10,9 @@ function Boom(): never {
 
 const signedIn = () => new TestSessionSource({ status: "authenticated", principal: null });
 
+/** Authenticated, with effective permissions that do NOT include user.create. */
+const denied = () => new TestSessionSource({ status: "authenticated", principal: { permissions: [] } });
+
 describe("the application routes", () => {
   it("load the placeholder home page lazily at /, for a signed-in visitor", async () => {
     renderWithApp(appRoutes, { path: "/", source: signedIn() });
@@ -56,6 +59,55 @@ describe("the application routes", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "Home" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+  });
+
+
+  it("load the create user page for a signed-in visitor", async () => {
+    renderWithApp(appRoutes, { path: "/users/new", source: signedIn() });
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Create user" })).toBeInTheDocument();
+  });
+
+  it("send a signed-out visitor from the create user page to sign-in", async () => {
+    renderWithApp(appRoutes, { path: "/users/new" });
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Sign in" })).toBeInTheDocument();
+  });
+
+  it("offer the Users area in the navigation of a signed-in page", async () => {
+    renderWithApp(appRoutes, { path: "/", source: signedIn() });
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Home" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation")).toBeInTheDocument();
+    expect(screen.getByText("Users")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create user" })).toHaveAttribute("href", "/users/new");
+  });
+
+  /**
+   * F8, stated as a test. <Can> hides the NAVIGATION of a capability a caller
+   * does not hold; it is not access control, and the route is deliberately not
+   * gated. A caller whose permission is denied still reaches the page, and the
+   * server still refuses the command.
+   *
+   * So removing the navigation gate would change what is visible, and would NOT
+   * change who can reach this route — which is the distinction worth keeping.
+   */
+  it("still render the create user page for a visitor whose permission is denied", async () => {
+    renderWithApp(appRoutes, { path: "/users/new", source: denied() });
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Create user" })).toBeInTheDocument();
+  });
+
+  /**
+   * Deliberately a SEPARATE test from the one above. Removing the navigation
+   * gate must fail this one and leave that one passing: hiding an entry is
+   * presentation, and it is not what decides who reaches the route.
+   */
+  it("hide the create user navigation from a visitor whose permission is denied", async () => {
+    renderWithApp(appRoutes, { path: "/", source: denied() });
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Home" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Create user" })).toBeNull();
   });
 
   it("show the route error inside the shell when a public page throws, without its detail", async () => {
