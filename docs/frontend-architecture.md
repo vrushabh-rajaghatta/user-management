@@ -149,6 +149,25 @@ export const userRoutes: RouteObject[] = [
 >
 > The flows mirror the backend's own split. Sign-in and sign-out are `modules/platform/auth`; activation, forgot-password and reset-password are `modules/platform/account`. Where one needs the other's operation — activation and reset end an existing session first, and forgot-password does not (§13) — it goes through that module's **hook**, which is its public surface, never its API operation (§6).
 
+> **Amended (W4). Navigation is composed the way routes are, and it is DATA.**
+>
+> A module exports the sections it contributes; `app/` composes them; the shell renders them. `shared/layout` may not import a module (§2), and a section label like "Users" carries business meaning that §3 keeps out of `shared/`, so the label travels as data from the module that owns the vocabulary — the shell renders a section without ever learning what one means.
+>
+> ```ts
+> // shared/layout/navigation.ts — no business meaning, only shape
+> interface NavigationItem { label: string; to: string; permission?: PermissionCode }
+> interface NavigationSection { label: string; items: readonly NavigationItem[] }
+>
+> // modules/platform/users/navigation.ts — the vocabulary lives here
+> export const usersNavigation: readonly NavigationSection[] = [
+>   { label: "Users", items: [{ label: "Create user", to: "/users/new", permission: UserPermissions.create }] },
+> ];
+> ```
+>
+> Data rather than a `ReactNode` slot, deliberately: markup would let each module style its own navigation, and the hierarchy would stop being inspectable. A section whose entries are all hidden renders nothing, rather than a heading over an empty list.
+>
+> **An entry's `permission` decides visibility and nothing else.** Hiding an entry a caller cannot use is presentation (§9); the route behind it is **not** gated, because `<Can>` hides its children and a hidden route would render a blank page — an authorization outcome the client is not entitled to invent. What a denied route should render is a real decision, and it belongs with `GET /me`, when a server-backed permission source exists. The server authorizes the command either way.
+
 ---
 
 ## 6. API layering
