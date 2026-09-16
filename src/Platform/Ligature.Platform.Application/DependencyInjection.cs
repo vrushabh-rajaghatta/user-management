@@ -16,6 +16,7 @@ using Ligature.Platform.Application.Users.Commands.RevokeSession;
 using Ligature.Platform.Application.Users.Commands.RevokeUserSessions;
 using Ligature.Platform.Application.Users.Commands.SignOutEverywhere;
 using Ligature.Platform.Application.Users.Commands.UnlockAccount;
+using Ligature.Platform.Application.Users.Queries.Me;
 using Ligature.SharedKernel.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -50,6 +51,13 @@ public static class DependencyInjection
 
         services.AddScoped<CommandPipeline>();
         services.AddScoped<ICommandDispatcher, CommandDispatcher>();
+
+        // Queries are dispatched but NOT piped (docs/architecture.md section
+        // 11, B6-A). There is no QueryPipeline to register beside
+        // CommandPipeline, and no query behaviour below: a dispatcher is not a
+        // pipeline, and nothing is copied onto queries by symmetry with
+        // commands.
+        services.AddScoped<IQueryDispatcher, QueryDispatcher>();
 
         services.AddScoped(typeof(ICommandBehavior<,>),
             typeof(AuthenticationBehavior<,>));
@@ -139,6 +147,7 @@ public static class DependencyInjection
             typeof(AuditEmissionBehavior<,>));
 
         AddCommandHandlers(services);
+        AddQueryHandlers(services);
 
         return services;
     }
@@ -251,5 +260,18 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<SignOutCommand, SignOutResult>,
             SignOutCommandHandler>();
+    }
+
+    /// <summary>
+    /// Explicit, one line per handler, exactly as commands are registered
+    /// above. Nothing scans, so a handler that exists but was never registered
+    /// fails loudly on first dispatch instead of being found by magic.
+    /// </summary>
+    private static void AddQueryHandlers(IServiceCollection services)
+    {
+        // B6
+        services.AddScoped<
+            IQueryHandler<MeQuery, MeResult>,
+            MeQueryHandler>();
     }
 }

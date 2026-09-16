@@ -115,6 +115,7 @@ app.UseMiddleware<CrossSiteMiddleware>();
 app.UseMiddleware<CallerMiddleware>();
 
 app.MapAuthEndpoints();
+app.MapMeEndpoints();
 app.MapAccountEndpoints();
 app.MapUserEndpoints();
 app.MapIdentityEndpoints();

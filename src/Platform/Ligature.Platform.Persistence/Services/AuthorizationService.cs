@@ -58,83 +58,27 @@ public sealed class AuthorizationService : IAuthorizationService
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        // FIRST, as it was before the shared predicate was extracted.
+        // ScopeType.Create throws on a blank value, and that refusal must keep
+        // happening before the actor is looked up: moving it later would turn a
+        // malformed request into a Denied for an ineligible actor, which is a
+        // different answer to a different question.
         var scopeType = ScopeType.Create(request.ScopeType);
 
-        // Actor state comes from persisted state, never from the caller's own
-        // claim about itself. IExecutionContext.ActorType originates at the
-        // composition boundary; app_user.ActorType is immutable and is what the
-        // assignment-time checks (UR9/RP6) were evaluated against.
-        var actor = await _dbContext.Set<User>()
-            .AsNoTracking()
-            .Where(x => x.Id == request.UserId)
-            .Select(x => new { x.ActorType, x.Status })
-            .FirstOrDefaultAsync(cancellationToken);
+        var actorType = await EligibleActorTypeAsync(request.UserId, cancellationToken);
 
-        if (actor is null || actor.Status != UserStatus.Active)
+        if (actorType is null)
             return AuthorizationResult.Denied;
 
-        // "At least one active identity", per AUT-Q1's parameters, which carry
-        // no identity id. Enforcement against the SPECIFIC identity that
-        // authenticated belongs to the session layer: IDN-C3 revokes the
-        // sessions bound to an identity when it is deactivated.
-        var hasActiveIdentity = await _dbContext.Set<UserIdentity>()
-            .AsNoTracking()
-            .AnyAsync(
-                x => x.UserId == request.UserId
-                    && x.Status == UserStatus.Active,
-                cancellationToken);
-
-        if (!hasActiveIdentity)
-            return AuthorizationResult.Denied;
-
-        // The Role join is new: the authorising role's NAME is captured
-        // alongside its id, because renaming a role (AUT-C4) must not rewrite
-        // the authority recorded against acts already performed.
-        var candidates =
-            from assignment in _dbContext.Set<UserRole>().AsNoTracking()
-            join grant in _dbContext.Set<RolePermission>().AsNoTracking()
-                on assignment.RoleId equals grant.RoleId
-            join permission in _dbContext.Set<Permission>().AsNoTracking()
-                on grant.PermissionId equals permission.Id
-            join role in _dbContext.Set<Role>().AsNoTracking()
-                on assignment.RoleId equals role.Id
-            where assignment.UserId == request.UserId
-
-                // Exact scope match. V1 is Global-only; a Global assignment
-                // does NOT yet imply narrower scopes, and that inheritance is a
-                // decision for whoever introduces the first non-Global scope.
-                && assignment.ScopeType == scopeType
-                && assignment.ScopeId == request.ScopeId
-
-                // Within its effective period at the instant asked about.
-                && assignment.EffectiveFrom <= request.At
-                && (assignment.EffectiveTo == null
-                    || request.At < assignment.EffectiveTo)
-
-                // Beyond UR12's literal text. Revocation normally closes
-                // EffectiveTo (AUT-C2), but UR3 only requires EffectiveTo to be
-                // non-null when revoked — not to be in the past. A revoked row
-                // with a future EffectiveTo would otherwise still authorise.
-                && assignment.RevokedAt == null
-
-                // Live grants only (RP2). Revoked rows are retained so the
-                // historical meaning of a role stays reconstructable.
-                && grant.RevokedAt == null
-
-                && permission.Code == request.PermissionCode
-                && permission.IsActive
-            select new { Assignment = assignment, Role = role, Permission = permission };
-
-        // UR10 — the third edge of the two-edge check. UR9 blocks the
-        // assignment and RP6 blocks the grant; this blocks the act. Defence in
-        // depth: a role that acquired a human-only permission through some path
-        // those two missed still cannot be exercised by a non-human.
-        if (actor.ActorType != ActorType.Human)
-            candidates = candidates.Where(x => !x.Permission.RequiresHumanActor);
-
-        var deciding = await candidates
-            .OrderBy(x => x.Assignment.EffectiveFrom)
-            .ThenBy(x => x.Assignment.Id)
+        // The scope and the code are the NARROWING, and only this view applies
+        // them. Everything else is shared with the enumeration.
+        var deciding = await Candidates(
+                request.UserId,
+                request.At,
+                actorType.Value,
+                scopeType,
+                request.ScopeId,
+                request.PermissionCode)
             .FirstOrDefaultAsync(cancellationToken);
 
         // Same decision as the previous AnyAsync(): none eligible is denial.
@@ -149,4 +93,168 @@ public sealed class AuthorizationService : IAuthorizationService
                 deciding.Assignment.ScopeId,
                 deciding.Assignment.Id));
     }
+
+    /// <summary>
+    /// Everything this actor effectively holds, at an instant — the read GET
+    /// /me needs (B6-B).
+    ///
+    /// The SAME evaluation as IsAllowedAsync, without its narrowing. Both gate
+    /// on EligibleActorTypeAsync and both draw from Candidates; only the single
+    /// check adds a scope and a code. That is what stops this becoming a second
+    /// authorisation rule that drifts from the first.
+    /// </summary>
+    public async Task<IReadOnlyList<EffectivePermission>> EnumerateAsync(
+        EffectivePermissionsRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var actorType = await EligibleActorTypeAsync(request.UserId, cancellationToken);
+
+        if (actorType is null)
+            return [];
+
+        var held = await Candidates(
+                request.UserId,
+                request.At,
+                actorType.Value,
+                scopeType: null,
+                scopeId: null,
+                permissionCode: null)
+            .ToListAsync(cancellationToken);
+
+        // Distinct in memory. Holding two roles that both carry a permission is
+        // an ordinary configuration, and the caller holds that permission once;
+        // EffectivePermission is a record, so equality is structural.
+        return held
+            .Select(x => new EffectivePermission(
+                x.Permission.Code,
+                x.Assignment.ScopeType.Value,
+                x.Assignment.ScopeId))
+            .Distinct()
+            .ToList();
+    }
+
+    /// <summary>
+    /// The actor gates, shared by both views: the user must exist and be
+    /// active, and hold at least one active identity. Returns the actor's type,
+    /// which UR10 needs, or null when the actor is not eligible at all.
+    /// </summary>
+    private async Task<ActorType?> EligibleActorTypeAsync(
+        UserId userId,
+        CancellationToken cancellationToken)
+    {
+        // Actor state comes from persisted state, never from the caller's own
+        // claim about itself. IExecutionContext.ActorType originates at the
+        // composition boundary; app_user.ActorType is immutable and is what the
+        // assignment-time checks (UR9/RP6) were evaluated against.
+        var actor = await _dbContext.Set<User>()
+            .AsNoTracking()
+            .Where(x => x.Id == userId)
+            .Select(x => new { x.ActorType, x.Status })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (actor is null || actor.Status != UserStatus.Active)
+            return null;
+
+        // "At least one active identity", per AUT-Q1's parameters, which carry
+        // no identity id. Enforcement against the SPECIFIC identity that
+        // authenticated belongs to the session layer: IDN-C3 revokes the
+        // sessions bound to an identity when it is deactivated.
+        var hasActiveIdentity = await _dbContext.Set<UserIdentity>()
+            .AsNoTracking()
+            .AnyAsync(
+                x => x.UserId == userId
+                    && x.Status == UserStatus.Active,
+                cancellationToken);
+
+        return hasActiveIdentity ? actor.ActorType : null;
+    }
+
+    /// <summary>
+    /// The assignments that could authorise this actor at this instant, before
+    /// either view narrows them. SHARED, and deliberately so: the enumeration
+    /// and the single check are two views over one evaluation.
+    ///
+    /// The Role join carries the authorising role's NAME alongside its id,
+    /// because renaming a role (AUT-C4) must not rewrite the authority recorded
+    /// against acts already performed.
+    ///
+    /// NOTE WHAT IS ABSENT, here rather than in either caller: role.IsActive is
+    /// deliberately NOT part of the predicate. AUT-C5 states that deactivating
+    /// a role "prevents NEW assignments" while "existing assignments are
+    /// unaffected". Keeping the omission in the shared part is what stops a
+    /// later enumeration adding the filter back because it looks safer, and
+    /// stranding every holder of a retired role. Regression tests pin it on
+    /// both views.
+    /// </summary>
+    private IQueryable<Candidate> Candidates(
+        UserId userId,
+        DateTimeOffset at,
+        ActorType actorType,
+        ScopeType? scopeType,
+        Guid? scopeId,
+        string? permissionCode)
+    {
+        // EVERY condition is in this one where clause, and the projection is
+        // the last operator. EF cannot translate a filter applied AFTER a
+        // projection to a named type, so a caller that narrowed afterwards
+        // would throw at run time rather than compile-time — the narrowing
+        // therefore arrives as parameters instead.
+        //
+        // scopeType is the single "no narrowing" signal for the scope: scopeId
+        // cannot be, because a Global assignment legitimately has a null id.
+        return from assignment in _dbContext.Set<UserRole>().AsNoTracking()
+               join grant in _dbContext.Set<RolePermission>().AsNoTracking()
+                   on assignment.RoleId equals grant.RoleId
+               join permission in _dbContext.Set<Permission>().AsNoTracking()
+                   on grant.PermissionId equals permission.Id
+               join role in _dbContext.Set<Role>().AsNoTracking()
+                   on assignment.RoleId equals role.Id
+               where assignment.UserId == userId
+
+                   // Within its effective period at the instant asked about.
+                   && assignment.EffectiveFrom <= at
+                   && (assignment.EffectiveTo == null
+                       || at < assignment.EffectiveTo)
+
+                   // Beyond UR12's literal text. Revocation normally closes
+                   // EffectiveTo (AUT-C2), but UR3 only requires EffectiveTo to
+                   // be non-null when revoked — not to be in the past. A revoked
+                   // row with a future EffectiveTo would otherwise still
+                   // authorise.
+                   && assignment.RevokedAt == null
+
+                   // Live grants only (RP2). Revoked rows are retained so the
+                   // historical meaning of a role stays reconstructable.
+                   && grant.RevokedAt == null
+
+                   && permission.IsActive
+
+                   // UR10 — the third edge of the two-edge check. UR9 blocks the
+                   // assignment and RP6 blocks the grant; this blocks the act.
+                   // Defence in depth: a role that acquired a human-only
+                   // permission through some path those two missed still cannot
+                   // be exercised by a non-human.
+                   && (actorType == ActorType.Human
+                       || !permission.RequiresHumanActor)
+
+                   // Exact scope match, when a scope was asked about. V1 is
+                   // Global-only; a Global assignment does NOT yet imply
+                   // narrower scopes, and that inheritance is a decision for
+                   // whoever introduces the first non-Global scope.
+                   && (scopeType == null
+                       || (assignment.ScopeType == scopeType
+                           && assignment.ScopeId == scopeId))
+
+                   && (permissionCode == null || permission.Code == permissionCode)
+
+               orderby assignment.EffectiveFrom, assignment.Id
+               select new Candidate(assignment, role, permission);
+    }
+
+    private sealed record Candidate(
+        UserRole Assignment,
+        Role Role,
+        Permission Permission);
 }
