@@ -2,6 +2,7 @@ import { screen } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import type { RouteObject } from "react-router";
+import type { AuthSessionSource, AuthState } from "@/shared/auth/AuthSession";
 import { RequireAuth } from "@/shared/auth/RequireAuth";
 import { renderWithApp } from "@/test/renderWithApp";
 import { TestSessionSource } from "@/test/sessions";
@@ -51,6 +52,31 @@ function record(): string[] {
   );
 
   return calls;
+}
+
+/**
+ * A source that answers the way the server does: no caller until a session is
+ * established, an established caller afterwards.
+ *
+ * A fixed-answer source will not do here any more. A successful sign-in resolves
+ * the session at the authentication boundary (§8), so a source that kept saying
+ * "no caller" would — correctly — refuse to enter the application, and these
+ * tests are about where a SUCCESSFUL sign-in goes.
+ */
+class EstablishedSessionSource implements AuthSessionSource {
+  #live = false;
+
+  resolve(): Promise<AuthState> {
+    return Promise.resolve(this.#live ? { status: "authenticated", principal: null } : { status: "unauthenticated" });
+  }
+
+  signedIn(): void {
+    this.#live = true;
+  }
+
+  signedOut(): void {
+    this.#live = false;
+  }
 }
 
 async function signIn(user: ReturnType<typeof renderWithApp>["user"]) {
@@ -189,7 +215,7 @@ describe("the sign-in page", () => {
   it("goes to the home page on success when there is nowhere to return to", async () => {
     record();
 
-    const { user } = renderWithApp(routes, { path: "/sign-in" });
+    const { user } = renderWithApp(routes, { path: "/sign-in", source: new EstablishedSessionSource() });
 
     await signIn(user);
 
@@ -199,10 +225,7 @@ describe("the sign-in page", () => {
   it("returns to the page that sent the visitor to sign in", async () => {
     record();
 
-    const { user } = renderWithApp(routes, {
-      path: "/users/new",
-      source: new TestSessionSource({ status: "unauthenticated" }),
-    });
+    const { user } = renderWithApp(routes, { path: "/users/new", source: new EstablishedSessionSource() });
 
     await signIn(user);
 
@@ -220,7 +243,11 @@ describe("the sign-in page", () => {
   ])("refuses %s as a return path and goes to the home page instead", async (_, returnTo) => {
     record();
 
-    const { user } = renderWithApp(routes, { path: "/sign-in", state: { returnTo } });
+    const { user } = renderWithApp(routes, {
+      path: "/sign-in",
+      state: { returnTo },
+      source: new EstablishedSessionSource(),
+    });
 
     await signIn(user);
 

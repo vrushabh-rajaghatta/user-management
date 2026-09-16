@@ -1,11 +1,14 @@
 import { createContext } from "react";
-import type { AuthSession } from "./AuthSession";
+import type { AuthSession, AuthState } from "./AuthSession";
 
 export interface AuthSessionContextValue {
   readonly session: AuthSession;
 
-  /** Sign-in succeeded. */
-  readonly signedIn: () => void;
+  /**
+   * Sign-in succeeded. It resolves the session before reporting a state, so the
+   * caller is established by the server rather than assumed (§8).
+   */
+  readonly signedIn: () => Promise<AuthState>;
 
   /** The session ended: tells the source and clears the query cache. */
   readonly signedOut: () => void;

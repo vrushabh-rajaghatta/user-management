@@ -31,9 +31,7 @@ export function AuthProvider({ source, children }: AuthProviderProps) {
   const value = useMemo(
     () => ({
       session,
-      signedIn: () => {
-        session.signedIn();
-      },
+      signedIn: () => session.signedIn(),
       signedOut: () => {
         session.signedOut();
         queryClient.clear();

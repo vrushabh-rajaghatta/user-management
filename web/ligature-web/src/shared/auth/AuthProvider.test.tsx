@@ -19,7 +19,12 @@ function Session() {
   return (
     <div>
       <p>status {state.status}</p>
-      <button type="button" onClick={signedIn}>
+      <button
+        type="button"
+        onClick={() => {
+          void signedIn();
+        }}
+      >
         sign in
       </button>
       <button type="button" onClick={signedOut}>
@@ -78,9 +83,14 @@ describe("the authentication provider", () => {
 
     await screen.findByText("status unauthenticated");
 
+    // Sign-in resolves rather than declares (§8), so the state it reaches is
+    // the one the source answers with at that boundary.
+    source.answerNext({ status: "authenticated", principal: null });
+
     await user.click(screen.getByRole("button", { name: "sign in" }));
-    expect(screen.getByText("status authenticated")).toBeInTheDocument();
+    expect(await screen.findByText("status authenticated")).toBeInTheDocument();
     expect(source.signedInCalls).toBe(1);
+    expect(source.resolveCalls).toBe(2);
 
     await user.click(screen.getByRole("button", { name: "sign out" }));
     expect(screen.getByText("status unauthenticated")).toBeInTheDocument();

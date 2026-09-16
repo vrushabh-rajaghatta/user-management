@@ -6,7 +6,7 @@ import { ApiError } from "@/shared/api/errors";
 import { useReturnPath } from "@/shared/auth/useReturnPath";
 import { Page } from "@/shared/components/Page";
 import { FormField } from "@/shared/forms/FormField";
-import { useSignIn } from "../hooks/useSignIn";
+import { SessionNotResolvedError, useSignIn } from "../hooks/useSignIn";
 import { SessionNotEndedError } from "../hooks/useEndSession";
 
 /**
@@ -24,8 +24,10 @@ const REJECTED = "Invalid username or password.";
 const UNKNOWN = "The request could not be completed.";
 
 function messageFor(failure: unknown): string {
-  // The session could not be ended, so nothing was submitted.
-  if (failure instanceof SessionNotEndedError) {
+  // The session could not be ended, so nothing was submitted; or the
+  // credentials were accepted and the caller could not be established. Both
+  // carry their own fixed text, and neither is a rejected sign-in.
+  if (failure instanceof SessionNotEndedError || failure instanceof SessionNotResolvedError) {
     return failure.message;
   }
 
