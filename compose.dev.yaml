@@ -1,0 +1,103 @@
+# The developer environment: the base stack, plus the browser path and hot
+# reload.
+#
+#   ./up.sh     brings this up; it is the entry point, and passing this file is
+#               an implementation detail of it.
+#
+# An EXPLICIT overlay rather than compose.override.yaml, deliberately. An
+# override file is merged automatically, which would quietly change what plain
+# `docker compose up` means. The base compose.yaml keeps its production-shaped
+# meaning — database, schema and API — and this file is what adds bind mounts,
+# development images and the web client.
+#
+# Nothing here is production-shaped. The development images run as root, carry
+# the SDK, and mount the working tree. The production stages in
+# docker/Dockerfile are untouched by any of it.
+
+name: ligature
+
+services:
+
+  # ---------------------------------------------------------------- API
+
+  # The same service, built from the SDK target and watching the source tree
+  # instead of running a published artefact.
+  host:
+    build:
+      target: host-dev
+    volumes:
+      # The working tree, so a saved .cs file is seen by dotnet watch.
+      - ./:/source
+
+      # obj/ and bin/ are NOT shared with the developer's machine. MSBuild
+      # records absolute paths and a runtime identifier in project.assets.json,
+      # so a Linux container and a macOS host writing the same directories
+      # would each invalidate the other's build on every switch. One volume per
+      # project, named individually: a future project gets no volume by
+      # accident, and tooling/docker.test.ts fails until one is added.
+      - nuget:/root/.nuget/packages
+      - host-obj:/source/src/Host/Ligature.Host/obj
+      - host-bin:/source/src/Host/Ligature.Host/bin
+      - application-obj:/source/src/Platform/Ligature.Platform.Application/obj
+      - application-bin:/source/src/Platform/Ligature.Platform.Application/bin
+      - domain-obj:/source/src/Platform/Ligature.Platform.Domain/obj
+      - domain-bin:/source/src/Platform/Ligature.Platform.Domain/bin
+      - persistence-obj:/source/src/Platform/Ligature.Platform.Persistence/obj
+      - persistence-bin:/source/src/Platform/Ligature.Platform.Persistence/bin
+      - sharedkernel-obj:/source/src/Shared/Ligature.SharedKernel/obj
+      - sharedkernel-bin:/source/src/Shared/Ligature.SharedKernel/bin
+
+  # ------------------------------------------------------------ web client
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: web-dev
+    ports:
+      # The origin the browser, the carrier cookie and the host's cross-site
+      # check all already expect. Note this is the SAME port npm run test:host
+      # requires to be free: they are alternatives, not companions.
+      - "5173:5173"
+    environment:
+      # Over the Compose network, to the API service. changeOrigin stays false
+      # in vite.config.ts, so the browser's Host survives both hops and the
+      # host's cross-site check still sees localhost:5173.
+      LIGATURE_WEB_API_ORIGIN: "http://host:8080"
+
+      # Listen on every interface, or the published port reaches nothing.
+      # Nothing else sets this, and outside a container it is absent.
+      LIGATURE_WEB_IN_CONTAINER: "true"
+    volumes:
+      - ./web/ligature-web:/app
+
+      # Never the developer's node_modules: those are native binaries built for
+      # macOS. Docker seeds this volume from the image, where npm ci ran for
+      # this platform.
+      - node-modules:/app/node_modules
+
+      # The developer's own certificate, READ-ONLY. Nothing in Docker creates,
+      # installs or trusts one: mkcert put the authority in the macOS keychain,
+      # which is where the browser looks, and the container needs no trust
+      # store of its own.
+      - ./web/ligature-web/.certs:/app/.certs:ro
+    depends_on:
+      # Ordering, not readiness. Vite proxies lazily, so the API need only exist
+      # by the first request the browser makes; there is no health endpoint and
+      # this slice adds none.
+      host:
+        condition: service_started
+
+volumes:
+  nuget:
+  node-modules:
+  host-obj:
+  host-bin:
+  application-obj:
+  application-bin:
+  domain-obj:
+  domain-bin:
+  persistence-obj:
+  persistence-bin:
+  sharedkernel-obj:
+  sharedkernel-bin:

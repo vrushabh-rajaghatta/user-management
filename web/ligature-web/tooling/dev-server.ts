@@ -14,6 +14,48 @@ export const DEFAULT_API_ORIGIN = "http://localhost:8080";
 /** Set this to point the proxy at a host started with `dotnet run`. */
 export const API_ORIGIN_VARIABLE = "LIGATURE_WEB_API_ORIGIN";
 
+/**
+ * Set by compose.dev.yaml, and by nothing else. It says the dev server is
+ * running inside a container, where listening on loopback would mean the
+ * published port reaches nothing.
+ */
+export const CONTAINER_VARIABLE = "LIGATURE_WEB_IN_CONTAINER";
+
+/**
+ * Where the development server listens.
+ *
+ * Loopback on the developer's own machine, every interface inside a container.
+ * The default is loopback, deliberately: binding every interface by accident
+ * would put the application, and its proxy to a real API, on whatever network
+ * the machine happens to be attached to.
+ *
+ * A value that is neither true nor false throws rather than falling back. In a
+ * container the fallback would be an unreachable server, which looks like a
+ * broken Docker setup rather than a mistyped variable.
+ */
+export function resolveDevServerHost(environment: Record<string, string | undefined>): string {
+  const configured = environment[CONTAINER_VARIABLE];
+
+  if (configured === undefined || configured.trim() === "") {
+    return "localhost";
+  }
+
+  const value = configured.trim().toLowerCase();
+
+  if (value === "true") {
+    return "0.0.0.0";
+  }
+
+  if (value === "false") {
+    return "localhost";
+  }
+
+  throw new Error(
+    `${CONTAINER_VARIABLE} is '${configured}', which is neither true nor false. `
+      + "Set it to true only where the server runs inside a container, or unset it.",
+  );
+}
+
 export const CERTIFICATE_FILE = "localhost.pem";
 
 export const CERTIFICATE_KEY_FILE = "localhost-key.pem";

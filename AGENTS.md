@@ -228,21 +228,68 @@ it (`docs/architecture.md` §4).
 
 ### Running in Docker
 
-A clean clone to a running system, in one command:
+A clean clone to a usable Ligature in the browser, in one command:
 
 ```bash
 ./up.sh
 ```
 
 That starts PostgreSQL, creates the database roles, applies migrations,
-deploys the Audit schema **and the audit event catalogue**, then starts the
-host, in that order, each step waiting for the previous one rather than
-sleeping. The catalogue is in that list deliberately: the host verifies its
-compiled declarations against it and refuses to start otherwise, so `./up.sh`
-would not produce a running host without it. The host is on
-`http://localhost:8080`, the API reference on `/scalar`, and the container
-database is published on **55432** so it cannot collide with a PostgreSQL
-running natively on 5432 — which is the one the test suites use.
+deploys the Audit schema **and the audit event catalogue**, starts the host,
+and starts the web client, in that order, each step waiting for the previous
+one rather than sleeping. The catalogue is in that list deliberately: the host
+verifies its compiled declarations against it and refuses to start otherwise,
+so `./up.sh` would not produce a running host without it.
+
+| | |
+| --- | --- |
+| Ligature | `https://localhost:5173` |
+| API | `http://localhost:8080`, reference on `/scalar` |
+| PostgreSQL | `localhost:55432` — your own 5432 is untouched |
+
+**`./up.sh` proves it is up rather than assuming it.** `docker compose up`
+returning 0 means containers were created, which is not the same thing: this
+repository has had an API container sit "Up" for two days against a database
+that exited four days earlier. So five criteria are probed, and a failure names
+which one: `.env` holds every secret; the prerequisites are present; `roles`,
+`migrator` and `audit-schema` each exited 0; the API answers on 8080; and
+`https://localhost:5173` completes a TLS handshake **and serves the application
+shell**. Success does not claim anyone can sign in — there are no users until
+`./bootstrap.sh`.
+
+**Development is an explicit overlay.** `./up.sh` runs
+`docker compose -f compose.yaml -f compose.dev.yaml`. Plain `docker compose up`
+keeps its production-shaped meaning — database, schema and API, from published
+artefacts — and `compose.dev.yaml` is what adds the web client, the SDK-based
+host with `dotnet watch`, the bind-mounted source and hot reload. It is not
+`compose.override.yaml`, deliberately: an override file is merged automatically
+and would quietly change what the plain command means. The development images
+run as root and carry toolchains; the production stages are untouched by any of
+it.
+
+**The certificate is yours, and Docker only reads it.** `./up.sh` refuses if
+`web/ligature-web/.certs/` is missing and prints the mkcert commands; it never
+creates or installs one, because `mkcert -install` puts a certificate authority
+in your system trust store and needs your password. The container mounts the
+certificate **read-only** and trusts nothing itself: your browser trusts it,
+which is where trust belongs.
+
+```bash
+./up.sh --check
+```
+
+checks the prerequisites and changes nothing.
+
+**Port 5173 belongs to one thing at a time.** `npm run test:host` requires it
+free and refuses otherwise, so the containerised web client and the host-test
+harness are alternatives:
+
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml stop web
+```
+
+Docker is the developer environment; `test:host` is a hermetic proof harness
+that owns its own throwaway database and processes. Neither replaces the other.
 
 `up.sh` exists for one reason: it generates secrets into `.env` on first run —
 the signing key and the three database role passwords. `docs/architecture.md` §17 forbids a default key, a committed development
@@ -442,8 +489,15 @@ protection compares `Origin` with the `Host` it receives, so a proxy that
 rewrote `Host` would have every state-changing request refused.
 `tooling/dev-server.test.ts` proves both through a real Vite server.
 
-**Docker.** No image builds the web client yet; `.dockerignore` excludes
-`web/` so its `node_modules` never enter the host build context.
+**Docker.** `compose.dev.yaml` builds the client with the `web-dev` target and
+runs `npm run dev` inside it, so the web client's source now enters the build
+context. Three things about it must not: `.certs/` holds a **private key**,
+`node_modules` holds macOS-native binaries, and `dist/` is rebuilt in the image.
+`.dockerignore` names all three, and `tooling/docker.test.ts` fails if any of
+those rules is lost. Inside the container the dev server binds every interface
+(`LIGATURE_WEB_IN_CONTAINER`), and on your own machine it keeps binding
+loopback; `resolveDevServerHost` refuses a value that is neither true nor false
+rather than defaulting to an unreachable server.
 
 ### Repository hygiene
 

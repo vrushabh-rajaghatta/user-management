@@ -31,9 +31,18 @@ coverage*.json
 coverage*.xml
 coverage*.info
 
-# The web client. No image builds it yet, and its node_modules would otherwise
-# be sent with every host build — along with any local development certificate.
-web/
+# The web client's source now enters the context, because compose.dev.yaml
+# builds an image from it. Three things about it must NOT:
+#
+#   .certs/      holds a PRIVATE KEY for the local development certificate
+#   node_modules platform-specific binaries, built for the developer's macOS
+#   dist/        build output, rebuilt inside the image
+#
+# The blanket "web/" exclusion used to cover the key by accident. It is said
+# deliberately now, and tooling/docker.test.ts fails if any of it is lost.
+web/**/.certs/
+web/**/node_modules/
+web/**/dist/
 
 # Docker's own files: changing compose.yaml must not invalidate build layers.
 compose.yaml

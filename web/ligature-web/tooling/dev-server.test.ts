@@ -9,10 +9,12 @@ import {
   API_ORIGIN_VARIABLE,
   CERTIFICATE_FILE,
   CERTIFICATE_KEY_FILE,
+  CONTAINER_VARIABLE,
   DEFAULT_API_ORIGIN,
   apiProxy,
   devServerHttps,
   resolveApiOrigin,
+  resolveDevServerHost,
 } from "./dev-server.ts";
 
 const CARRIER_COOKIE = "__Host-ligature=v1.c2Vzc2lvbg.c2lnbmF0dXJl; Path=/; Secure; HttpOnly; SameSite=Strict";
@@ -99,6 +101,49 @@ describe("the API origin", () => {
     expect(() => resolveApiOrigin({ [API_ORIGIN_VARIABLE]: value })).toThrow(API_ORIGIN_VARIABLE);
   });
 });
+
+describe("the development server's bind address", () => {
+  /**
+   * In a container the server must listen on every interface, or the published
+   * port reaches nothing. On the developer's own machine it must keep listening
+   * on loopback only.
+   */
+  it("listens on every interface inside a container", () => {
+    expect(resolveDevServerHost({ [CONTAINER_VARIABLE]: "true" })).toBe("0.0.0.0");
+  });
+
+  it("is not case-sensitive about it", () => {
+    expect(resolveDevServerHost({ [CONTAINER_VARIABLE]: "TRUE" })).toBe("0.0.0.0");
+  });
+
+  it.each([
+    ["the variable is absent", {}],
+    ["the variable is blank, which carries no instruction", { [CONTAINER_VARIABLE]: "" }],
+    ["the variable says false", { [CONTAINER_VARIABLE]: "false" }],
+  ])("listens on loopback when %s", (_, environment) => {
+    expect(resolveDevServerHost(environment)).toBe("localhost");
+  });
+
+  /**
+   * The regression that matters. Binding every interface by accident would put
+   * a developer's application, and its proxy to a real API, on whatever network
+   * the machine is attached to.
+   */
+  it("never listens on every interface by default", () => {
+    expect(resolveDevServerHost({})).not.toBe("0.0.0.0");
+    expect(resolveDevServerHost({})).not.toBe("");
+  });
+
+  /**
+   * A typo must not silently mean loopback: inside a container that produces an
+   * unreachable server, which looks like a broken Docker setup rather than a
+   * mistyped value.
+   */
+  it.each(["1", "yes", "0.0.0.0"])("refuses %s rather than guessing what it meant", (value) => {
+    expect(() => resolveDevServerHost({ [CONTAINER_VARIABLE]: value })).toThrow(CONTAINER_VARIABLE);
+  });
+});
+
 
 describe("the development certificate", () => {
   const directories: string[] = [];
