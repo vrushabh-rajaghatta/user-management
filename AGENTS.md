@@ -354,9 +354,49 @@ project (`tooling/lint-fixtures/`) with the real configuration. A rule that is
 switched off or loosened fails that test. When a rule is added, add a fixture
 that breaks it and a control that does not.
 
-A small number of tests against a running host will cover the cookie and
-authentication transport; they do not exist yet, and nothing else in the web
-suite may depend on one.
+**Real-host transport tests.** `npm run test:host` is a **separate command and
+a separate configuration** (`vitest.host.config.ts`, `host-tests/`). It is
+never part of `npm test`, and `tooling/test-isolation.test.ts` proves the
+everyday suite's globs cannot reach it.
+
+```bash
+npm run test:host
+```
+
+It owns its whole environment: it creates a throwaway database, applies the
+migrations, deploys the audit schema and catalogue, provisions a bootstrap
+administrator with the production CLI, starts the host on :5080 and the HTTPS
+dev server on :5173, runs the proofs, and drops the database — including after
+a failure. It reuses nothing already running, because a host that is already up
+is pointed at a database this suite must not touch. There is no test-only
+endpoint and no token back door: the activation token comes out of
+`--activation-token-out` exactly as it does for a real installation.
+
+**Its prerequisites are checked first, and a missing one fails naming it and
+how to provide it. It never skips.** They are:
+
+| Prerequisite | Provide it with |
+| --- | --- |
+| PostgreSQL on 5432, able to create databases | as for `dotnet test` |
+| `psql` on PATH | `brew install libpq && brew link --force libpq` |
+| .NET SDK and `dotnet-ef` | `dotnet tool install --global dotnet-ef` |
+| `.certs/localhost.pem` and key | mkcert, below — **you install this, not an agent** |
+| Playwright's Chromium | `npx playwright install chromium` |
+| Ports 5080 and 5173 free | stop `npm run dev` or `./up.sh` |
+
+Two techniques, and neither substitutes for the other. **Chromium** (Playwright
+1.63.0, Chromium only) proves what a real browser originates: how it stores and
+sends a `Secure`, `__Host-` prefixed cookie over the real HTTPS path. Every
+proof is issued **by the page**, never by `page.request`, whose handling of
+`Secure`, `SameSite`, `__Host-` and Fetch Metadata is unstated — and an
+unstated behaviour cannot be evidence. **`node:http`** proves the exact
+`Host` / `Origin` / `Sec-Fetch-Site` matrix, because Node's `fetch` silently
+drops `Host`. Each matrix row asserts *not the cross-site refusal* rather than
+"succeeded": those requests may still fail on their own merits with 400 or 401.
+
+These are transport tests. End-to-end UI testing is a later story, and
+`page.request`, `ignoreHTTPSErrors` and a shared browser fixture are not
+gateways to it.
 
 **Test helpers.** `src/test/renderWithApp.tsx` renders routes inside the
 application's real providers (`app/providers.tsx`) with a memory router, a fresh

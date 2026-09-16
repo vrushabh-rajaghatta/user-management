@@ -5,6 +5,7 @@ import { PageHeader } from "@/shared/components/PageHeader";
 import { AppShell } from "@/shared/layout/AppShell";
 import { expectNoAccessibilityViolations } from "@/test/axe";
 import { renderWithApp } from "@/test/renderWithApp";
+import { TestSessionSource } from "@/test/sessions";
 import { appRoutes, composeRoutes } from "./router";
 
 /**
@@ -14,9 +15,19 @@ import { appRoutes, composeRoutes } from "./router";
  */
 describe("the foundation's rendered accessibility", () => {
   it("has no violations on the home page", async () => {
-    const { container } = renderWithApp(appRoutes, { path: "/" });
+    const { container } = renderWithApp(appRoutes, {
+      path: "/",
+      source: new TestSessionSource({ status: "authenticated", principal: null }),
+    });
 
     await screen.findByRole("heading", { level: 1, name: "Home" });
+    await expectNoAccessibilityViolations(container);
+  });
+
+  it("has no violations on the sign-in page", async () => {
+    const { container } = renderWithApp(appRoutes, { path: "/sign-in" });
+
+    await screen.findByRole("heading", { level: 1, name: "Sign in" });
     await expectNoAccessibilityViolations(container);
   });
 
@@ -34,7 +45,7 @@ describe("the foundation's rendered accessibility", () => {
       throw new Error("failure");
     }
 
-    const { container } = renderWithApp(composeRoutes([{ path: "/", element: <Boom /> }]));
+    const { container } = renderWithApp(composeRoutes([{ path: "/", element: <Boom /> }], []));
 
     await screen.findByRole("heading", { level: 1, name: "Something went wrong" });
     await expectNoAccessibilityViolations(container);
@@ -42,7 +53,10 @@ describe("the foundation's rendered accessibility", () => {
 
   it("has no violations in the application shell", async () => {
     const { container } = renderWithApp([
-      { element: <AppShell />, children: [{ path: "/", element: <PageHeader title="Signed in" /> }] },
+      {
+        element: <AppShell actions={<button type="button">Sign out</button>} />,
+        children: [{ path: "/", element: <PageHeader title="Signed in" /> }],
+      },
     ]);
 
     await screen.findByRole("heading", { level: 1, name: "Signed in" });

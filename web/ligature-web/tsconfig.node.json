@@ -23,6 +23,6 @@
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts", "tooling/**/*.ts"],
+  "include": ["vite.config.ts", "vitest.config.ts", "vitest.host.config.ts", "tooling/**/*.ts", "host-tests/**/*.ts"],
   "exclude": ["tooling/lint-fixtures"]
 }

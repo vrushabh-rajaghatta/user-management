@@ -10,6 +10,15 @@ import { TestSessionSource } from "./sessions";
 
 interface RenderOptions {
   path?: string;
+
+  /**
+   * Router state for the first entry. RequireAuth only ever produces a path and
+   * query, so the hostile return paths validateReturnPath exists to refuse can
+   * only be constructed here — a test limited to what RequireAuth emits would
+   * exercise trusted input alone.
+   */
+  state?: unknown;
+
   source?: AuthSessionSource;
   queryClient?: QueryClient;
 }
@@ -22,7 +31,8 @@ interface RenderOptions {
 export function renderWithApp(routes: RouteObject[], options: RenderOptions = {}) {
   const source = options.source ?? new TestSessionSource({ status: "unauthenticated" });
   const queryClient = options.queryClient ?? createQueryClient();
-  const router = createMemoryRouter(routes, { initialEntries: [options.path ?? "/"] });
+  const path = options.path ?? "/";
+  const router = createMemoryRouter(routes, { initialEntries: [entry(path, options.state)] });
   const user = userEvent.setup();
 
   const utils = render(
@@ -32,4 +42,15 @@ export function renderWithApp(routes: RouteObject[], options: RenderOptions = {}
   );
 
   return { ...utils, router, user, source, queryClient };
+}
+
+/** Keeps the query and fragment of the path when state has to be carried too. */
+function entry(path: string, state: unknown) {
+  if (state === undefined) {
+    return path;
+  }
+
+  const url = new URL(path, "http://localhost");
+
+  return { pathname: url.pathname, search: url.search, hash: url.hash, state };
 }

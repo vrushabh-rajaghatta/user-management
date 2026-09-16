@@ -47,6 +47,8 @@ const VIOLATIONS: [file: string, rule: string, reason: string][] = [
   ["modules/platform/users/hooks/usesXmlHttpRequest.ts", "no-restricted-globals", "XMLHttpRequest outside the API client"],
   ["modules/platform/users/hooks/usesLocalStorage.ts", "no-restricted-globals", "localStorage outside the hint source"],
   ["modules/platform/users/hooks/usesSessionStorageThroughGlobalThis.ts", "no-restricted-properties", "globalThis.sessionStorage outside the hint source"],
+  ["modules/platform/users/pages/readsReturnTo.ts", "no-restricted-syntax", "a module reads the return path instead of going through shared/auth"],
+  ["shared/forms/importsZod.ts", "no-restricted-imports", "a form presentation primitive imports a schema library"],
 ];
 
 const CONTROLS: [file: string, reason: string][] = [
@@ -65,6 +67,8 @@ const CONTROLS: [file: string, reason: string][] = [
   ["modules/platform/roles/index.ts", "a module's public surface"],
   ["modules/platform/roles/hooks/usesUsersPublicSurface.ts", "a module may use another module's public surface"],
   ["modules/regulatory/submissions/index.ts", "a business module may use a platform module's public surface"],
+  ["shared/auth/readsReturnTo.ts", "shared/auth owns the return path and its validation"],
+  ["shared/forms/FormField.ts", "a form presentation primitive that imports no schema or form library"],
 ];
 
 let results: Map<string, Linter.LintMessage[]>;

@@ -164,7 +164,7 @@ export default defineConfig([
 
   // The development environment itself runs in Node.
   {
-    files: ["vite.config.ts", "vitest.config.ts", "tooling/**/*.ts"],
+    files: ["vite.config.ts", "vitest.config.ts", "vitest.host.config.ts", "tooling/**/*.ts", "host-tests/**/*.ts"],
     languageOptions: { globals: globals.node },
   },
 
@@ -180,7 +180,16 @@ export default defineConfig([
   // off here rather than the files being restructured away from upstream.
   {
     files: ["src/components/ui/**/*.{ts,tsx}"],
-    rules: { "react-refresh/only-export-components": "off" },
+    rules: {
+      "react-refresh/only-export-components": "off",
+
+      // The vendored Label is a generic wrapper: it cannot associate itself
+      // with a control, because the control is the caller's. FormField is where
+      // the association is made and where its tests prove it. These files are
+      // re-installed rather than hand-edited, so the rule is scoped off here
+      // instead of the primitive being patched away from upstream.
+      "jsx-a11y/label-has-associated-control": "off",
+    },
   },
 
   // §2 and §6: layer boundaries. Tests and the entry point are exempt: tests
@@ -230,10 +239,44 @@ export default defineConfig([
           message:
             "Only shared/auth reads effective permissions (docs/frontend-architecture.md §9). Use can(), useCan() or <Can> — and remember they decide visibility, never authorization.",
         },
+        {
+          selector: "MemberExpression[property.name='returnTo']",
+          message:
+            "Only shared/auth reads the return path (docs/frontend-architecture.md §13). Use useReturnPath(), which validates it in the same place it is read: an unvalidated return path is an open redirect.",
+        },
       ],
     },
   },
   { files: ["**/src/shared/auth/**/*.{ts,tsx}"], rules: { "no-restricted-syntax": "off" } },
+
+  // §12: the form presentation primitives are handed an error string and know
+  // nothing of where it came from. Restated in full rather than extended,
+  // because re-declaring the rule replaces its options.
+  {
+    files: ["**/src/shared/forms/**/*.{ts,tsx}"],
+    ignores: TESTS,
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "react-router-dom",
+              message: "React Router 8 has no react-router-dom. Import from \"react-router\", and RouterProvider from \"react-router/dom\".",
+            },
+            {
+              name: "zod",
+              message: "FormField knows nothing of schemas (docs/frontend-architecture.md §12). It is handed an error string; the caller decides what produced it.",
+            },
+            {
+              name: "react-hook-form",
+              message: "No form library in W3 (docs/frontend-architecture.md §12), and FormField owns accessible structure rather than form state.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 
   // §6 and §8: the network and web storage, each with its one permitted home.
   { files: SOURCE, rules: restrictedEverything() },
