@@ -75,6 +75,12 @@ public static class DependencyInjection
 
         services.AddScoped<IAuthorizationService, AuthorizationService>();
 
+        // B6 — the /me read. Its own abstraction rather than CallerEstablisher's
+        // internals: the establisher decides whether a request proceeds, and
+        // this describes the caller it accepted.
+        services.AddScoped<
+            IAuthenticatedCallerReader, AuthenticatedCallerReader>();
+
         // CRD-C1
         services.AddSingleton<IPasswordHasher, PasswordHasher>();
 

@@ -30,28 +30,51 @@ describe("the authentication session", () => {
     expect(session.getState()).toEqual({ status: "unauthenticated" });
   });
 
-  it("moves to authenticated on sign-in and tells the source", () => {
+  /**
+   * Sign-in RESOLVES; it does not declare (§8). Accepted credentials say the
+   * password was right, not who the caller is, so the session asks — and the
+   * state it settles on is the server's answer, principal and all.
+   */
+  it("resolves the caller on sign-in, and tells the source", async () => {
     const source = new TestSessionSource({ status: "unauthenticated" });
     const session = createAuthSession(source);
 
-    session.signedIn();
+    source.answerNext({ status: "authenticated", principal: { permissions: [] } });
 
-    expect(session.getState()).toEqual({ status: "authenticated", principal: null });
+    const state = await session.signedIn();
+
+    expect(state).toEqual({ status: "authenticated", principal: { permissions: [] } });
+    expect(session.getState()).toEqual({ status: "authenticated", principal: { permissions: [] } });
     expect(source.signedInCalls).toBe(1);
+    expect(source.resolveCalls).toBe(1);
   });
 
-  it("moves to unauthenticated on sign-out and tells the source", () => {
+  /**
+   * The answer is reported, never softened. A sign-in the server will not stand
+   * behind leaves the session exactly where the server put it.
+   */
+  it("reports the answer when the caller cannot be established after sign-in", async () => {
+    const source = new TestSessionSource({ status: "unauthenticated" });
+    const session = createAuthSession(source);
+
+    source.answerNext({ status: "error" });
+
+    expect(await session.signedIn()).toEqual({ status: "error" });
+    expect(session.getState()).toEqual({ status: "error" });
+  });
+
+  it("moves to unauthenticated on sign-out and tells the source", async () => {
     const source = new TestSessionSource({ status: "authenticated", principal: null });
     const session = createAuthSession(source);
 
-    session.signedIn();
+    await session.signedIn();
     session.signedOut();
 
     expect(session.getState()).toEqual({ status: "unauthenticated" });
     expect(source.signedOutCalls).toBe(1);
   });
 
-  it("notifies subscribers of each change, and stops after they unsubscribe", () => {
+  it("notifies subscribers of each change, and stops after they unsubscribe", async () => {
     const session = createAuthSession(new TestSessionSource({ status: "unauthenticated" }));
     let notifications = 0;
 
@@ -59,7 +82,7 @@ describe("the authentication session", () => {
       notifications += 1;
     });
 
-    session.signedIn();
+    await session.signedIn();
     unsubscribe();
     session.signedOut();
 

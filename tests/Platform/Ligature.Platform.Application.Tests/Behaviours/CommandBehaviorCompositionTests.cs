@@ -488,6 +488,16 @@ public sealed class CommandBehaviorCompositionTests
                             UserRoleId.New()))
                     : AuthorizationResult.Denied);
         }
+
+        /// <summary>
+        /// Not exercised here: these tests are about the command pipeline, and
+        /// the enumeration is the other view over the same evaluation (B6-B).
+        /// </summary>
+        public Task<IReadOnlyList<EffectivePermission>> EnumerateAsync(
+            EffectivePermissionsRequest request,
+            CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<EffectivePermission>>([]);
+
     }
 
     private sealed class FakeClock : IClock

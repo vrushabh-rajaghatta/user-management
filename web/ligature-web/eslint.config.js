@@ -30,8 +30,8 @@ const NETWORK_MESSAGE =
   + "Call the module's API operation through its hook.";
 
 const STORAGE_MESSAGE =
-  "Web storage is reserved for the session hint source (docs/frontend-architecture.md §8). "
-  + "It is not a place for application state, and never for a credential.";
+  "Nothing uses web storage (docs/frontend-architecture.md §8). The server answers who the caller is; "
+  + "web storage is not a place for application state, and never for a credential.";
 
 const NETWORK_GLOBALS = ["fetch", "XMLHttpRequest"];
 
@@ -278,9 +278,10 @@ export default defineConfig([
     },
   },
 
-  // §6 and §8: the network and web storage, each with its one permitted home.
+  // §6 and §8: the network has one permitted home, and web storage has none.
+  // The exception that let the session hint source use storage is gone with it
+  // (B6), so the ban is absolute and there is nothing left to exempt.
   { files: SOURCE, rules: restrictedEverything() },
   { files: ["**/src/shared/api/client.ts"], rules: restricted(STORAGE_GLOBALS, STORAGE_MESSAGE) },
-  { files: ["**/src/shared/auth/SessionHintSource.ts"], rules: restricted(NETWORK_GLOBALS, NETWORK_MESSAGE) },
   { files: TESTS, rules: { "no-restricted-globals": "off", "no-restricted-properties": "off" } },
 ]);

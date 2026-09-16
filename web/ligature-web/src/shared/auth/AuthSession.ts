@@ -11,22 +11,33 @@ export interface EffectivePermission {
 }
 
 /**
- * The signed-in person as a server-backed source describes them. The session
- * hint cannot describe anyone, so today the principal is always null. When a
- * source supplies effective permissions they are presentation input only.
+ * The signed-in person as the server describes them (B6). It is null only while
+ * no source has described anyone yet; the effective permissions it carries are
+ * presentation input, never authorization (§9).
  */
 export interface Principal {
   readonly permissions: readonly EffectivePermission[];
 }
 
+/**
+ * Four states, and the fourth is the one that matters
+ * (docs/frontend-architecture.md §8).
+ *
+ * "error" is NOT "unauthenticated". A 401 is the server saying there is no
+ * caller; a 5xx, a network failure or a broken response is the server failing
+ * to say anything, and we do not know whether the session is valid. Collapsing
+ * the second into the first would sign a live session out because a server had
+ * a bad moment.
+ */
 export type AuthState =
   | { readonly status: "unknown" }
   | { readonly status: "authenticated"; readonly principal: Principal | null }
-  | { readonly status: "unauthenticated" };
+  | { readonly status: "unauthenticated" }
+  | { readonly status: "error" };
 
 export type PermissionState = "unknown" | "allowed" | "denied";
 
-/** The only thing that changes when a server-backed source (B6) arrives. */
+/** Where the answer comes from. B6 makes it the server. */
 export interface AuthSessionSource {
   resolve(): Promise<AuthState>;
   signedIn(): void;
@@ -41,7 +52,18 @@ export interface AuthSession {
   readonly getState: () => AuthState;
   readonly subscribe: (listener: () => void) => () => void;
   readonly start: () => Promise<void>;
-  readonly signedIn: () => void;
+
+  /**
+   * Credentials were accepted. That is NOT the same as knowing who the caller
+   * is, so this RESOLVES rather than declaring the session authenticated
+   * (docs/frontend-architecture.md §8): a successful sign-in is an
+   * authentication boundary, and the server answers at every one of them.
+   *
+   * It returns the state that resulted, so the flow that signed in can decide
+   * what to do about an answer that was not "authenticated".
+   */
+  readonly signedIn: () => Promise<AuthState>;
+
   readonly signedOut: () => void;
   readonly permissionState: (code: PermissionCode, scope?: PermissionScope) => PermissionState;
 
@@ -78,6 +100,25 @@ export function createAuthSession(source: AuthSessionSource): AuthSession {
       : "denied";
   }
 
+  /**
+   * Takes the source's answer — unless something already changed the session
+   * while the source was answering. A sign-out during resolution is newer
+   * information than the answer to a question asked before it.
+   *
+   * It returns the state as it NOW STANDS, which is not always the answer that
+   * came back, for exactly that reason.
+   */
+  async function resolve(): Promise<AuthState> {
+    const before = changes;
+    const resolved = await source.resolve();
+
+    if (changes === before) {
+      set(resolved);
+    }
+
+    return state;
+  }
+
   return {
     getState: () => state,
 
@@ -89,23 +130,14 @@ export function createAuthSession(source: AuthSessionSource): AuthSession {
       };
     },
 
-    /**
-     * Takes the source's answer — unless something already changed the session
-     * while the source was answering. A sign-out during resolution is newer
-     * information than the answer to a question asked before it.
-     */
     async start() {
-      const before = changes;
-      const resolved = await source.resolve();
-
-      if (changes === before) {
-        set(resolved);
-      }
+      await resolve();
     },
 
-    signedIn() {
+    async signedIn() {
       source.signedIn();
-      set({ status: "authenticated", principal: null });
+
+      return await resolve();
     },
 
     signedOut() {

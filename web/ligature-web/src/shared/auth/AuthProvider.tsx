@@ -18,6 +18,11 @@ interface AuthProviderProps {
  * registered as the boundary's single unauthorized handler: a reported 401 moves
  * the session to unauthenticated and clears the query cache, so the next person
  * on this browser sees nothing of the previous one.
+ *
+ * Resolution runs on mount and on explicit retry, and never on a timer (§8):
+ * the source asks an authenticated endpoint, so polling it would count as
+ * session activity and keep an idle session alive for as long as a tab stayed
+ * open.
  */
 export function AuthProvider({ source, children }: AuthProviderProps) {
   const queryClient = useQueryClient();
@@ -26,12 +31,20 @@ export function AuthProvider({ source, children }: AuthProviderProps) {
   const value = useMemo(
     () => ({
       session,
-      signedIn: () => {
-        session.signedIn();
-      },
+      signedIn: () => session.signedIn(),
       signedOut: () => {
         session.signedOut();
         queryClient.clear();
+      },
+
+      /**
+       * A retry is NOT a sign-out (§8). A failed resolution established nothing
+       * about the session, so nothing is torn down on the strength of it: the
+       * source is asked again, and the state and the query cache are left as
+       * they are until an answer arrives.
+       */
+      retry: () => {
+        void session.start();
       },
     }),
     [session, queryClient],

@@ -374,6 +374,294 @@ public sealed class AuthorizationServiceTests
         });
     }
 
+    // ------------------------------------- effective permissions (B6-B)
+
+    /// <summary>
+    /// GET /me needs the caller's WHOLE effective set, which nothing could
+    /// produce before B6-B.
+    ///
+    /// These tests exist to stop that enumeration becoming a SECOND
+    /// authorisation rule. It is a different view over the same evaluation,
+    /// and every case below is the enumeration mirror of a single-permission
+    /// test above. If the two ever drift the failure is silent and runs in
+    /// both directions: the UI offers capabilities the server refuses, or
+    /// hides ones it allows.
+    /// </summary>
+    [Fact]
+    public async Task The_effective_set_includes_a_permission_the_actor_holds()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            var effective = await EnumerateAsync(service, fixture);
+
+            Assert.Contains(effective, x => x.Code == fixture.PermissionCode);
+        });
+    }
+
+    /// <summary>
+    /// The mirror of A_deactivated_role_still_authorises_its_existing_holders,
+    /// and the single most important test here. AUT-C5 keeps existing
+    /// assignments working when a role is retired, and the single-permission
+    /// query omits role.IsActive deliberately to honour that.
+    ///
+    /// An enumeration written independently is exactly where someone adds the
+    /// filter back "because it looks safer" — and the visible symptom would be
+    /// a retired role's holders losing their menu while the server still let
+    /// them act.
+    /// </summary>
+    [Fact]
+    public async Task A_deactivated_role_still_contributes_to_the_effective_set()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            await ExecuteAsync(
+                "UPDATE role SET is_active = false WHERE id = @id",
+                fixture.RoleId.Value);
+
+            var effective = await EnumerateAsync(service, fixture);
+
+            Assert.Contains(effective, x => x.Code == fixture.PermissionCode);
+        });
+    }
+
+    [Fact]
+    public async Task A_deactivated_user_has_no_effective_permissions()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            Assert.NotEmpty(await EnumerateAsync(service, fixture));
+
+            await ExecuteAsync(
+                "UPDATE app_user SET status = 'Inactive' WHERE id = @id",
+                fixture.UserId.Value);
+
+            Assert.Empty(await EnumerateAsync(service, fixture));
+        });
+    }
+
+    [Fact]
+    public async Task A_user_with_no_active_identity_has_no_effective_permissions()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            Assert.NotEmpty(await EnumerateAsync(service, fixture));
+
+            await ExecuteAsync(
+                "UPDATE user_identity SET status = 'Inactive' WHERE user_id = @id",
+                fixture.UserId.Value);
+
+            Assert.Empty(await EnumerateAsync(service, fixture));
+        });
+    }
+
+    [Fact]
+    public async Task An_inactive_permission_is_absent_from_the_effective_set()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            Assert.Contains(await EnumerateAsync(service, fixture),
+                x => x.Code == fixture.PermissionCode);
+
+            await ExecuteAsync(
+                "UPDATE permission SET is_active = false WHERE id = @id",
+                fixture.PermissionId.Value);
+
+            Assert.DoesNotContain(await EnumerateAsync(service, fixture),
+                x => x.Code == fixture.PermissionCode);
+        });
+    }
+
+    /// <summary>
+    /// The enumeration mirror of the bystander test. Without the join's user
+    /// predicate, every active user would inherit every other user's
+    /// authority — and here that would be disclosed to them as a menu.
+    /// </summary>
+    [Fact]
+    public async Task A_user_does_not_inherit_another_users_effective_permissions()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            var bystander = await SeedBystanderAsync(context);
+
+            var effective = await service.EnumerateAsync(
+                new EffectivePermissionsRequest(bystander, Now),
+                CancellationToken.None);
+
+            Assert.Empty(effective);
+        });
+    }
+
+    /// <summary>
+    /// Every entry states the scope it was granted in. Today's fixtures are
+    /// all Global with no id, and the contract still describes the general
+    /// effective set rather than the shape the seed data happens to have.
+    /// </summary>
+    [Fact]
+    public async Task Each_effective_permission_carries_the_scope_it_was_granted_in()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            var held = Assert.Single(
+                await EnumerateAsync(service, fixture),
+                x => x.Code == fixture.PermissionCode);
+
+            Assert.Equal("Global", held.ScopeType);
+            Assert.Null(held.ScopeId);
+        });
+    }
+
+    // ------------------------------- the two views agree, state by state
+
+    /// <summary>
+    /// THE INVARIANT, driven through the states AUT-Q1 already considers
+    /// meaningful rather than through a matrix invented for the occasion.
+    ///
+    /// Each case asserts agreement BEFORE and AFTER its mutation, so the
+    /// negative half is a comparison and not merely "the set came back empty":
+    /// being allowed and being present must be the same answer in whatever
+    /// state the fixture is in.
+    ///
+    /// These do not replace the expected-outcome tests above. Those say the
+    /// authorisation rule is correct; these say the two views cannot drift.
+    /// </summary>
+    [Fact]
+    public async Task The_two_views_agree_for_a_fully_qualified_actor()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            await AssertAgreementAsync(service, fixture);
+        });
+    }
+
+    [Fact]
+    public async Task The_two_views_agree_when_the_user_is_deactivated()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            await AssertAgreementAsync(service, fixture);
+
+            await ExecuteAsync(
+                "UPDATE app_user SET status = 'Inactive' WHERE id = @id",
+                fixture.UserId.Value);
+
+            await AssertAgreementAsync(service, fixture);
+        });
+    }
+
+    [Fact]
+    public async Task The_two_views_agree_when_no_identity_is_active()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            await AssertAgreementAsync(service, fixture);
+
+            await ExecuteAsync(
+                "UPDATE user_identity SET status = 'Inactive' WHERE user_id = @id",
+                fixture.UserId.Value);
+
+            await AssertAgreementAsync(service, fixture);
+        });
+    }
+
+    /// <summary>
+    /// The case that matters most: AUT-C5 keeps a retired role's existing
+    /// holders working, so BOTH views must keep reporting the permission. If
+    /// one of them were to filter on role.IsActive, this fails.
+    /// </summary>
+    [Fact]
+    public async Task The_two_views_agree_when_the_role_is_deactivated()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            await AssertAgreementAsync(service, fixture);
+
+            await ExecuteAsync(
+                "UPDATE role SET is_active = false WHERE id = @id",
+                fixture.RoleId.Value);
+
+            await AssertAgreementAsync(service, fixture);
+        });
+    }
+
+    [Fact]
+    public async Task The_two_views_agree_when_the_permission_is_inactive()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            await AssertAgreementAsync(service, fixture);
+
+            await ExecuteAsync(
+                "UPDATE permission SET is_active = false WHERE id = @id",
+                fixture.PermissionId.Value);
+
+            await AssertAgreementAsync(service, fixture);
+        });
+    }
+
+    [Fact]
+    public async Task The_two_views_agree_when_the_assignment_is_revoked()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            await AssertAgreementAsync(service, fixture);
+
+            await ExecuteAsync(
+                """
+                UPDATE user_role
+                SET revoked_at = @value,
+                    revoked_by = @actor,
+                    revocation_reason = 'Revoked during test',
+                    effective_to = @future
+                WHERE id = @id
+                """,
+                fixture.AssignmentId.Value,
+                Now,
+                extra: (User.SystemUserId.Value, Now.AddYears(5)));
+
+            await AssertAgreementAsync(service, fixture);
+        });
+    }
+
+    /// <summary>
+    /// The temporal clause, asked about an instant before the assignment took
+    /// effect. No mutation: the state is the question.
+    /// </summary>
+    [Fact]
+    public async Task The_two_views_agree_before_the_assignment_takes_effect()
+    {
+        await RunAsync(async (context, service, fixture) =>
+        {
+            await AssertAgreementAsync(service, fixture, at: Now.AddDays(-2));
+        });
+    }
+
+    private static async Task AssertAgreementAsync(
+        AuthorizationService service,
+        Fixture fixture,
+        DateTimeOffset? at = null)
+    {
+        var instant = at ?? Now;
+
+        var allowed = await IsAllowedAsync(service,
+            fixture.Request() with { At = instant }, CancellationToken.None);
+
+        var enumerated = (await EnumerateAsync(service, fixture, instant))
+            .Any(x => x.Code == fixture.PermissionCode);
+
+        Assert.True(
+            allowed == enumerated,
+            $"IsAllowedAsync said {allowed} and the effective set said {enumerated}. "
+            + "They are two views over one evaluation and must never disagree.");
+    }
+
+    private static async Task<IReadOnlyList<EffectivePermission>> EnumerateAsync(
+        AuthorizationService service,
+        Fixture fixture,
+        DateTimeOffset? at = null)
+        => await service.EnumerateAsync(
+            new EffectivePermissionsRequest(fixture.UserId, at ?? Now),
+            CancellationToken.None);
+
     // ------------------------------------------------------------- fixtures
 
 

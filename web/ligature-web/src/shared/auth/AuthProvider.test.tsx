@@ -2,33 +2,36 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createQueryClient } from "@/app/queryClient";
 import { api, onUnauthorized } from "@/shared/api/client";
 import { server } from "@/test/msw/server";
 import { TestSessionSource } from "@/test/sessions";
 import type { AuthSessionSource } from "./AuthSession";
 import { AuthProvider } from "./AuthProvider";
-import { SESSION_HINT_KEY, SessionHintSource } from "./SessionHintSource";
 import { useAuthSession } from "./useAuthSession";
 
 const at = (path: string) => new URL(path, window.location.origin).href;
 
-afterEach(() => {
-  sessionStorage.clear();
-});
-
 function Session() {
-  const { state, signedIn, signedOut } = useAuthSession();
+  const { state, signedIn, signedOut, retry } = useAuthSession();
 
   return (
     <div>
       <p>status {state.status}</p>
-      <button type="button" onClick={signedIn}>
+      <button
+        type="button"
+        onClick={() => {
+          void signedIn();
+        }}
+      >
         sign in
       </button>
       <button type="button" onClick={signedOut}>
         sign out
+      </button>
+      <button type="button" onClick={retry}>
+        retry
       </button>
     </div>
   );
@@ -80,9 +83,14 @@ describe("the authentication provider", () => {
 
     await screen.findByText("status unauthenticated");
 
+    // Sign-in resolves rather than declares (§8), so the state it reaches is
+    // the one the source answers with at that boundary.
+    source.answerNext({ status: "authenticated", principal: null });
+
     await user.click(screen.getByRole("button", { name: "sign in" }));
-    expect(screen.getByText("status authenticated")).toBeInTheDocument();
+    expect(await screen.findByText("status authenticated")).toBeInTheDocument();
     expect(source.signedInCalls).toBe(1);
+    expect(source.resolveCalls).toBe(2);
 
     await user.click(screen.getByRole("button", { name: "sign out" }));
     expect(screen.getByText("status unauthenticated")).toBeInTheDocument();
@@ -125,16 +133,56 @@ describe("the authentication provider", () => {
     }).not.toThrow();
   });
 
-  it("treats a hand-set hint as an empty authenticated shell that the first reported 401 undoes", async () => {
-    sessionStorage.setItem(SESSION_HINT_KEY, "1");
+  it("settles on error when the source could not determine the caller", async () => {
+    mount(new TestSessionSource({ status: "error" }));
 
-    mount(new SessionHintSource());
+    expect(await screen.findByText("status error")).toBeInTheDocument();
+  });
+
+  /**
+   * THE DISTINCTION, at the provider (B6-B, §8). A failed resolution establishes
+   * nothing about the session, so nothing may be torn down on the strength of
+   * it: the source is not told the session ended, and the query cache — which
+   * may hold another person's data only if a session actually ended — stays.
+   */
+  it("does not sign out or clear the query cache when resolution fails", async () => {
+    const source = new TestSessionSource({ status: "error" });
+    const { queryClient } = mount(source);
+
+    await screen.findByText("status error");
+
+    expect(source.signedOutCalls).toBe(0);
+    expect(queryClient.getQueryData(["previous", "person"])).toEqual({ name: "someone" });
+  });
+
+  it("re-asks the source when the session is retried, and takes the new answer", async () => {
+    const source = new TestSessionSource({ status: "error" });
+    const { user } = mount(source);
+
+    await screen.findByText("status error");
+    expect(source.resolveCalls).toBe(1);
+
+    source.answerNext({ status: "authenticated", principal: null });
+
+    await user.click(screen.getByRole("button", { name: "retry" }));
 
     expect(await screen.findByText("status authenticated")).toBeInTheDocument();
+    expect(source.resolveCalls).toBe(2);
+  });
 
-    await answerUnauthorized();
+  /** A retry is not a sign-out (§8): it asks again, and destroys nothing. */
+  it("retries without signing out or clearing the query cache", async () => {
+    const source = new TestSessionSource({ status: "error" });
+    const { user, queryClient } = mount(source);
 
-    expect(screen.getByText("status unauthenticated")).toBeInTheDocument();
-    expect(sessionStorage.getItem(SESSION_HINT_KEY)).toBeNull();
+    await screen.findByText("status error");
+
+    source.answerNext({ status: "error" });
+
+    await user.click(screen.getByRole("button", { name: "retry" }));
+
+    expect(source.resolveCalls).toBe(2);
+    expect(source.signedOutCalls).toBe(0);
+    expect(queryClient.getQueryData(["previous", "person"])).toEqual({ name: "someone" });
   });
 });

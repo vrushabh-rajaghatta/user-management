@@ -23,6 +23,7 @@ export function useAuthSession() {
     state,
     signedIn: context.signedIn,
     signedOut: context.signedOut,
+    retry: context.retry,
     can: session.can,
     permissionState: session.permissionState,
   };

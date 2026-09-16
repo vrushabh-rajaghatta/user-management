@@ -271,7 +271,29 @@ The establisher adds no eligibility rules. Whether a deactivated user may still 
 
 ### Queries
 
-`IQuery` / `IQueryHandler` exist in SharedKernel, but no query dispatcher, pipeline or handler has been built and no query pattern is established. Do not invent a query dispatcher or query pipeline inside another story; the first query needs its own approved story and architectural decision.
+**Decided in B6-A.** `IQuery<TResult>` and `IQueryHandler<TQuery, TResult>` stay as they are in SharedKernel: bare, and already identical in shape to `ICommand<TResult>`. Query-specific semantics arrive only with a demonstrated need.
+
+Queries are **dispatched**:
+
+```text
+HTTP endpoint → IQueryDispatcher → IQueryHandler<TQuery, TResult> → read
+```
+
+`IQueryDispatcher` is the seam between the Host and the application, exactly as `ICommandDispatcher` is. It is **not** justified by a future need for behaviours; it exists because an endpoint resolving a query handler directly would itself be a new architectural pattern (§12), and the application boundary stays consistent with the one commands established.
+
+> **A dispatcher is not a pipeline.** There is deliberately no query pipeline and no query behaviour. Nothing is copied onto queries by symmetry with commands.
+
+| | Queries today | Why |
+| --- | --- | --- |
+| Behaviours | none | None is justified yet. Each would need its own demonstrated need |
+| Registration | explicit, one line per handler, commented with its requirement ID | As commands. Nothing scans, so an unregistered handler fails loudly instead of being found by magic |
+| Authorization | **no generic contract yet** | The first read is caller establishment, not a permission-gated resource read. **A query that requires authorization introduces the appropriate abstraction as part of the story that requires it** — this is not a ruling that queries cannot be authorized |
+| Transaction | none | Queries do not inherit the command transaction boundary. A read needing internal consistency obtains it through its own read operation, not by borrowing a boundary built for writes |
+| Audit | **not audited by default** | The audit boundary (§6) covers state-changing operations. **A requirement to audit a particular read must be introduced explicitly by the story that requires it** — this is a bounded decision about the default, not a ruling that read auditing is forbidden |
+
+The caller is established by middleware **before** any pipeline runs, so a query inherits an established caller without needing query-side machinery to produce one.
+
+**A new cross-cutting concern for queries still needs its own decision**, exactly as the first query did. Do not add a query behaviour, pipeline or authorization contract inside another story.
 
 ### Handler registration
 

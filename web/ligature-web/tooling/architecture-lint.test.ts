@@ -45,15 +45,16 @@ const VIOLATIONS: [file: string, rule: string, reason: string][] = [
   ["modules/platform/users/hooks/fetchesDirectly.ts", "no-restricted-globals", "fetch outside the API client"],
   ["modules/platform/users/hooks/fetchesThroughWindow.ts", "no-restricted-properties", "window.fetch outside the API client"],
   ["modules/platform/users/hooks/usesXmlHttpRequest.ts", "no-restricted-globals", "XMLHttpRequest outside the API client"],
-  ["modules/platform/users/hooks/usesLocalStorage.ts", "no-restricted-globals", "localStorage outside the hint source"],
-  ["modules/platform/users/hooks/usesSessionStorageThroughGlobalThis.ts", "no-restricted-properties", "globalThis.sessionStorage outside the hint source"],
+  ["modules/platform/users/hooks/usesLocalStorage.ts", "no-restricted-globals", "localStorage, which nothing may use"],
+  ["modules/platform/users/hooks/usesSessionStorageThroughGlobalThis.ts", "no-restricted-properties", "globalThis.sessionStorage, which nothing may reach"],
+  ["shared/auth/SessionHintSource.ts", "no-restricted-globals", "web storage at the path that used to be exempt from the ban"],
   ["modules/platform/users/pages/readsReturnTo.ts", "no-restricted-syntax", "a module reads the return path instead of going through shared/auth"],
   ["shared/forms/importsZod.ts", "no-restricted-imports", "a form presentation primitive imports a schema library"],
 ];
 
 const CONTROLS: [file: string, reason: string][] = [
   ["shared/api/client.ts", "the API client may use the network"],
-  ["shared/auth/SessionHintSource.ts", "shared/auth may import the API client, and the hint source may use web storage"],
+  ["shared/auth/usesApiClient.ts", "shared/auth may import the API client"],
   ["shared/auth/checksPermissions.ts", "shared/auth may read effective permissions"],
   ["lib/utils.ts", "a pure helper"],
   ["components/ui/button.ts", "a vendored primitive may use lib/"],
