@@ -184,3 +184,66 @@ USER $APP_UID
 # authority to create a schema owned by another role, which is deliberately not
 # what the application or the migrator connects with.
 ENTRYPOINT ["dotnet", "Ligature.AuditSchema.dll"]
+
+
+# =====================================================================
+# DEVELOPMENT TARGETS
+#
+# Used only by compose.dev.yaml, and deliberately not production-shaped:
+# they carry toolchains, run as root so they can write to the mounted
+# working tree, and hold no application artefact of their own. Every
+# stage above this line stays exactly what it was.
+# =====================================================================
+
+
+# ------------------------------------------------------------ host (dev)
+
+# The SDK, watching the bind-mounted source. It COPIES NOTHING: the working
+# tree arrives as a mount at run time, and obj/ and bin/ are named volumes so
+# the container's Linux intermediates never meet the developer's macOS ones.
+FROM mcr.microsoft.com/dotnet/sdk:${DOTNET_VERSION} AS host-dev
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libgssapi-krb5-2 \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /source
+
+# Kestrel would otherwise pick its own default port: there is no
+# launchSettings.json, and compose publishes 8080. 0.0.0.0, not localhost,
+# because container loopback is not reachable from the published port.
+ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
+    DOTNET_USE_POLLING_FILE_WATCHER=true \
+    DOTNET_WATCH_RESTART_ON_RUDE_EDIT=true
+
+EXPOSE 8080
+
+# Root, deliberately. It writes build output into mounted volumes; the
+# production host stage above runs as $APP_UID and still does.
+ENTRYPOINT ["dotnet", "watch", "--project", "src/Host/Ligature.Host", "run"]
+
+
+# ------------------------------------------------------------- web (dev)
+
+# Pinned by DIGEST, not by the mutable tag: node:24-bookworm-slim moves, and a
+# development environment that changes underneath a developer is a bug that
+# looks like their own. This digest is the multi-architecture index, so it
+# resolves on both arm64 and amd64. It carries Node v24.21.0, which satisfies
+# the engines range .npmrc enforces.
+FROM node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS web-dev
+
+WORKDIR /app
+
+# Manifests only, so a source change does not reinstall. npm ci runs HERE, for
+# this platform: the developer's own node_modules holds macOS binaries and is
+# never mounted in. Compose seeds the node-modules volume from this layer.
+COPY web/ligature-web/package.json web/ligature-web/package-lock.json web/ligature-web/.npmrc ./
+
+RUN npm ci
+
+EXPOSE 5173
+
+# The same script a developer runs natively. Whether it binds loopback or every
+# interface is decided by LIGATURE_WEB_IN_CONTAINER, which compose.dev.yaml
+# sets and nothing else does.
+ENTRYPOINT ["npm", "run", "dev"]

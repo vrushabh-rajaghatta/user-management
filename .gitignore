@@ -45,6 +45,39 @@ appsettings.Local.json
 .env.*
 secrets.json
 
+## Web client (web/ligature-web)
+# Dependencies
+node_modules/
+
+# Build output and bundler caches
+web/**/dist/
+web/**/dist-ssr/
+web/**/.vite/
+web/**/vite.config.*.timestamp-*
+web/**/*.tsbuildinfo
+
+# Test output and tooling caches
+web/**/coverage/
+web/**/test-results/
+web/**/playwright-report/
+web/**/blob-report/
+web/**/.eslintcache
+web/**/.stylelintcache
+
+# Package manager logs
+web/**/npm-debug.log*
+web/**/yarn-debug.log*
+web/**/yarn-error.log*
+web/**/pnpm-debug.log*
+web/**/*.log
+
+# Development HTTPS certificates are generated per machine by mkcert and
+# contain a private key; they are never committed.
+web/**/.certs/
+
+# Local-only overrides (Vite's *.local convention, e.g. .env.local)
+web/**/*.local
+
 ## OS junk
 .DS_Store
 .DS_Store?

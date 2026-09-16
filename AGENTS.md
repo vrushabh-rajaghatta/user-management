@@ -228,21 +228,68 @@ it (`docs/architecture.md` §4).
 
 ### Running in Docker
 
-A clean clone to a running system, in one command:
+A clean clone to a usable Ligature in the browser, in one command:
 
 ```bash
 ./up.sh
 ```
 
 That starts PostgreSQL, creates the database roles, applies migrations,
-deploys the Audit schema **and the audit event catalogue**, then starts the
-host, in that order, each step waiting for the previous one rather than
-sleeping. The catalogue is in that list deliberately: the host verifies its
-compiled declarations against it and refuses to start otherwise, so `./up.sh`
-would not produce a running host without it. The host is on
-`http://localhost:8080`, the API reference on `/scalar`, and the container
-database is published on **55432** so it cannot collide with a PostgreSQL
-running natively on 5432 — which is the one the test suites use.
+deploys the Audit schema **and the audit event catalogue**, starts the host,
+and starts the web client, in that order, each step waiting for the previous
+one rather than sleeping. The catalogue is in that list deliberately: the host
+verifies its compiled declarations against it and refuses to start otherwise,
+so `./up.sh` would not produce a running host without it.
+
+| | |
+| --- | --- |
+| Ligature | `https://localhost:5173` |
+| API | `http://localhost:8080`, reference on `/scalar` |
+| PostgreSQL | `localhost:55432` — your own 5432 is untouched |
+
+**`./up.sh` proves it is up rather than assuming it.** `docker compose up`
+returning 0 means containers were created, which is not the same thing: this
+repository has had an API container sit "Up" for two days against a database
+that exited four days earlier. So five criteria are probed, and a failure names
+which one: `.env` holds every secret; the prerequisites are present; `roles`,
+`migrator` and `audit-schema` each exited 0; the API answers on 8080; and
+`https://localhost:5173` completes a TLS handshake **and serves the application
+shell**. Success does not claim anyone can sign in — there are no users until
+`./bootstrap.sh`.
+
+**Development is an explicit overlay.** `./up.sh` runs
+`docker compose -f compose.yaml -f compose.dev.yaml`. Plain `docker compose up`
+keeps its production-shaped meaning — database, schema and API, from published
+artefacts — and `compose.dev.yaml` is what adds the web client, the SDK-based
+host with `dotnet watch`, the bind-mounted source and hot reload. It is not
+`compose.override.yaml`, deliberately: an override file is merged automatically
+and would quietly change what the plain command means. The development images
+run as root and carry toolchains; the production stages are untouched by any of
+it.
+
+**The certificate is yours, and Docker only reads it.** `./up.sh` refuses if
+`web/ligature-web/.certs/` is missing and prints the mkcert commands; it never
+creates or installs one, because `mkcert -install` puts a certificate authority
+in your system trust store and needs your password. The container mounts the
+certificate **read-only** and trusts nothing itself: your browser trusts it,
+which is where trust belongs.
+
+```bash
+./up.sh --check
+```
+
+checks the prerequisites and changes nothing.
+
+**Port 5173 belongs to one thing at a time.** `npm run test:host` requires it
+free and refuses otherwise, so the containerised web client and the host-test
+harness are alternatives:
+
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml stop web
+```
+
+Docker is the developer environment; `test:host` is a hermetic proof harness
+that owns its own throwaway database and processes. Neither replaces the other.
 
 `up.sh` exists for one reason: it generates secrets into `.env` on first run —
 the signing key and the three database role passwords. `docs/architecture.md` §17 forbids a default key, a committed development
@@ -313,12 +360,151 @@ dotnet ef database update        --project src/Platform/Ligature.Platform.Persis
 
 Do not introduce a separate design-time configuration mechanism.
 
+### Web client (`web/ligature-web`)
+
+React, TypeScript and Vite, governed by **`docs/frontend-architecture.md`**.
+Read it before changing anything under `web/`. Everything below runs from
+`web/ligature-web`.
+
+**Toolchain.** Node `^22.22.2 || ^24.15.0 || >=26` (jsdom and Vitest set the
+floor) and npm. `.npmrc` sets `engine-strict` and `save-exact`: dependencies are
+exact versions, and `package-lock.json` is committed. Install with `npm ci`,
+never `npm install`, unless you are deliberately changing a dependency.
+TypeScript is pinned to 6.0.x because `typescript-eslint` does not support 7,
+and ESLint to 9 because `eslint-plugin-jsx-a11y` does not support 10.
+
+```bash
+npm ci
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm run dev
+```
+
+**Validate in that order:** typecheck → lint → test → build, every one exiting
+0. In the report, say which ran. `npm run lint` uses `--max-warnings 0`: a
+warning fails it, so do not add one.
+
+**The web suite needs neither PostgreSQL nor .NET.** `npm test` runs two Vitest
+projects:
+
+| Project | Environment | Covers |
+| --- | --- | --- |
+| `web` | jsdom | The application. MSW answers every request; a request no handler answers fails the test rather than reaching the network. |
+| `tooling` | Node | The development environment itself: the dev server's proxy and certificate handling, and the architecture lint rules. |
+
+The architecture rules (`docs/frontend-architecture.md` §2, §6, §8) are
+enforced by `eslint.config.js` and **proved** by
+`tooling/architecture-lint.test.ts`, which lints a deliberately broken fixture
+project (`tooling/lint-fixtures/`) with the real configuration. A rule that is
+switched off or loosened fails that test. When a rule is added, add a fixture
+that breaks it and a control that does not.
+
+**Real-host transport tests.** `npm run test:host` is a **separate command and
+a separate configuration** (`vitest.host.config.ts`, `host-tests/`). It is
+never part of `npm test`, and `tooling/test-isolation.test.ts` proves the
+everyday suite's globs cannot reach it.
+
+```bash
+npm run test:host
+```
+
+It owns its whole environment: it creates a throwaway database, applies the
+migrations, deploys the audit schema and catalogue, provisions a bootstrap
+administrator with the production CLI, starts the host on :5080 and the HTTPS
+dev server on :5173, runs the proofs, and drops the database — including after
+a failure. It reuses nothing already running, because a host that is already up
+is pointed at a database this suite must not touch. There is no test-only
+endpoint and no token back door: the activation token comes out of
+`--activation-token-out` exactly as it does for a real installation.
+
+**Its prerequisites are checked first, and a missing one fails naming it and
+how to provide it. It never skips.** They are:
+
+| Prerequisite | Provide it with |
+| --- | --- |
+| PostgreSQL on 5432, able to create databases | as for `dotnet test` |
+| `psql` on PATH | `brew install libpq && brew link --force libpq` |
+| .NET SDK and `dotnet-ef` | `dotnet tool install --global dotnet-ef` |
+| `.certs/localhost.pem` and key | mkcert, below — **you install this, not an agent** |
+| Playwright's Chromium | `npx playwright install chromium` |
+| Ports 5080 and 5173 free | stop `npm run dev` or `./up.sh` |
+
+Two techniques, and neither substitutes for the other. **Chromium** (Playwright
+1.63.0, Chromium only) proves what a real browser originates: how it stores and
+sends a `Secure`, `__Host-` prefixed cookie over the real HTTPS path. Every
+proof is issued **by the page**, never by `page.request`, whose handling of
+`Secure`, `SameSite`, `__Host-` and Fetch Metadata is unstated — and an
+unstated behaviour cannot be evidence. **`node:http`** proves the exact
+`Host` / `Origin` / `Sec-Fetch-Site` matrix, because Node's `fetch` silently
+drops `Host`. Each matrix row asserts *not the cross-site refusal* rather than
+"succeeded": those requests may still fail on their own merits with 400 or 401.
+
+These are transport tests. End-to-end UI testing is a later story, and
+`page.request`, `ignoreHTTPSErrors` and a shared browser fixture are not
+gateways to it.
+
+**Test helpers.** `src/test/renderWithApp.tsx` renders routes inside the
+application's real providers (`app/providers.tsx`) with a memory router, a fresh
+query client and `TestSessionSource` (`src/test/sessions.ts`), which can hold a
+session in "unknown" until the test settles it. `src/test/axe.ts` checks
+rendered accessibility semantics with `axe-core`; its colour-contrast rule is off
+because jsdom cannot lay out a page.
+
+**Colour contrast is a separate check.** `tooling/theme-contrast.test.ts` reads
+the real `src/index.css` and holds every required theme-token pair to WCAG 2.2
+AA in both themes (4.5:1 text, 3:1 non-text, including the focus ring and input
+borders on each surface they are used on). A missing token fails it. Change a
+token and this test decides whether the change is allowed; `--border` is the one
+named decorative exemption.
+
+**Development server.** `npm run dev` serves `https://localhost:5173`
+**over HTTPS only**. The carrier cookie is `Secure` and `__Host-` prefixed
+(`docs/architecture.md` §17), and browsers disagree about accepting that over
+plain `http://localhost`, so there is no HTTP fallback. Without a certificate
+the server refuses to start and prints these steps. Create one once per machine
+with mkcert, installed by you — it adds a local certificate authority to the
+system trust store, so it is not something an agent or a package script does:
+
+```bash
+brew install mkcert nss
+mkcert -install
+mkcert -cert-file .certs/localhost.pem -key-file .certs/localhost-key.pem localhost
+```
+
+`.certs/` holds a private key and is gitignored. Nothing downloads mkcert or a
+certificate at runtime.
+
+**API proxy.** The dev server forwards `/api` to `http://localhost:8080` (the
+`./up.sh` host). Point it at a host started with `dotnet run` instead:
+
+```bash
+LIGATURE_WEB_API_ORIGIN=http://localhost:5000 npm run dev
+```
+
+The proxy leaves the browser's `Host` header unchanged (no `changeOrigin`) and
+rewrites no cookies. That is load-bearing, not incidental: the host's cross-site
+protection compares `Origin` with the `Host` it receives, so a proxy that
+rewrote `Host` would have every state-changing request refused.
+`tooling/dev-server.test.ts` proves both through a real Vite server.
+
+**Docker.** `compose.dev.yaml` builds the client with the `web-dev` target and
+runs `npm run dev` inside it, so the web client's source now enters the build
+context. Three things about it must not: `.certs/` holds a **private key**,
+`node_modules` holds macOS-native binaries, and `dist/` is rebuilt in the image.
+`.dockerignore` names all three, and `tooling/docker.test.ts` fails if any of
+those rules is lost. Inside the container the dev server binds every interface
+(`LIGATURE_WEB_IN_CONTAINER`), and on your own machine it keeps binding
+loopback; `resolveDevServerHost` refuses a value that is neither true nor false
+rather than defaulting to an unreachable server.
+
 ### Repository hygiene
 
 There is no CI pipeline, no `global.json`, no `.editorconfig` and no
 `Directory.Build.props`. A clean build emits `CS8618`/`CS8620` warnings on
 EF-materialised aggregates and nullable ID converters; do not add new
-categories of warning.
+categories of warning. The web client's lint admits no warnings at all.
 
 ---
 

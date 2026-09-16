@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 #
-# One command, from a clean clone, to a running system.
+# One command, from a clean clone, to a usable Ligature in the browser.
+#
+#   ./up.sh              bring the developer environment up and prove it is up
+#   ./up.sh --check      check the prerequisites only, and change nothing
 #
 # The only thing this does that `docker compose up` cannot is produce secrets.
 # docs/architecture.md §17 forbids a default key, a committed development key
@@ -10,6 +13,16 @@
 # application NOT connecting as a superuser, and a committed development
 # password is a credential in the repository. All of them are generated ONCE
 # here, into .env, which .gitignore excludes.
+#
+# It also brings up the DEVELOPMENT overlay (compose.dev.yaml): the web client,
+# bind-mounted source and hot reload. Plain `docker compose up` keeps its
+# production-shaped meaning — database, schema and API — and passing the overlay
+# is an implementation detail of this script.
+#
+# SUCCESS IS PROVED, NOT ASSUMED. `docker compose up` returning 0 means the
+# containers were created, which is not the same thing: this repository has had
+# an API container sit "Up" for two days against a database that exited four
+# days earlier. Every criterion below is probed.
 
 set -euo pipefail
 
@@ -17,6 +30,20 @@ cd "$(dirname "$0")"
 
 ENV_FILE=".env"
 KEY_NAME="LIGATURE_SIGNING_KEY_V1"
+
+# Overridable so the prerequisite check itself can be tested.
+CERTS_DIR="${LIGATURE_CERTS_DIR:-web/ligature-web/.certs}"
+
+CERT_FILE="${CERTS_DIR}/localhost.pem"
+KEY_FILE="${CERTS_DIR}/localhost-key.pem"
+
+WEB_ORIGIN="https://localhost:5173"
+API_ORIGIN="http://localhost:8080"
+
+COMPOSE=(docker compose -f compose.yaml -f compose.dev.yaml)
+
+# How long a container gets to become answerable before this is a failure.
+READY_TIMEOUT=180
 
 # Every generated secret, so adding one is a single edit here. Each is created
 # only if absent, so an existing .env is never rewritten: regenerating the
@@ -35,6 +62,123 @@ generate() {
     # by Compose, not by a shell.
     openssl rand -base64 32 | tr -d '=+/' | cut -c1-32
 }
+
+# --------------------------------------------------------- prerequisites
+
+# Collected and reported together, so one run tells a developer everything they
+# have to install rather than one thing at a time. Nothing here creates a
+# certificate: mkcert adds an authority to the system trust store, which needs
+# the developer's password and is not something a script should do for them.
+check_prerequisites() {
+    local missing=()
+
+    if ! command -v docker >/dev/null 2>&1; then
+        missing+=("Docker is not installed, or not on PATH.")
+    elif ! docker info >/dev/null 2>&1; then
+        missing+=("Docker is installed but not running. Start Docker Desktop and try again.")
+    fi
+
+    if [ ! -f "$CERT_FILE" ] || [ ! -f "$KEY_FILE" ]; then
+        missing+=("$(cat <<EOF
+The development certificate is missing:
+      ${CERT_FILE}
+      ${KEY_FILE}
+
+    The web client is served over HTTPS only, because the carrier cookie is
+    Secure and __Host- prefixed. Create one once per machine with mkcert —
+    you install it, not this script, because it adds a certificate authority
+    to your system trust store:
+
+      brew install mkcert nss
+      mkcert -install
+      mkdir -p ${CERTS_DIR}
+      cd web/ligature-web && mkcert -cert-file .certs/localhost.pem \\
+          -key-file .certs/localhost-key.pem localhost
+EOF
+)")
+    fi
+
+    if [ "${#missing[@]}" -ne 0 ]; then
+        echo "==> Cannot start the developer environment:" >&2
+        echo >&2
+
+        for reason in "${missing[@]}"; do
+            echo "  - ${reason}" >&2
+            echo >&2
+        done
+
+        return 1
+    fi
+}
+
+# ------------------------------------------------------------- criteria
+
+# The exit code of a one-shot service. Named containers rather than parsed JSON,
+# so this needs no jq.
+exit_code_of() {
+    local container
+    container="$("${COMPOSE[@]}" ps -aq "$1" 2>/dev/null | head -n1)"
+
+    if [ -z "$container" ]; then
+        echo "missing"
+        return
+    fi
+
+    docker inspect --format '{{.State.ExitCode}}' "$container" 2>/dev/null || echo "missing"
+}
+
+# Any HTTP status at all. By docs/architecture.md, a host that answers has
+# already verified its signing key and that its compiled audit declarations
+# match the deployed catalogue — it refuses to start otherwise — so this proves
+# considerably more than a listening socket.
+api_answers() {
+    local status
+    status="$(curl -s -o /dev/null -m 3 -w '%{http_code}' "${API_ORIGIN}/" 2>/dev/null || true)"
+
+    [ -n "$status" ] && [ "$status" != "000" ]
+}
+
+# TLS completes AND the application shell is served. No -k: the certificate is
+# signed by the authority mkcert put in the system trust store, so a handshake
+# that needs it disabled is a failure, not a detail. Both markers are required,
+# because an empty 200 would satisfy a weaker check.
+web_serves_the_shell() {
+    local body
+    body="$(curl -s -m 5 "${WEB_ORIGIN}/" 2>/dev/null || true)"
+
+    [[ "$body" == *'id="root"'* ]] && [[ "$body" == *'/src/main.tsx'* ]]
+}
+
+wait_for() {
+    local description="$1" probe="$2" deadline=$((SECONDS + READY_TIMEOUT))
+
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if "$probe"; then
+            echo "    ok    ${description}"
+            return 0
+        fi
+
+        sleep 2
+    done
+
+    echo "    FAIL  ${description}" >&2
+    return 1
+}
+
+# ------------------------------------------------------------------ main
+
+if [ "${1:-}" = "--check" ]; then
+    check_prerequisites
+    echo "==> Prerequisites satisfied."
+    exit 0
+fi
+
+if [ "${1:-}" != "" ]; then
+    echo "Usage: ./up.sh [--check]" >&2
+    exit 2
+fi
+
+check_prerequisites
 
 if [ ! -f "$ENV_FILE" ]; then
     echo "==> No .env found. Creating one for local development."
@@ -75,18 +219,46 @@ for secret in "${SECRETS[@]}"; do
     fi
 done
 
-echo "==> Building and starting: database, roles, migrations, audit schema, host."
+echo "==> Building and starting: database, roles, migrations, audit schema, API, web client."
 
-docker compose up --build --detach
+"${COMPOSE[@]}" up --build --detach
 
 echo
-echo "    Host          http://localhost:8080"
-echo "    API reference http://localhost:8080/scalar"
-echo "    OpenAPI       http://localhost:8080/openapi/v1.json"
-echo "    PostgreSQL    localhost:55432  (your own 5432 is untouched)"
+echo "==> Proving it is actually up."
+
+failed=0
+
+for step in roles migrator audit-schema; do
+    code="$(exit_code_of "$step")"
+
+    if [ "$code" = "0" ]; then
+        echo "    ok    ${step} completed"
+    else
+        echo "    FAIL  ${step} exited with ${code} — docker compose logs ${step}" >&2
+        failed=1
+    fi
+done
+
+wait_for "the API answers on ${API_ORIGIN}" api_answers || failed=1
+wait_for "${WEB_ORIGIN} serves the application" web_serves_the_shell || failed=1
+
+if [ "$failed" -ne 0 ]; then
+    echo >&2
+    echo "==> The environment did not come up. Inspect a service with:" >&2
+    echo "      docker compose -f compose.yaml -f compose.dev.yaml logs <service>" >&2
+    exit 1
+fi
+
 echo
-echo "    The application connects as app_role, which holds SELECT and INSERT"
-echo "    on the audit trail and cannot update or delete a committed record."
+echo "    Ligature       ${WEB_ORIGIN}"
+echo "    API            ${API_ORIGIN}"
+echo "    API reference  ${API_ORIGIN}/scalar"
+echo "    PostgreSQL     localhost:55432  (your own 5432 is untouched)"
+echo
+echo "    Editing src/ or web/ligature-web/src/ reloads automatically."
+echo
+echo "    npm run test:host needs port 5173 to itself. Stop the web container"
+echo "    first:  docker compose -f compose.yaml -f compose.dev.yaml stop web"
 echo
 echo "    The system has schema but no users yet. To create the bootstrap"
 echo "    administrator and receive its one-time activation token:"
