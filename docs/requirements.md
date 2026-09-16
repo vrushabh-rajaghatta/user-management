@@ -696,14 +696,15 @@ call, but N2(b)'s and N14's "only the three commands" premise would not.
 assembly" is expressed and asserted (reflection over references, or an
 analyzer).
 
-## Notifications are not implemented
+## Activation tokens could not be delivered — RESOLVED
 
-**State:** USR-C1 generates an activation token whose plaintext has no consumer. It is never persisted, returned or logged, so today the token simply cannot be delivered.
+**State:** resolved. USR-C1's plaintext activation token had no consumer, so a created account could never be activated. Notification N1 built delivery and the web client's `/activate` page consumes the link, closing the loop end to end.
 
-**The trap for whoever builds delivery:** a queued row carrying an activation link necessarily carries the plaintext token — the exact disclosure that storing only a hash exists to prevent (UT7). Retention and encryption of that queue need deciding, not assuming.
+**How the trap was avoided.** The concern recorded here was that a queued row carrying an activation link necessarily carries the plaintext token — the exact disclosure that storing only a hash exists to prevent (UT7). It is not queued. `CreateUserCommandHandler` emits the plaintext to a **command-scoped in-memory collector**, and the persisted notification row carries no payload (D-NOTIF-01, D-N1-07). Nothing writes the plaintext to a column, and User Management still references no notification table.
 
-**Deferred to:** the Notifications capability, which owns delivery — User Management does not own email infrastructure (`docs/architecture.md` §8).
-**Where recorded:** TODO in `CreateUserCommandHandler`.
+**What resolved does not mean.** Delivery requires mail configuration. With none, the pump runs sweep-only and every notification records honestly that no attempt was observed — so on a default development host the token is still not delivered, and the account stays unactivated. `./bootstrap.sh` is the deliberate exception: it writes the first administrator's token to `.secrets/bootstrap.token` rather than emailing it, because the system has no users to mail from yet.
+
+**Still owned by Notifications:** User Management does not own email infrastructure (`docs/architecture.md` §8).
 
 ## PRV-C2 — a provisioned tenant never receives new permissions
 

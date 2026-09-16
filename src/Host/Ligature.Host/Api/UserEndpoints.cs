@@ -39,11 +39,16 @@ public static class UserEndpoints
                 + "without it receives 400, not 403 — the pipeline raises the "
                 + "same exception type as a validation failure, and the host "
                 + "does not guess which occurred.\n\n"
-                + "THE CREATED ACCOUNT CANNOT YET BE ACTIVATED. USR-C1 issues "
-                + "an activation token and stores only its hash; the plaintext "
-                + "is discarded, and no delivery mechanism exists yet. This "
-                + "endpoint deliberately does not return it — see the "
-                + "Notifications gap in docs/requirements.md.")
+                + "THE ACTIVATION TOKEN IS NOT RETURNED, deliberately. USR-C1 "
+                + "issues one and stores only its hash; the plaintext is handed "
+                + "to Notifications, which emails the activation link. Returning "
+                + "it here would put it in a response body, a proxy log and a "
+                + "client's memory — the exact disclosure that storing only a "
+                + "hash prevents.\n\n"
+                + "A host with no mail configuration delivers nothing: the "
+                + "notification is swept to Abandoned, and the account stays "
+                + "unactivated. That is the default in a development "
+                + "environment.")
             .Produces(StatusCodes.Status201Created)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
