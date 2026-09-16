@@ -195,7 +195,9 @@ Stated separately, and in those words, because an implementation that puts the a
 
 ### Audit
 
-`CatalogueSynchronised` is **the audit event for the synchronisation operation**, not an event for an individual mutation. One per synchronisation — including runs that change nothing and runs that refuse.
+`PermissionCatalogUpdated` is **the audit event for the synchronisation operation**, not an event for an individual mutation. One per synchronisation — including runs that change nothing and runs that refuse.
+
+The code is the release-controlled identity already established for PRV-C2, ahead of its emitter. Its definition is corrected to match this contract (see the Notes); the code itself is not renamed, because a code is a stable identifier and a description is where the semantics live. Its description is `Catalogue synchronised`.
 
 Its absence against a **provisioned** database means the step did not run, which is itself informative. Against an unprovisioned one it means the bootstrap no-op above, where no synchronisation occurred and there is no System actor to attribute an event to.
 
@@ -204,12 +206,12 @@ It is written through the **autonomous** path, outside the command pipeline, as 
 **It must not merely say that a sync ran.** A reviewer or investigator has to be able to distinguish these without reading the database:
 
 ```text
-CatalogueSynchronised
+PermissionCatalogUpdated
 Outcome = Succeeded
 ```
 
 ```text
-CatalogueSynchronised
+PermissionCatalogUpdated
 Outcome  = Refused
 Reasons  = PermissionMissingFromSeed
 ```
@@ -245,7 +247,7 @@ The database remains the source of truth for what the catalogue now contains, so
 
 Not an implementation detail, and recorded here so it is deliberate rather than accidental.
 
-`migration_role` today holds **nothing at all on the trail** — an invariant asserted by `AuditConstructionVerification`. Emitting `CatalogueSynchronised` from a step that runs as `migration_role` is impossible without changing that. A new deployment script `005` therefore grants, and the verification matrix is amended to match:
+`migration_role` today holds **nothing at all on the trail** — an invariant asserted by `AuditConstructionVerification`. Emitting `PermissionCatalogUpdated` from a step that runs as `migration_role` is impossible without changing that. A new deployment script `005` therefore grants, and the verification matrix is amended to match:
 
 | Privilege | `audit.audit_record` | `audit.audit_entity_ref` |
 | --- | --- | --- |
@@ -273,7 +275,7 @@ The migration principal can therefore create immutable audit evidence and can ne
 - **A9** A refused run commits no mutations to `permission`, `role` or `role_permission`. Its audit record is the deliberate exception and is expected to be present.
 - **A10** A second run against an unchanged database mutates nothing and succeeds.
 - **A11** A run against a database with no System actor exits 0, mutates nothing, and writes no audit record.
-- **A12** Every synchronisation run against a **provisioned** database emits exactly one `CatalogueSynchronised` event, including successful no-change runs and refused runs. An unprovisioned database with no System actor is a successful bootstrap no-op and emits no synchronisation event.
+- **A12** Every synchronisation run against a **provisioned** database emits exactly one `PermissionCatalogUpdated` event, including successful no-change runs and refused runs. An unprovisioned database with no System actor is a successful bootstrap no-op and emits no synchronisation event.
 - **A13** The event's counts equal the mutations actually committed.
 - **A14** A refused run's event carries `Outcome = Refused` and at least one refusal reason code, and the codes are the ones the findings map to.
 - **A15** An existing `role_permission` row is never updated, whatever the catalogue says.
@@ -287,13 +289,22 @@ The migration principal can therefore create immutable audit evidence and can ne
 
 **PE2's premise is not yet met.** `permission` is not yet writable only by a migration role — that enforcement is tracked in the enforcement-layer entry under Known Gaps. It does not block PRV-C2: writing this step to run as `migration_role` costs nothing now and does not depend on the enforcement work landing first.
 
-**`CatalogueSynchronised` is a new audit event type**, and adding one takes three things, not one:
+**No new audit event type is introduced.** The deployed catalogue already defines one for this requirement — `PermissionCatalogUpdated`, commented `// PRV-C2` — established ahead of its emitter. Its definition was written for a narrower, permissions-only conception of PRV-C2 and is **corrected in place** to match this contract:
 
-1. A declaration in `AuditDeclarations.ByCommand`, keyed on a marker type. `[typeof(PlatformProvisioning)] = new("UserManagement", ["TenantProvisioned"])` is the precedent for an emitter that is not a command — listed there precisely so the start-time check covers it.
-2. Rows in `audit.audit_event_type` and `audit.audit_event_origin`, deployed by `Ligature.AuditSchema` as `audit_owner` in the deployment phase, before the host starts. Script `004` moved the catalogue there deliberately: IMPL-08 makes it a precondition of the host rather than tenant data.
-3. Nothing further. `AuditDeclarations.VerifyAgainst` then passes, and the host — which refuses to start when compiled declarations and the deployed catalogue disagree — starts.
+| Field | Was | Is |
+| --- | --- | --- |
+| Name | `Permission catalog updated` | `Catalogue synchronised` |
+| Write path | `Transactional` | `Autonomous` |
+| `Permission` / `Added` | `Required: true` | optional |
+| `Permission` / `Changed` | `Required: true` | optional |
 
-**On the spelling.** All twenty currently deployed codes are spelling-neutral, so the deployed catalogue does not require British spelling and no claim is made that it does. `CatalogueSynchronised` is chosen to match the terminology the Audit specification uses throughout.
+The write path is the correction that matters: a `Transactional` record would be destroyed by the rollback of the very refusal it exists to evidence. The required references could never have been satisfied by a run that changed nothing or a run that refused, both of which this contract requires an event for. No `Role` or `RolePermission` reference is added — breadth belongs in the payload's counts, and per-row references would turn one event about an operation into a row-by-row change log.
+
+> **An event-type definition may be corrected in place only where it is established that no deployed audit record can reference the affected `(code, version)`.** `PermissionCatalogUpdated` satisfies this condition because no emitter has existed in any release. **This is not a general rule for modifying deployed event definitions.**
+
+`audit_record` carries a foreign key to `(event_type, event_version)`, so editing a definition at the same version silently restates the meaning of every record already pointing at it.
+
+**`AuditEventCatalogue.Version` is not bumped, and must not be.** It is a whole-catalogue revision identifier, not a per-event one: `EventTypeSeed.Version` returns that same constant, so raising it would insert 49 new event-type rows at version 2, deactivate all 49 version-1 rows, and write every future audit record against `(code, 2)`. Propagation does not depend on it either — `AuditCatalogueSeeder` upserts every seed unconditionally on each `audit-schema` run, so the corrected definition reaches existing databases on the next deployment. The constant's documented consumers are `TenantProvisioned`'s payload and AUD-C3's future comparison.
 
 ---
 
@@ -918,6 +929,30 @@ analyzer).
 **Deferred to:** the Notifications capability, which owns delivery — User Management does not own email infrastructure (`docs/architecture.md` §8).
 **Where recorded:** TODO in `CreateUserCommandHandler`.
 
+## The audit catalogue has no working per-event versioning
+
+**Rule (ET8):** `audit_event_type` is keyed `(code, version)`, and `audit_record`
+carries a foreign key to `(event_type, event_version)` — so an event type's
+definition can be revised by adding a new version beside the old one, leaving
+existing records pointing at the definition they were written under.
+
+**State:** the mechanism does not work, because nothing can set a per-event
+version. `EventTypeSeed.Version` returns `AuditEventCatalogue.Version`, a single
+constant shared by all 49 seeds, so raising it re-versions the entire catalogue
+at once: 49 new rows at the new version, all 49 previous rows retired by
+`RetireAbsentEventTypesAsync`, and every subsequent record written against the
+new pair. There is no way to revise one event type's definition.
+
+**Why it has not bitten yet.** Correcting `PermissionCatalogUpdated` for PRV-C2
+was safe only because no emitter has ever existed for it, so no deployed record
+can reference `(PermissionCatalogUpdated, 1)`. That argument does not generalise:
+the same correction applied to `UserCreated` would silently restate the meaning
+of every record already written under it.
+
+**Deferred to:** AUD-C3, the release migration the version column exists for and
+which is not yet implemented. Recorded here so the next event-definition
+correction does not discover it the hard way.
+
 ## PRV-C2 — a provisioned tenant never receives new permissions — CONTRACT FROZEN
 
 **State:** still not implemented, but no longer undefined. The contract was
@@ -935,7 +970,7 @@ it, and the only current remedy is hand-written SQL.
 to authorization — it may insert permissions, roles and grants and reconcile
 name and description, and it refuses on everything else rather than repairing
 it. It runs as `migration_role` in the deployment chain, covers all three
-tables, emits one `CatalogueSynchronised` audit event per execution, and
+tables, emits one `PermissionCatalogUpdated` audit event per execution, and
 `ProvisionAsync` is left alone: catalogue evolution is removed from the
 first-provision lifecycle rather than bolted onto it.
 
