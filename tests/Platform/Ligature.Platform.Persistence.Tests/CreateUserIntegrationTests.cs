@@ -133,8 +133,10 @@ public sealed class CreateUserIntegrationTests
                     await DumpTokenRowAsync(result.UserIdentityId),
                     StringComparison.Ordinal);
 
-                // The result deliberately carries no plaintext either: there is
-                // no notification channel yet, so it has no consumer.
+                // The result deliberately carries no plaintext either. It has a
+                // consumer — Notifications emails the link — but that consumer
+                // is the in-memory collector this handler emits to, never the
+                // command's result, which a caller could log.
                 Assert.Equal(
                     new[] { "UserId", "UserIdentityId" },
                     typeof(CreateUserResult)
