@@ -6,14 +6,18 @@ import type { AuthSessionSource, AuthState } from "@/shared/auth/AuthSession";
  * is how a test holds a session in "unknown".
  *
  * It records the signedIn/signedOut notifications it receives, so a test can
- * prove the provider told the source, not only that the UI changed.
+ * prove the provider told the source, not only that the UI changed, and it
+ * counts resolutions, because a retry (B6) is a SECOND resolution and a test
+ * that only watched the rendered state could not tell one from none.
  */
 export class TestSessionSource implements AuthSessionSource {
   signedInCalls = 0;
 
   signedOutCalls = 0;
 
-  readonly #answer: Promise<AuthState>;
+  resolveCalls = 0;
+
+  #answer: Promise<AuthState>;
 
   #settle: ((state: AuthState) => void) | undefined;
 
@@ -34,7 +38,18 @@ export class TestSessionSource implements AuthSessionSource {
     this.#settle(state);
   }
 
+  /**
+   * What the NEXT resolution answers. A retry asks the same source again, so a
+   * test proves the retry worked by changing the answer it will get.
+   */
+  answerNext(state: AuthState): void {
+    this.#answer = Promise.resolve(state);
+    this.#settle = undefined;
+  }
+
   resolve(): Promise<AuthState> {
+    this.resolveCalls += 1;
+
     return this.#answer;
   }
 

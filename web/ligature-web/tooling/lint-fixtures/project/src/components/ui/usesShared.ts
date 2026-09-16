@@ -1,4 +1,4 @@
 // Violation: a vendored primitive imports shared/.
-import { readHint } from "@/shared/auth/SessionHintSource";
+import { holds } from "@/shared/auth/checksPermissions";
 
-export const primitive = readHint;
+export const primitive = holds;

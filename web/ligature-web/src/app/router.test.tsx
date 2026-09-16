@@ -1,5 +1,6 @@
 import { screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { definePermission } from "@/shared/auth/permissions";
 import { renderWithApp } from "@/test/renderWithApp";
 import { TestSessionSource } from "@/test/sessions";
 import { appRoutes, composeRoutes } from "./router";
@@ -12,6 +13,13 @@ const signedIn = () => new TestSessionSource({ status: "authenticated", principa
 
 /** Authenticated, with effective permissions that do NOT include user.create. */
 const denied = () => new TestSessionSource({ status: "authenticated", principal: { permissions: [] } });
+
+/** Authenticated, holding user.create. */
+const holding = () =>
+  new TestSessionSource({
+    status: "authenticated",
+    principal: { permissions: [{ code: definePermission("user.create") }] },
+  });
 
 describe("the application routes", () => {
   it("load the placeholder home page lazily at /, for a signed-in visitor", async () => {
@@ -62,8 +70,14 @@ describe("the application routes", () => {
   });
 
 
-  it("load the create user page for a signed-in visitor", async () => {
+  it("load the create user page for a signed-in visitor whose permissions are not yet known", async () => {
     renderWithApp(appRoutes, { path: "/users/new", source: signedIn() });
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Create user" })).toBeInTheDocument();
+  });
+
+  it("load the create user page for a visitor who holds the permission", async () => {
+    renderWithApp(appRoutes, { path: "/users/new", source: holding() });
 
     expect(await screen.findByRole("heading", { level: 1, name: "Create user" })).toBeInTheDocument();
   });
@@ -84,24 +98,28 @@ describe("the application routes", () => {
   });
 
   /**
-   * F8, stated as a test. <Can> hides the NAVIGATION of a capability a caller
-   * does not hold; it is not access control, and the route is deliberately not
-   * gated. A caller whose permission is denied still reaches the page, and the
-   * server still refuses the command.
+   * The B6 amendment to §5, stated as a test. W4 left this route ungated for one
+   * reason — without a server-backed source every permission was permanently
+   * unknown, so a gate would have been unreachable and untestable. /me removes
+   * that reason, so the route guards itself, and a denial renders an EXPLICIT
+   * denied state rather than a blank page or a 404 that lies about the route.
    *
-   * So removing the navigation gate would change what is visible, and would NOT
-   * change who can reach this route — which is the distinction worth keeping.
+   * The server still authorises POST /api/users either way. This decides what a
+   * person is shown, not what they are permitted to do.
    */
-  it("still render the create user page for a visitor whose permission is denied", async () => {
+  it("refuse the create user page to a visitor whose permission is denied", async () => {
     renderWithApp(appRoutes, { path: "/users/new", source: denied() });
 
-    expect(await screen.findByRole("heading", { level: 1, name: "Create user" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Not available" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Create user" })).toBeNull();
   });
 
   /**
-   * Deliberately a SEPARATE test from the one above. Removing the navigation
-   * gate must fail this one and leave that one passing: hiding an entry is
-   * presentation, and it is not what decides who reaches the route.
+   * Deliberately a SEPARATE test from the one above, and the separation is the
+   * point. Removing the NAVIGATION gate must fail this one and leave that one
+   * passing; removing the ROUTE guard must fail that one and leave this one
+   * passing. W4 produced concrete evidence that a single test covering both
+   * reports the wrong mechanism as broken.
    */
   it("hide the create user navigation from a visitor whose permission is denied", async () => {
     renderWithApp(appRoutes, { path: "/", source: denied() });

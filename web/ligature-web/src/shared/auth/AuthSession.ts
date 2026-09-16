@@ -19,10 +19,21 @@ export interface Principal {
   readonly permissions: readonly EffectivePermission[];
 }
 
+/**
+ * Four states, and the fourth is the one that matters
+ * (docs/frontend-architecture.md §8).
+ *
+ * "error" is NOT "unauthenticated". A 401 is the server saying there is no
+ * caller; a 5xx, a network failure or a broken response is the server failing
+ * to say anything, and we do not know whether the session is valid. Collapsing
+ * the second into the first would sign a live session out because a server had
+ * a bad moment.
+ */
 export type AuthState =
   | { readonly status: "unknown" }
   | { readonly status: "authenticated"; readonly principal: Principal | null }
-  | { readonly status: "unauthenticated" };
+  | { readonly status: "unauthenticated" }
+  | { readonly status: "error" };
 
 export type PermissionState = "unknown" | "allowed" | "denied";
 
