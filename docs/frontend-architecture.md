@@ -168,6 +168,14 @@ export const userRoutes: RouteObject[] = [
 >
 > **An entry's `permission` decides visibility and nothing else.** Hiding an entry a caller cannot use is presentation (§9); the route behind it is **not** gated, because `<Can>` hides its children and a hidden route would render a blank page — an authorization outcome the client is not entitled to invent. What a denied route should render is a real decision, and it belongs with `GET /me`, when a server-backed permission source exists. The server authorizes the command either way.
 
+> **Amended (B6). That decision has arrived, and protected routes are now gated.**
+>
+> W4 left `/users/new` ungated for one reason: with no server-backed permission source, every permission was permanently `unknown`, so a gate would have been unreachable and untestable. `GET /me` removes that reason.
+>
+> A route that requires a permission now guards it, and **denial renders an explicit denied state** — never a blank page, never a redirect that makes the route look as though it does not exist. A hidden route is not an authorization outcome; a stated refusal is.
+>
+> This does not merge the two concerns. An entry's `permission` still decides only whether it is **shown**; the route's guard decides whether it may be **reached**; and the server still authorizes the operation whatever either of them did.
+
 ---
 
 ## 6. API layering
@@ -313,6 +321,23 @@ interface AuthSessionSource {   // the only thing that changes when GET /me arri
 - The hint source's file header says it is **not a security control**. Setting the flag by hand gets you an empty shell and a redirect on the first request.
 - Switching sources changes one line in the composition root (`app/`). Routes, guards and components stay as they are.
 
+> **Amended (B6). `GET /me` is the source, and `AuthState` has four states.**
+>
+> The `sessionStorage` hint is **gone**. The bullets above describing it — that it is never authoritative, and that it mitigates but does not resolve the new-tab ambiguity — are superseded: the server answers the question directly, and web storage is now banned everywhere with no exception.
+>
+> | State | Meaning | `RequireAuth` renders |
+> | --- | --- | --- |
+> | `unknown` | resolution has not completed | nothing |
+> | `authenticated` | the server established a caller | the application |
+> | `unauthenticated` | the server answered `401` | a redirect to sign-in |
+> | `error` | resolution **failed**, so the caller could not be determined | an error with a retry |
+>
+> **A failed resolution is an authentication-resolution error, not an unauthenticated state.** A `5xx` or a network failure means *we do not know* whether the session is valid, and treating that as signed-out would end a live session because a server had a bad moment. Only a `401` means there is no caller.
+>
+> The retry re-asks `/me`. It does **not** clear authentication state or the query cache, because nothing has been established about the session — a retry is not a sign-out.
+>
+> **`/me` is called on application and authentication-boundary resolution, and on explicit retry. Never on a timer.** It is an authenticated request and therefore counts as session activity, so polling it would keep an idle session alive indefinitely and quietly defeat the idle timeout. It must not be used as a heartbeat or liveness probe.
+
 ---
 
 ## 9. Authorization in the UI
@@ -379,6 +404,19 @@ const visibleInTenant = useCan(UserPermissions.create, { type: "Tenant", id: ten
 
 **What the backend has to provide:** scoped checks in the UI need `GET /me` to return **effective permissions with their scopes**, not role names. Calculating them in the client from roles would copy the authorization rule into the frontend, which §1 rules out.
 
+> **Amended (B6). That source now exists.** `GET /me` returns the caller's **effective permissions with their scopes** — each entry carrying a `code`, a `scopeType`, and a `scopeId` that is a UUID or null — rather than role names, which the client would otherwise have to interpret into permissions and so reimplement the authorization rule (§1).
+>
+> Optimistic visibility therefore applies only **while resolution is in flight**, not permanently. Once `/me` has answered, a denied capability is known to be denied and is hidden.
+>
+> **Route authorization and navigation visibility remain distinct**, and the distinction is now load-bearing rather than theoretical:
+>
+> | | Decides | Mechanism |
+> | --- | --- | --- |
+> | Navigation visibility | whether an entry is **shown** | `<Can>` on the entry |
+> | Route authorization | whether a page may be **reached** | the route's own guard |
+>
+> Hiding an entry has never protected anything, and it still does not. The server authorizes every operation regardless of either.
+
 ---
 
 ## 10. Feedback, notification, audit and logging
@@ -424,6 +462,14 @@ Records of email deliveries are not user-facing notifications and must never be 
 - Paginated lists use `placeholderData: keepPreviousData`.
 - Every module keeps its query keys in one factory (`userKeys.list(params)`). Invalidation always goes through the factory, never a hand-typed array.
 - Signing out or getting a 401 clears the whole query cache, so the next person on the same browser sees nothing of the previous one.
+
+> **Amended (B6). The first real read exists, so query keys begin here.**
+>
+> `GET /me` is a query like any other, with its own key factory in `shared/auth`. Authentication resolution consumes that query rather than reaching past the query layer to the transport — the cache is how the answer is held, and the server remains the authority for what the answer is.
+>
+> Its lifecycle is the one exception worth stating: it is resolved at the application and authentication boundary and on explicit retry, and **never on an interval**. A stale cached `/me` is not proof of authentication after a fresh resolution.
+>
+> There is no circularity in caching it. `/me` does not authenticate anyone — the server does that from the session cookie — it only reports who the caller is, and signing out clears the cache without needing to ask.
 
 ---
 
