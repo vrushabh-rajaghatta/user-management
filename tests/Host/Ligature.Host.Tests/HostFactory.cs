@@ -1,6 +1,8 @@
 using Ligature.Host.Configuration;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Ligature.Host.Tests;
 
@@ -17,6 +19,8 @@ internal sealed class HostFactory : WebApplicationFactory<Program>
 {
     private readonly string? _apiDocumentation;
 
+    private readonly Action<IServiceCollection>? _services;
+
     /// <summary>
     /// The default leaves LIGATURE_API_DOCUMENTATION UNSET, which is what makes
     /// the rest of the suite evidence that the documentation surface is absent
@@ -24,9 +28,17 @@ internal sealed class HostFactory : WebApplicationFactory<Program>
     /// value — including a deliberately invalid one, since refusing to start on
     /// a malformed value is part of the contract.
     /// </summary>
-    internal HostFactory(string? apiDocumentation = null)
+    /// <param name="services">
+    /// Registrations applied to the REAL host's service collection, for tests
+    /// that must prove what Program.cs does with a registration it did not
+    /// make itself — a refused start-up in particular.
+    /// </param>
+    internal HostFactory(
+        string? apiDocumentation = null,
+        Action<IServiceCollection>? services = null)
     {
         _apiDocumentation = apiDocumentation;
+        _services = services;
 
         // No ambient cookie state. The default client authenticates with a
         // bearer carrier and nothing else; were it to keep the cookie sign-in
@@ -100,5 +112,8 @@ internal sealed class HostFactory : WebApplicationFactory<Program>
             builder.UseSetting(
                 HostConfiguration.ApiDocumentationSetting, _apiDocumentation);
         }
+
+        if (_services is not null)
+            builder.ConfigureTestServices(_services);
     }
 }

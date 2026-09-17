@@ -85,16 +85,25 @@ public static class QueryAuthorizationVerification
     }
 
     /// <summary>
-    /// Reads the declaration through a generic method, so the READ itself is
-    /// the same compile-time-typed TQuery.Authorization that AddQuery uses —
-    /// explicit interface implementations included. Only the dispatch to it is
-    /// reflective, because a registration descriptor carries a Type and no
-    /// generic parameter.
+    /// THE RULE THIS METHOD EXISTS TO KEEP, stated for whoever is tempted to
+    /// simplify it: reflection may discover WHICH QUERY TYPE was registered.
+    /// It must never READ THE DECLARATION.
     ///
-    /// This is not the reflection the pattern note rules out. That note is
-    /// about DECLARING by an attribute or member nobody can be forced to write;
-    /// here the declaration is already compiler-enforced on the normal path,
-    /// and this only reads it back to catch the bypass.
+    ///     allowed    descriptor -> closed IQueryHandler<TQuery,TResult>
+    ///                -> TQuery -> MakeGenericMethod -> TQuery.Authorization
+    ///
+    ///     forbidden  reflection -> find an "Authorization" property -> invoke it
+    ///
+    /// The first uses reflection only as a bridge from runtime registration
+    /// metadata, which carries a Type and no generic parameter, to a statically
+    /// typed method; the declaration is then read through the compile-time
+    /// interface contract, exactly as AddQuery reads it, explicit interface
+    /// implementations included.
+    ///
+    /// The second would undo the reason static abstract members were chosen
+    /// (docs/architecture.md section 11, pattern note). It looks like the same
+    /// thing in fewer lines, and it is not: a property found by name is a
+    /// convention, and a convention is precisely what the contract replaced.
     /// </summary>
     private static QueryAuthorization? Read(Type queryType)
         => (QueryAuthorization?)typeof(QueryAuthorizationVerification)
