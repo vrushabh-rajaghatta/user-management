@@ -342,6 +342,21 @@ The caller is established by middleware **before** any pipeline runs, so a query
 >
 > Permission codes remain plain strings, as `IAuthorizableCommand.RequiredPermission` and `AuthorizationRequest.PermissionCode` already are. A strongly typed permission code is a separate and larger change, and the command side is where it would have to start.
 
+> **Decided. The user-list read is not audited.**
+>
+> The `Audit — not audited by default` row required a read that is audited to say so in its own story. The first permission-gated read, listing a tenant's users under `user.read`, was examined against that row and **does not** introduce read auditing. The default is confirmed for it deliberately, not inherited by omission.
+>
+> This is the Audit design's own rule, not an exception to it. Audit design specification §12.2, *Reads are not events*: routine tenant inspection queries write nothing (AUD-17). The control on reading is the permission, and the visibility of who holds it; an export is the exception because it leaves the system. A user-list read leaves nothing behind that the trail would need to explain.
+>
+> Consequently:
+>
+> - The read declares `Required("user.read")` and its handler enforces it through `IsAllowed`. `Authority` remains unused.
+> - No audit event type is added for it, and no catalogue change accompanies it.
+> - **`AuditInspected` does not apply.** It records a platform operator reading the *audit trail* (behaviour 19): its primary entity type is `AuditTrail`, and AR27 makes the database refuse it for any actor that is not a `PlatformOperator`. It is not a general read-audit event and must not be reused as one.
+> - A refused read writes nothing either. That is not a decision taken here: the refusal event, `AuthorisationDenied`, has no writable form for commands or queries alike (`docs/requirements.md`, *AuthorisationDenied and CommandRejected have no writable form*), and a read will not be the place it is first solved.
+>
+> This decides one read. A later read that must be audited — an export, or anything the Audit design names — still introduces that requirement in its own story, as the row says.
+
 ### Handler registration
 
 Handlers are registered explicitly, one by one, in `Ligature.Platform.Application/DependencyInjection.cs`, with the requirement ID as a comment. Do not introduce assembly scanning. "Which commands are wired in" must be answerable by reading that method.
