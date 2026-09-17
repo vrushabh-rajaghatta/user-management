@@ -323,13 +323,13 @@ The write path is the correction that matters: a `Transactional` record would be
 
 **`AuditEventCatalogue.Version` is not bumped, and must not be.** It is a whole-catalogue revision identifier, not a per-event one: `EventTypeSeed.Version` returns that same constant, so raising it would insert 49 new event-type rows at version 2, deactivate all 49 version-1 rows, and write every future audit record against `(code, 2)`. Propagation does not depend on it either — `AuditCatalogueSeeder` upserts every seed unconditionally on each `audit-schema` run, so the corrected definition reaches existing databases on the next deployment. The constant's documented consumers are `TenantProvisioned`'s payload and AUD-C3's future comparison.
 
-## User list — row projection, endpoint and pagination
+## User list — row projection, endpoint, pagination and sorting
 
 **Requirement ID:** Pending assignment under the project's query-requirement numbering convention; **implementation must not begin until the requirement has a stable ID.**
 
 *Identifier Format* defines only the `-C` family for commands, and no query convention exists yet. One is not invented locally for this entry: a story that needs an ID asks the owner (`AGENTS.md` §16).
 
-**Status:** Approved as a partial contract — the row projection, the endpoint and identifier semantics, and the pagination model. All decided 2026-09-17 by owner decision. **Not fully frozen:** the requirement has no stable ID, and sorting, filtering and the response envelope are **not yet decided**. Not implemented.
+**Status:** Approved as a partial contract — the row projection, the endpoint and identifier semantics, the pagination model, and sorting. All decided 2026-09-17 by owner decision. **Not fully frozen:** the requirement has no stable ID, and filtering and the response envelope are **not yet decided**. Not implemented.
 
 ### Requirement
 
@@ -425,7 +425,7 @@ Nothing depends on the match. The server owns the rules it would inform: an admi
 | **Invalid values** | A page number or page size that is not a positive integer, or a page size above the maximum, is **refused as an invalid request** — never silently corrected. `0`, a negative value and an oversized value are not turned into something the caller did not ask for. |
 | **Response** | The result identifies the page returned and states whether another page exists (`hasMore`). **The total number of users is not returned.** |
 | **Past the end** | A page beyond the last is an empty page with no further page — not an error. |
-| **Ordering** | `DisplayName` ascending, then `UserId` ascending as the deterministic tie-breaker. |
+| **Ordering** | `DisplayName` ascending, then `UserId` ascending as the deterministic tie-breaker. `DisplayName` is compared as defined under *Sorting*. |
 | **Consistency** | Each page is a single read operation. No separate count query is required, and none is made. |
 
 **Why offset.** It matches the paged table the web client already anticipates (`docs/frontend-architecture.md` §4, §11) and keeps request parameters free of personal data. A keyset cursor would have to carry the last row's sort values — here a display name — into query strings and access logs, against the discipline that keeps credentials out of URLs (`docs/frontend-architecture.md` §13). No paging precedent exists in the backend; the Audit design's keyset rule (IMPL-12) rests on the trail being append-only and ordered by `Sequence`, which the user table is not.
@@ -434,7 +434,7 @@ Nothing depends on the match. The server owns the rules it would inform: an admi
 
 **Why no total.** Paging forward and back needs only `hasMore`. A total would disclose the tenant's population to every holder of `user.read`, and would add a count to every request. It may be added later if a client demonstrates a need, under the same evidence as any other field.
 
-**Why this order.** The list is read by a person, and `DisplayName` is the field a row is recognised by, so alphabetical order makes page navigation predictable. `DisplayName` is not unique, so `UserId` makes the order total; without a total order, pages overlap or drop rows even when nothing changes.
+**Why this order.** The list is read by a person, and `DisplayName` is the field a row is recognised by, so a stable, human-scannable order makes page navigation predictable. `DisplayName` is not unique, so `UserId` makes the order total; without a total order, pages overlap or drop rows even when nothing changes.
 
 > **The list does not promise a snapshot across separate requests.** A user created between two page requests can cause rows to shift between pages.
 
@@ -443,11 +443,54 @@ That is a property of the contract, not a defect to be engineered away. Snapshot
 What this does **not** decide:
 
 - **The numeric maximum and default page size.** Established when the query is designed, on evidence.
-- **Comparison semantics for `DisplayName`** — collation, case and locale. Decided with the query design or the sorting gate; no rule is invented here.
+- **Comparison semantics for `DisplayName`.** Decided afterwards by the sorting gate; see *Sorting*.
 - **An index.** None supports this order today. Whether one is warranted is established from the query plan at implementation, not added in advance.
-- **User-selectable sorting.** The order above is the pagination foundation, not the sorting model.
+- **User-selectable sorting.** The order above is the pagination foundation, not the sorting model; see *Sorting*.
 - **The response shape and parameter names.** `page`, `pageSize` and `hasMore` name the concepts; their representation belongs to the response envelope decision.
 - **The status code of an invalid-request refusal.**
+
+### Sorting
+
+**No user-selectable sorting in this version.** The list is always returned in its default order. There is no client-controlled sort field and no client-controlled sort direction, and `Email` is not sortable.
+
+This does not make the list unsorted. Pagination requires a deterministic order and has one; what is withheld is a *client-controlled* sorting contract, because no operational need for one has been identified. Adding sorting later is additive — a new, optional request parameter — while removing a sorting capability once clients depend on it is not.
+
+#### The default order, defined exactly
+
+> **`DisplayName` ascending, compared using PostgreSQL's ICU `"unicode"` collation, followed by `UserId` ascending as the deterministic tie-breaker.**
+
+The collation is stated because leaving it to the database default does not define an order. The declared default is the same in the deployed database and the test database — `libc`, `en_US.utf8` — and the two still order the same values differently:
+
+| Database | C library | Default order of the same values |
+| --- | --- | --- |
+| Deployment (`postgres:18-alpine`) | musl | `10 · 9 · Bob · Delacroix · OBrien · Zoë · _x · adam · alice · de la Cruz · o'Brien · Ängel · Émile` |
+| Test suite (Debian) | glibc | `10 · 9 · adam · alice · Ängel · Bob · Delacroix · de la Cruz · Émile · o'Brien · OBrien · _x · Zoë` |
+
+musl does not apply the locale's collation and compares bytes; glibc applies it. A test could pass against one while the other returns a different order. Under `COLLATE "unicode"` both return `_x · 10 · 9 · adam · alice · Ängel · Bob · de la Cruz · Delacroix · Émile · o'Brien · OBrien · Zoë`.
+
+Two limits on what this claims:
+
+- **`"unicode"` is a comparison mechanism, not a language policy.** It is ICU's root collation: a stable ordering across environments, not a locale-specific definition of alphabetical order for any particular language.
+- **ICU ordering is not immutable.** An ICU version change can change it, and an index built on it would then need rebuilding. That is not solved here; it is recorded so the ordering is not assumed permanent.
+
+`UserId` needs no collation: it is a `uuid`, compared by value, identically in every environment.
+
+#### Future sort fields
+
+> **A user-selectable sort field must correspond to a field exposed by the user-list row projection.**
+
+The row is `UserId`, `DisplayName` and `Email`, so those are the only fields a future sorting decision may choose from. A field outside the row — `Username`, `CreatedAt`, lifecycle status, identity information — cannot become a sort key merely because the database has it: ordering by a hidden field discloses it through the order of the rows.
+
+This bounds the choice; it does not make every row field sortable. Each would still need its own decision, including its direction semantics, null handling and comparison.
+
+What this does **not** decide:
+
+- **Descending order**, and the tie-breaker direction it would need.
+- **Sorting by `Email`.**
+- **Any index** supporting the default order, including one on `DisplayName` under `"unicode"`.
+- **`DisplayName` validation or normalisation.** The API currently accepts a blank or whitespace-padded display name, which sorts first. That is a data-quality question with its own evidence, not a sorting one.
+- **The wider difference between the deployment and test database images.** Only its effect on this ordering is resolved here.
+- Wire parameter names, the response shape, numeric page limits and the invalid-request status, as before.
 
 ### Lifecycle status
 
@@ -487,13 +530,15 @@ A field joins the row only with the same evidence that admitted these three:
   P6 is limited to the routes **accepting the identifier** — that it binds and addresses the user the row describes. It does not assert that either command succeeds: each keeps its own authorization and eligibility rules, and a refusal by those rules is not a P6 failure.
 - **P7** A request returns at most one page, and the server never returns more rows than the server-enforced maximum. This is a bound on what is returned, not permission to cap: a request for more than the maximum is refused (P8), never accepted and truncated.
 - **P8** A page number or page size that is not a positive integer, or a page size above the maximum, is refused as an invalid request and is never silently corrected.
-- **P9** Rows are ordered by `DisplayName` ascending, then `UserId` ascending, and consecutive pages over unchanged data neither repeat nor omit a row.
+- **P9** Rows are ordered by `DisplayName` ascending under ICU `"unicode"` collation, then `UserId` ascending, and consecutive pages over unchanged data neither repeat nor omit a row.
 - **P10** The result states whether another page exists and does not contain a total user count.
 - **P11** A page beyond the last is empty and states that no further page exists.
+- **P12** The list offers no client-controlled sort field or sort direction: no request parameter changes the order, and every request returns rows in the default order. How an unrecognised parameter is treated is not decided here.
+- **P13** The default order is the same in every environment the platform runs in, including where the database's default collation differs.
 
 ### Notes
 
-**Not decided here:** sorting, filtering, the response envelope, the refusal status code, and the query and result type names. Also not decided: a detail route, `Location` on create, a path from a row to unlock, and correlating a row with the caller.
+**Not decided here:** filtering, the response envelope, the refusal status code, and the query and result type names. Also not decided: a detail route, `Location` on create, a path from a row to unlock, and correlating a row with the caller.
 
 ---
 
