@@ -266,12 +266,15 @@ public static class DependencyInjection
     /// Explicit, one line per handler, exactly as commands are registered
     /// above. Nothing scans, so a handler that exists but was never registered
     /// fails loudly on first dispatch instead of being found by magic.
+    ///
+    /// Through AddQuery and never a raw AddScoped (docs/architecture.md section
+    /// 11). A forgotten authorization check fails SILENTLY — it serves the data
+    /// — so the classification is compulsory here and verified again at
+    /// start-up.
     /// </summary>
     private static void AddQueryHandlers(IServiceCollection services)
     {
         // B6
-        services.AddScoped<
-            IQueryHandler<MeQuery, MeResult>,
-            MeQueryHandler>();
+        services.AddQuery<MeQuery, MeResult, MeQueryHandler>();
     }
 }

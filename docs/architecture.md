@@ -295,6 +295,53 @@ The caller is established by middleware **before** any pipeline runs, so a query
 
 **A new cross-cutting concern for queries still needs its own decision**, exactly as the first query did. Do not add a query behaviour, pipeline or authorization contract inside another story.
 
+> **Amended. The first permission-gated query has arrived, and it brings the authorization contract §11 reserved for it.**
+>
+> The `Authorization — no generic contract yet` row above is superseded. That row was correct while the only read was `/me`, which is self-scoped and refuses nobody; the first read that must refuse a caller introduces the abstraction, as the row required.
+>
+> ### Query authorization declaration
+>
+> Every registered query handler must have an explicit authorization classification.
+>
+> A query that requires no authorization declares `NotRequired`. A permission-gated query declares the required permission **on the query type itself**, as a static abstract member of its classification interface — the single source of truth, consumed by both registration and enforcement.
+>
+> **The classification is two explicit states, never one nullable value.** `NotRequired` and `Required(<permission>)` are both positive declarations. A single nullable member — `static abstract string? RequiredPermission`, where `null` is taken to mean "no authorization required" — is forbidden, and an absent, null or blank permission is not a declaration of anything and must be rejected by the verifier.
+>
+> The reason is the same one the whole contract rests on: it would make the most consequential state in the system the one you get by **not typing anything**. "This query is deliberately open" and "somebody left this blank" would become indistinguishable, which is precisely the implicitness being removed.
+>
+> Query registration must require an authorization classification and must not provide an unclassified registration path.
+>
+> The application verifies all registered query handlers at startup. Any handler registered outside the approved registration mechanism, or whose query does not provide a valid authorization classification, **prevents application startup**.
+>
+> **Open-generic query-handler registrations are not supported** by the query registration model and must cause startup verification to fail. An open generic `IQueryHandler<,>` handles queries that cannot be named at registration, so there is no concrete query whose declaration could be verified; permitting one would be an escape hatch around the invariant rather than an exception to it.
+>
+> The declaration is **descriptive only**; it does not authorize a request. A permission-gated handler must enforce its query's declared permission against the established caller before accessing protected data.
+>
+> `IAuthorizationService` remains unchanged. Query authorization consumes `IsAllowed`; `Authority` is **not** used unless a later read explicitly requires audit authority capture — it exists to record the assignment a command acted under, and a read that is not audited has no use for it.
+>
+> **No query authorization pipeline or dispatcher behaviour is introduced by this story.** The dispatcher resolves a handler and invokes it; that remains the whole of it.
+>
+> ### Why omission, not just refusal, is the thing being designed against
+>
+> Registration was made explicit because *"an unregistered handler fails loudly instead of being found by magic"*. That reasoning does not transfer to authorization. An unregistered handler fails **loudly** on first dispatch; a handler that forgets its authorization check fails **silently — it serves the data**. Explicitness is safe where forgetting is loud and dangerous where forgetting is quiet, which is why the declaration is compulsory at the point of registration and verified again at start-up.
+>
+> The two layers catch different failures:
+>
+> | | Catches | When |
+> | --- | --- | --- |
+> | Classification required to register | the ordinary omission | compile time |
+> | Start-up verification of registered handlers | a deliberate bypass of the registration helper | start-up; the application refuses to run |
+>
+> ### Pattern note — static abstract interface members
+>
+> **Static abstract interface members are used here for the first time in this codebase, deliberately: they are the only mechanism that keeps the declaration on the query type, enforced at compile time, without reflection or scanning.**
+>
+> Registration has the query **type**, not an instance, so an instance member cannot be read there; a static member or attribute read by reflection would reintroduce exactly the scanning this section bans, and the compiler could not force one to exist. The alternatives were weighed and rejected on those grounds.
+>
+> This note exists so the decision is not later "simplified" into an attribute-plus-reflection mechanism, or into a second registry maintained beside the handler registrations — which would replace *"someone forgot the authorization check"* with *"someone forgot to update the authorization registry"*, and gain nothing.
+>
+> Permission codes remain plain strings, as `IAuthorizableCommand.RequiredPermission` and `AuthorizationRequest.PermissionCode` already are. A strongly typed permission code is a separate and larger change, and the command side is where it would have to start.
+
 ### Handler registration
 
 Handlers are registered explicitly, one by one, in `Ligature.Platform.Application/DependencyInjection.cs`, with the requirement ID as a comment. Do not introduce assembly scanning. "Which commands are wired in" must be answerable by reading that method.

@@ -1,3 +1,4 @@
+using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Domain.Users;
 using Ligature.SharedKernel.Abstractions;
 
@@ -11,5 +12,15 @@ namespace Ligature.Platform.Application.Users.Queries.Me;
 /// the KEY FOR OBTAINING the session's timing, and not an invitation to decide
 /// again whether that session is valid: caller establishment is the
 /// authentication boundary and has already run (D4).
+///
+/// NotRequired, and deliberately so: /me answers about the caller and refuses
+/// nobody who has been established. It declares that rather than being silent
+/// about it, because under docs/architecture.md section 11 there is no such
+/// thing as an accidentally unauthorised query. Nothing about its behaviour
+/// changed when this declaration was added.
 /// </summary>
-public sealed record MeQuery(UserSessionId SessionId) : IQuery<MeResult>;
+public sealed record MeQuery(UserSessionId SessionId)
+    : IQuery<MeResult>, IQueryAuthorizationDeclaration
+{
+    public static QueryAuthorization Authorization => QueryAuthorization.NotRequired;
+}
