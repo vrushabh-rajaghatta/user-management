@@ -53,6 +53,17 @@ public sealed class UserListReaderTests
     }
 
     [Fact]
+    public async Task A_user_without_an_email_is_read_with_a_null_email()
+    {
+        await WithSeededAsync(["No Address"], async seeded =>
+        {
+            var row = Assert.Single(await ReadAllAsync(pageSize: 100), x => x.UserId.Value == seeded[0].Id);
+
+            Assert.Null(row.Email);
+        }, withoutEmail: true);
+    }
+
+    [Fact]
     public async Task Display_names_are_ordered_under_icu_unicode_not_the_database_default()
     {
         // ICU root order. glibc puts "Delacroix" before "de la Cruz" and "_x"
@@ -150,7 +161,8 @@ public sealed class UserListReaderTests
     private static async Task WithSeededAsync(
         string[] names,
         Func<IReadOnlyList<Seeded>, Task> body,
-        Guid[]? ids = null)
+        Guid[]? ids = null,
+        bool withoutEmail = false)
     {
         await TestDatabase.EnsureProvisionedAsync();
 
@@ -181,7 +193,7 @@ public sealed class UserListReaderTests
 
                 command.Parameters.AddWithValue("id", user.Id);
                 command.Parameters.AddWithValue("display", user.DisplayName);
-                command.Parameters.AddWithValue("email", user.Email);
+                command.Parameters.AddWithValue("email", withoutEmail ? DBNull.Value : user.Email);
                 command.Parameters.AddWithValue("system", system);
 
                 await command.ExecuteNonQueryAsync();

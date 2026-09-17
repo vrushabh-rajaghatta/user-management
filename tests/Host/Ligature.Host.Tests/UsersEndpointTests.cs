@@ -144,6 +144,34 @@ public sealed class UsersEndpointTests
         });
     }
 
+    /// <summary>
+    /// The column is nullable and nothing in the database requires a human to
+    /// have an address, so a row without one is listed with an explicit null
+    /// rather than hidden or given a placeholder.
+    /// </summary>
+    [Fact]
+    public async Task A_user_without_an_email_is_listed_with_a_null_email()
+    {
+        await RunAsync(async (client, callers) =>
+        {
+            var marker = Guid.NewGuid().ToString("N")[..10];
+            var id = await SeedListedUserAsync($"No Address {marker}", email: null);
+
+            try
+            {
+                var row = Assert.Single(
+                    await ReadAllRowsAsync(client, callers.Administrator),
+                    x => x.GetProperty("userId").GetGuid() == id);
+
+                Assert.Equal(JsonValueKind.Null, row.GetProperty("email").ValueKind);
+            }
+            finally
+            {
+                await DeleteUserAsync(id);
+            }
+        });
+    }
+
     [Fact]
     public async Task The_largest_page_size_is_accepted()
     {
@@ -209,6 +237,9 @@ public sealed class UsersEndpointTests
     [InlineData("pageSize=2e1")]
     [InlineData("page=1&page=2")]
     [InlineData("pageSize=10&pageSize=20")]
+    [InlineData("page=2147483648")]
+    [InlineData("pageSize=2147483648")]
+    [InlineData("page=-2147483649")]
     public async Task A_malformed_recognised_parameter_is_refused_with_the_error_body(string query)
     {
         await RunAsync(async (client, callers) =>
@@ -257,6 +288,26 @@ public sealed class UsersEndpointTests
 
             await AssertInvalidRequestAsync(response);
             Assert.DoesNotContain("\"users\"", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        });
+    }
+
+    /// <summary>
+    /// Authorization precedes range validation: a caller without user.read
+    /// receives the same refusal whatever in-range or out-of-range values it
+    /// sent, and so learns nothing about which are valid.
+    /// </summary>
+    [Fact]
+    public async Task A_caller_without_user_read_learns_nothing_about_parameter_ranges()
+    {
+        await RunAsync(async (client, callers) =>
+        {
+            var plain = await GetAsync(client, callers.Unprivileged, "/api/users");
+            var outOfRange = await GetAsync(client, callers.Unprivileged, "/api/users?page=0&pageSize=1000");
+
+            Assert.Equal(HttpStatusCode.BadRequest, outOfRange.StatusCode);
+            Assert.Equal(
+                await plain.Content.ReadAsStringAsync(),
+                await outOfRange.Content.ReadAsStringAsync());
         });
     }
 
@@ -486,7 +537,7 @@ public sealed class UsersEndpointTests
     }
 
     /// <summary>A human user with no identity: listed, and eligible for nothing.</summary>
-    private static async Task<Guid> SeedListedUserAsync(string displayName)
+    private static async Task<Guid> SeedListedUserAsync(string displayName, string? email = "")
     {
         var userId = Guid.NewGuid();
 
@@ -503,7 +554,9 @@ public sealed class UsersEndpointTests
 
         command.Parameters.AddWithValue("id", userId);
         command.Parameters.AddWithValue("display", displayName);
-        command.Parameters.AddWithValue("email", $"usr-q1-{userId:N}@example.test");
+        command.Parameters.AddWithValue(
+            "email",
+            email is null ? DBNull.Value : $"usr-q1-{userId:N}@example.test");
         command.Parameters.AddWithValue("system", User.SystemUserId.Value);
 
         await command.ExecuteNonQueryAsync();
