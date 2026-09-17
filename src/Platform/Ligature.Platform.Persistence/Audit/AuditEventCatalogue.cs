@@ -69,21 +69,41 @@ internal static class AuditEventCatalogue
                 IsActive: true,
                 Origins: ["System"]),
 
-            // PRV-C2
+            // PRV-C2 — corrected in place to match the frozen catalogue
+            // synchronisation contract (docs/requirements.md, PRV-C2).
+            //
+            // The CODE is unchanged. It is the release-controlled identity for
+            // this requirement, established ahead of its emitter, and renaming
+            // it would be catalogue churn for no gain. The name carries the
+            // broader semantics instead: synchronisation reconciles roles and
+            // grants as well as permissions, and a code is a stable identifier
+            // rather than a description.
+            //
+            // Autonomous, and that is the correction that matters. A refused
+            // synchronisation rolls back every catalogue mutation and its audit
+            // record must survive that rollback — a Transactional record would
+            // be destroyed by the very outcome it exists to evidence.
+            //
+            // Both entity references are OPTIONAL. They were required, which no
+            // run that changed nothing and no refused run could ever satisfy,
+            // and the contract emits one event per run including both. No Role
+            // or RolePermission reference is added: breadth belongs in the
+            // payload's counts, and per-row references would turn one event
+            // about an operation into a row-by-row change log.
             new(
                 "PermissionCatalogUpdated",
                 "UserManagement",
-                "Permission catalog updated",
+                "Catalogue synchronised",
                 "ConfigurationChange",
                 ReasonRequired: false,
-                "Transactional",
+                "Autonomous",
                 "Payload",
                 PrimaryEntityType: "PermissionCatalog",
                 PrimaryEntityRequired: false,
                 EntityRefRoles:
                 [
-                    new("Permission", "Added", Required: true),
-                    new("Permission", "Changed", Required: true),
+                    new("Permission", "Added", Required: false),
+                    new("Permission", "Changed", Required: false),
                 ],
                 PiiPaths: [],
                 IsActive: true,
