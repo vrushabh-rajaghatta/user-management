@@ -507,6 +507,37 @@ the thing that is wrong. Until then, the pipeline's refusal is honest: a
 declaration of either would fail the primary-entity rule rather than write
 something untrue.
 
+## Behaviour 19 assumes a query pipeline that §11 does not have
+
+**Rule (Audit design specification §12.3, behaviour 19):** when the caller's
+`ActorType` is `PlatformOperator`, *the query pipeline* wraps every `audit.read`
+and `auditpolicy.read` query, and emits `AuditInspected` through the autonomous
+writer before returning results. Failure is fail-closed: a read the tenant
+cannot later see is not returned. AR27 enforces the operator restriction as a
+database `CHECK`, and the deployed catalogue carries the event, commented
+`Query pipeline (behaviour 19)`.
+
+**State:** there is no query pipeline, deliberately. `docs/architecture.md` §11
+says a dispatcher is not a pipeline, forbids query behaviours, and requires any
+new cross-cutting query concern to be decided in its own story. The Audit
+design places behaviour 19 exactly where §11 says nothing may go.
+
+**A contradiction between two frozen artefacts, not a bug in either.** Nothing
+triggers it today: the `PlatformOperator` actor type does not exist
+(`AuditRecordAssembler` records it as awaiting AM-01) and no audit query
+(AUD-Q1–Q12) is implemented. It was found while deciding that the user-list
+read is not audited, which it does not affect — behaviour 19 covers the audit
+trail's own reads, and AR27 refuses `AuditInspected` for any tenant user.
+
+**How it must be taken:** by the first story that lets a platform operator
+read the audit trail, as an explicit decision about *how* operator inspection
+is recorded — whether §11 admits a query behaviour for it, or the obligation is
+met some other way. It must not be settled by quietly adding a behaviour to the
+dispatcher, and it must not be resolved by relaxing AR27.
+
+**Deferred to:** the audit query stories (AUD-Q1–Q12) together with operator
+access (AM-01, OPR-C1).
+
 ## AUD-S12 — the canonical form is not what the database stores
 
 **State:** `CanonicalJson` produces the RFC 8785 form of a record's content
