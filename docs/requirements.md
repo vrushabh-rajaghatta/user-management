@@ -84,7 +84,7 @@ Suggested structure:
 
 ## PRV-C2 — Catalogue synchronisation
 
-**Status:** Approved. Contract frozen 2026-09-16 by owner decision; **not yet implemented**.
+**Status:** Approved and implemented. Contract frozen 2026-09-16 by owner decision; implementation completed 2026-09-17.
 
 ### Requirement
 
@@ -971,35 +971,34 @@ of every record already written under it.
 which is not yet implemented. Recorded here so the next event-definition
 correction does not discover it the hard way.
 
-## PRV-C2 — a provisioned tenant never receives new permissions — CONTRACT FROZEN
+## PRV-C2 — a provisioned tenant never receives new permissions — RESOLVED
 
-**State:** still not implemented, but no longer undefined. The contract was
-frozen by owner decision on 2026-09-16 and is specified in full under
-**Requirements → PRV-C2 — Catalogue synchronisation** above. This entry stays
-until the implementation lands.
+**State:** resolved. `Ligature.CatalogueSync` runs as `migration_role` between
+the audit schema and the host, and reconciles the release's permission, role and
+grant catalogue with the database on every deployment. The requirement is
+specified in full under **Requirements → PRV-C2 — Catalogue synchronisation**
+above.
 
-**The defect, unchanged:** `PlatformProvisioner.ProvisionAsync` returns as soon
-as the System actor exists, before it reaches any catalogue seeding, so adding a
-permission to `GetPermissionSeeds()` changes nothing for any existing tenant
-database — silently. `CatalogueDriftTests` detects the divergence; nothing fixes
-it, and the only current remedy is hand-written SQL.
+**The defect it closed:** `PlatformProvisioner.ProvisionAsync` returns as soon as
+the System actor exists, before it reaches any catalogue seeding, so adding a
+permission to `GetPermissionSeeds()` changed nothing for any existing tenant
+database — silently. `CatalogueDriftTests` detected the divergence; nothing
+fixed it, and the only remedy was hand-written SQL. Those tests remain, as the
+POSTCONDITION of synchronisation rather than a report of an incurable state.
 
-**What the frozen contract settles:** synchronisation is monotonic with respect
-to authorization — it may insert permissions, roles and grants and reconcile
-name and description, and it refuses on everything else rather than repairing
-it. It runs as `migration_role` in the deployment chain, covers all three
-tables, emits one `PermissionCatalogUpdated` audit event per execution, and
-`ProvisionAsync` is left alone: catalogue evolution is removed from the
-first-provision lifecycle rather than bolted onto it.
+**`ProvisionAsync` is unchanged**, which was the point. Catalogue evolution was
+removed from the first-provision lifecycle rather than bolted onto it.
 
-It also carries one **security decision**: `migration_role`, which today holds
-nothing at all on the audit trail, gains INSERT — and only INSERT — on
-`audit.audit_record` and `audit.audit_entity_ref`, so a release-controlled
-migration operation can append immutable evidence it can never afterwards read,
-alter or remove.
+**The security decision it carried:** `migration_role`, which held nothing at
+all on the audit trail, gained INSERT — and only INSERT — on
+`audit.audit_record` and `audit.audit_entity_ref`, plus SELECT on
+`audit.audit_schema_version` so it can verify its own precondition. It can
+append immutable evidence and can never afterwards read, alter or remove it
+(script 005).
 
-**Deferred to:** its own story. Deliberately kept out of AUD-S01, which
-established the deployment's security boundary and nothing else.
+**PE2's premise is still not met.** `permission` is not yet writable only by a
+migration role; that enforcement is tracked in the enforcement-layer entry below
+and did not block this.
 
 ## Enforcement layers G1 and PE2 are not fully implemented
 
