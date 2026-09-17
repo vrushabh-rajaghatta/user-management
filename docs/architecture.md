@@ -313,6 +313,8 @@ The caller is established by middleware **before** any pipeline runs, so a query
 >
 > The application verifies all registered query handlers at startup. Any handler registered outside the approved registration mechanism, or whose query does not provide a valid authorization classification, **prevents application startup**.
 >
+> **Open-generic query-handler registrations are not supported** by the query registration model and must cause startup verification to fail. An open generic `IQueryHandler<,>` handles queries that cannot be named at registration, so there is no concrete query whose declaration could be verified; permitting one would be an escape hatch around the invariant rather than an exception to it.
+>
 > The declaration is **descriptive only**; it does not authorize a request. A permission-gated handler must enforce its query's declared permission against the established caller before accessing protected data.
 >
 > `IAuthorizationService` remains unchanged. Query authorization consumes `IsAllowed`; `Authority` is **not** used unless a later read explicitly requires audit authority capture — it exists to record the assignment a command acted under, and a read that is not audited has no use for it.
