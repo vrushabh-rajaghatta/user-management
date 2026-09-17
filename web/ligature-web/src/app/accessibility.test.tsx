@@ -1,10 +1,12 @@
 import { render, screen } from "@testing-library/react";
-import { describe, it, vi } from "vitest";
+import { http, HttpResponse } from "msw";
+import { beforeEach, describe, it, vi } from "vitest";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { PageHeader } from "@/shared/components/PageHeader";
 import { AppShell } from "@/shared/layout/AppShell";
 import { expectNoAccessibilityViolations } from "@/test/axe";
 import { renderWithApp } from "@/test/renderWithApp";
+import { server } from "@/test/msw/server";
 import { TestSessionSource } from "@/test/sessions";
 import { appRoutes, composeRoutes } from "./router";
 
@@ -13,6 +15,16 @@ import { appRoutes, composeRoutes } from "./router";
  * (docs/frontend-architecture.md §15). Colour contrast is proved by the token
  * contrast test instead, because jsdom cannot compute it.
  */
+/** The Users page reads the list; these tests are not about its contents. */
+const listUsersHandler = () =>
+  http.get(new URL("/api/users", window.location.origin).href, () =>
+    HttpResponse.json({ users: [], page: 1, pageSize: 25, hasMore: false }),
+  );
+
+beforeEach(() => {
+  server.use(listUsersHandler());
+});
+
 describe("the foundation's rendered accessibility", () => {
   it("has no violations on the home page", async () => {
     const { container } = renderWithApp(appRoutes, {
