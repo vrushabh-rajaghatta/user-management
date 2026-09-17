@@ -43,6 +43,25 @@ GRANT INSERT ON audit.audit_entity_ref TO migration_role;
 
 
 -- ---------------------------------------------------------------------
+-- GRANT — and the precondition that keeps the two grants above honest.
+--
+-- Catalogue synchronisation refuses to run against a database whose audit
+-- schema is not current, for the same reason provisioning does: reconciling
+-- first and discovering afterwards that the trail cannot be written would
+-- COMMIT an authorization change and then fail to record it. Checking means
+-- reading the deployment ledger, and 001 grants that to provisioning_role
+-- alone.
+--
+-- SELECT only. The ledger is deployment metadata — script names, checksums,
+-- when each was applied — and not the immutable trail, so reading it engages
+-- nothing AR19 protects. Writing it is another matter and stays denied: this
+-- role must not be able to tell a database that a script it never applied is
+-- already there.
+-- ---------------------------------------------------------------------
+GRANT SELECT ON audit.audit_schema_version TO migration_role;
+
+
+-- ---------------------------------------------------------------------
 -- Deliberately unchanged:
 --
 --   audit.audit_event_type        migration_role already holds SELECT,

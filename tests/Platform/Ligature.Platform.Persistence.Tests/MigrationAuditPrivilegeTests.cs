@@ -54,6 +54,39 @@ public sealed class MigrationAuditPrivilegeTests
             $"{Role} holds {privilege} on {table}. Only INSERT was granted, deliberately.");
     }
 
+    /// <summary>
+    /// The ledger, read so synchronisation can verify the audit schema is
+    /// current BEFORE it commits anything — the precondition that stops a run
+    /// committing an authorization change it then cannot record.
+    /// </summary>
+    [Fact]
+    public async Task The_migration_role_may_read_the_deployment_ledger()
+    {
+        await using var database = await AuditBoundaryDatabase.CreateAsync();
+
+        Assert.True(
+            await HasPrivilegeAsync(database.PrivilegedConnection, "audit.audit_schema_version", "SELECT"),
+            $"{Role} cannot read the deployment ledger, so it cannot check its own precondition.");
+    }
+
+    /// <summary>
+    /// Both sides, deliberately. Reading the ledger is a precondition check;
+    /// writing it would let this role record that a script it never applied is
+    /// already there, which is how a skipped 005 becomes invisible.
+    /// </summary>
+    [Theory]
+    [InlineData("INSERT")]
+    [InlineData("UPDATE")]
+    [InlineData("DELETE")]
+    public async Task The_migration_role_cannot_write_the_deployment_ledger(string privilege)
+    {
+        await using var database = await AuditBoundaryDatabase.CreateAsync();
+
+        Assert.False(
+            await HasPrivilegeAsync(database.PrivilegedConnection, "audit.audit_schema_version", privilege),
+            $"{Role} holds {privilege} on the deployment ledger. Only SELECT was granted.");
+    }
+
     private static async Task<bool> HasPrivilegeAsync(
         string connectionString,
         string table,

@@ -119,6 +119,14 @@ internal static class AuditConstructionVerification
         ("migration_role", "audit_event_type", "DELETE", false),
         ("migration_role", "audit_event_origin", "DELETE", false),
 
+        // The deployment ledger. Readable, so synchronisation can verify the
+        // audit schema is current before it commits anything; not writable, so
+        // this role cannot claim a script it never applied is already there.
+        ("migration_role", "audit_schema_version", "SELECT", true),
+        ("migration_role", "audit_schema_version", "INSERT", false),
+        ("migration_role", "audit_schema_version", "UPDATE", false),
+        ("migration_role", "audit_schema_version", "DELETE", false),
+
         // provisioning_role — emits through the pipeline, READS the
         // catalogue it no longer writes (004).
         //
