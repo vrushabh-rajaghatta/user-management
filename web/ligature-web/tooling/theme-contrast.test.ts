@@ -50,7 +50,9 @@ const NON_TEXT_PAIRS: [string, string][] = [
   ["input", "background"],
   ["input", "card"],
   ["input", "muted"],
-  ["sidebar-ring", "sidebar"],
+  // The focus indicator on the sidebar is the application outline in --ring,
+  // not the vendored translucent --sidebar-ring it replaces.
+  ["ring", "sidebar"],
 ];
 
 /**

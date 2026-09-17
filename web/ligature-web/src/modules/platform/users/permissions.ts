@@ -8,4 +8,5 @@ import { definePermission } from "@/shared/auth/permissions";
  */
 export const UserPermissions = {
   create: definePermission("user.create"),
+  read: definePermission("user.read"),
 } as const;

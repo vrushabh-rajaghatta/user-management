@@ -3,10 +3,12 @@ import { accountRoutes } from "@/modules/platform/account/routes";
 import { SIGN_IN_PATH, SignOutButton } from "@/modules/platform/auth";
 import { authRoutes } from "@/modules/platform/auth/routes";
 import { homeRoutes } from "@/modules/platform/home/routes";
-import { usersNavigation } from "@/modules/platform/users";
+import { administrationArea } from "@/modules/platform/administration";
+import { administrationRoutes } from "@/modules/platform/administration/routes";
 import { userRoutes } from "@/modules/platform/users/routes";
 import { RequireAuth } from "@/shared/auth/RequireAuth";
 import { AppShell } from "@/shared/layout/AppShell";
+import type { NavigationGroup } from "@/shared/layout/navigation";
 import { NotFound } from "@/shared/layout/NotFound";
 import { PublicShell } from "@/shared/layout/PublicShell";
 import { RouteError } from "@/shared/layout/RouteError";
@@ -22,6 +24,9 @@ import { RouteError } from "@/shared/layout/RouteError";
  * its redirect to land on. The not-found route stays OUTSIDE it: an unknown
  * path is not a reason to demand a session.
  */
+/** The shell's areas, grouped. Business modules join a "Modules" group when one exists. */
+const navigation: readonly NavigationGroup[] = [{ label: "Platform", areas: [administrationArea] }];
+
 export function composeRoutes(publicRoutes: RouteObject[], privateRoutes: RouteObject[]): RouteObject[] {
   const routes: RouteObject[] = [];
 
@@ -37,7 +42,7 @@ export function composeRoutes(publicRoutes: RouteObject[], privateRoutes: RouteO
       element: <RequireAuth signInPath={SIGN_IN_PATH} />,
       children: [
         {
-          element: <AppShell actions={<SignOutButton />} navigation={usersNavigation} />,
+          element: <AppShell actions={<SignOutButton />} navigation={navigation} />,
           children: [{ errorElement: <RouteError />, children: privateRoutes }],
         },
       ],
@@ -52,7 +57,7 @@ export function composeRoutes(publicRoutes: RouteObject[], privateRoutes: RouteO
   return routes;
 }
 
-export const appRoutes = composeRoutes([...authRoutes, ...accountRoutes], [...homeRoutes, ...userRoutes]);
+export const appRoutes = composeRoutes([...authRoutes, ...accountRoutes], [...homeRoutes, ...administrationRoutes(userRoutes)]);
 
 export function createAppRouter() {
   return createBrowserRouter(appRoutes);

@@ -1,18 +1,14 @@
-import type { NavigationSection } from "@/shared/layout/navigation";
+import type { NavigationItem } from "@/shared/layout/navigation";
 import { UserPermissions } from "./permissions";
 
 /**
- * What this module contributes to the application navigation
- * (docs/frontend-architecture.md §5). Data, never markup: the shell renders it
- * and never learns what "Users" means.
+ * What this module contributes to the navigation of the area it sits in
+ * (docs/frontend-architecture.md §5). Data, never markup.
  *
- * One entry today. There is no users list — the backend exposes no read or list
- * endpoint — so this area deliberately does not pretend one exists, and further
- * entries arrive when their backend contracts do.
+ * One entry: Users, the page USR-Q1 backs, shown to holders of user.read. New
+ * user is not an entry — it is an action on that page, and user.create alone
+ * does not make the Users list visible.
  */
-export const usersNavigation: readonly NavigationSection[] = [
-  {
-    label: "Users",
-    items: [{ label: "Create user", to: "/users/new", permission: UserPermissions.create }],
-  },
+export const usersNavigation: readonly NavigationItem[] = [
+  { label: "Users", to: "/admin/users", permission: UserPermissions.read },
 ];

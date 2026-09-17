@@ -46,8 +46,13 @@ function areaRoutes(): RouteObject[] {
   ];
 }
 
+/**
+ * Inside the shell, because an area only ever renders there: the sidebar
+ * primitives need the shell's provider. The shell is given no areas of its own,
+ * so every landmark and link below is the area's.
+ */
 function renderArea(path: string, source: TestSessionSource = unknown()) {
-  return renderWithApp(areaRoutes(), { path, source });
+  return renderWithApp([{ element: <AppShell />, children: areaRoutes() }], { path, source });
 }
 
 const areaNavigation = () => screen.findByRole("navigation", { name: "Area title" });
