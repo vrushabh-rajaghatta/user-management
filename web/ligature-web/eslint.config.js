@@ -76,6 +76,7 @@ const ELEMENTS = [
   { type: "app", pattern: "src/app" },
   { type: "shared", pattern: "src/shared/*", capture: ["area"] },
   { type: "ui", pattern: "src/components/ui" },
+  { type: "vendored-hooks", pattern: "src/hooks" },
   { type: "lib", pattern: "src/lib" },
   { type: "module-api", pattern: "src/modules/*/*/api", capture: ["family", "module"] },
   { type: "module-hooks", pattern: "src/modules/*/*/hooks", capture: ["family", "module"] },
@@ -111,8 +112,11 @@ const POLICIES = [
   // shared/ is infrastructure: it never imports a module or app/.
   { from: { element: { type: "shared" } }, allow: { to: { element: { types: { anyOf: ["shared", "ui", "lib"] } } } } },
 
-  // components/ui are vendored primitives; lib/ is pure helpers.
-  { from: { element: { type: "ui" } }, allow: { to: { element: { types: { anyOf: ["ui", "lib"] } } } } },
+  // components/ui are vendored primitives; lib/ is pure helpers. hooks/ holds
+  // the hooks the shadcn CLI installs beside a primitive, and only primitives
+  // may use them (§2).
+  { from: { element: { type: "ui" } }, allow: { to: { element: { types: { anyOf: ["ui", "lib", "vendored-hooks"] } } } } },
+  { from: { element: { type: "vendored-hooks" } }, allow: { to: { element: { types: { anyOf: ["vendored-hooks", "lib"] } } } } },
   { from: { element: { type: "lib" } }, allow: { to: { element: { type: "lib" } } } },
 
   // Every part of a module may use infrastructure, and another module's public surface.
@@ -189,6 +193,21 @@ export default defineConfig([
       // re-installed rather than hand-edited, so the rule is scoped off here
       // instead of the primitive being patched away from upstream.
       "jsx-a11y/label-has-associated-control": "off",
+    },
+  },
+
+  // The sidebar primitive and the hook the shadcn CLI installs beside it
+  // (docs/frontend-architecture.md §2, §14). Upstream writes template literals
+  // with numbers and booleans, arrow shorthands that return a setter's void, and
+  // sets state inside an effect to read the viewport after mount. None is a
+  // defect in these files, and they are re-installed rather than hand-edited, so
+  // the rules are scoped off for the vendored layers instead of patched away.
+  {
+    files: ["src/components/ui/**/*.{ts,tsx}", "src/hooks/**/*.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/restrict-template-expressions": "off",
+      "@typescript-eslint/no-confusing-void-expression": "off",
+      "react-hooks/set-state-in-effect": "off",
     },
   },
 

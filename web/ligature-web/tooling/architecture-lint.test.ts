@@ -50,6 +50,7 @@ const VIOLATIONS: [file: string, rule: string, reason: string][] = [
   ["shared/auth/SessionHintSource.ts", "no-restricted-globals", "web storage at the path that used to be exempt from the ban"],
   ["modules/platform/users/pages/readsReturnTo.ts", "no-restricted-syntax", "a module reads the return path instead of going through shared/auth"],
   ["shared/forms/importsZod.ts", "no-restricted-imports", "a form presentation primitive imports a schema library"],
+  ["shared/layout/usesVendoredHook.ts", "boundaries/dependencies", "shared/ imports a vendored hook instead of using the primitive"],
 ];
 
 const CONTROLS: [file: string, reason: string][] = [
@@ -58,6 +59,8 @@ const CONTROLS: [file: string, reason: string][] = [
   ["shared/auth/checksPermissions.ts", "shared/auth may read effective permissions"],
   ["lib/utils.ts", "a pure helper"],
   ["components/ui/button.ts", "a vendored primitive may use lib/"],
+  ["components/ui/sidebar.ts", "a vendored primitive may use a vendored hook"],
+  ["hooks/use-mobile.ts", "a vendored hook"],
   ["app/router.ts", "app/ may use a module's routes and public surface"],
   ["modules/platform/users/index.ts", "a module's public surface may use its own hooks"],
   ["modules/platform/users/routes.tsx", "a module's routes"],
