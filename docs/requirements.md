@@ -323,13 +323,13 @@ The write path is the correction that matters: a `Transactional` record would be
 
 **`AuditEventCatalogue.Version` is not bumped, and must not be.** It is a whole-catalogue revision identifier, not a per-event one: `EventTypeSeed.Version` returns that same constant, so raising it would insert 49 new event-type rows at version 2, deactivate all 49 version-1 rows, and write every future audit record against `(code, 2)`. Propagation does not depend on it either — `AuditCatalogueSeeder` upserts every seed unconditionally on each `audit-schema` run, so the corrected definition reaches existing databases on the next deployment. The constant's documented consumers are `TenantProvisioned`'s payload and AUD-C3's future comparison.
 
-## User list — row projection and endpoint
+## User list — row projection, endpoint and pagination
 
 **Requirement ID:** Pending assignment under the project's query-requirement numbering convention; **implementation must not begin until the requirement has a stable ID.**
 
 *Identifier Format* defines only the `-C` family for commands, and no query convention exists yet. One is not invented locally for this entry: a story that needs an ID asks the owner (`AGENTS.md` §16).
 
-**Status:** Approved as a partial contract — the row projection, and the endpoint and identifier semantics. Both decided 2026-09-17 by owner decision. **Not fully frozen:** the requirement has no stable ID, and pagination, sorting, filtering and the response envelope are **not yet decided**. Not implemented.
+**Status:** Approved as a partial contract — the row projection, the endpoint and identifier semantics, and the pagination model. All decided 2026-09-17 by owner decision. **Not fully frozen:** the requirement has no stable ID, and sorting, filtering and the response envelope are **not yet decided**. Not implemented.
 
 ### Requirement
 
@@ -414,6 +414,41 @@ Whether a row is the signed-in user is **out of scope**. `GET /api/me` identifie
 
 Nothing depends on the match. The server owns the rules it would inform: an administrator signing out their own user everywhere ends their own current session too (SES-C4, D4). A client does not reconstruct identity rules the server already enforces.
 
+### Pagination
+
+**Offset pagination.** The caller asks for a numbered page; the server returns that page and whether another follows.
+
+| | Contract |
+| --- | --- |
+| **Request** | The caller supplies a page number, counted from 1, and may supply a page size. |
+| **Page size** | Chosen by the caller, up to a server-enforced maximum. When the caller supplies none, the server applies a default no larger than the maximum. **The server never executes an unbounded user-list query based on caller input.** |
+| **Invalid values** | A page number or page size that is not a positive integer, or a page size above the maximum, is **refused as an invalid request** — never silently corrected. `0`, a negative value and an oversized value are not turned into something the caller did not ask for. |
+| **Response** | The result identifies the page returned and states whether another page exists (`hasMore`). **The total number of users is not returned.** |
+| **Past the end** | A page beyond the last is an empty page with no further page — not an error. |
+| **Ordering** | `DisplayName` ascending, then `UserId` ascending as the deterministic tie-breaker. |
+| **Consistency** | Each page is a single read operation. No separate count query is required, and none is made. |
+
+**Why offset.** It matches the paged table the web client already anticipates (`docs/frontend-architecture.md` §4, §11) and keeps request parameters free of personal data. A keyset cursor would have to carry the last row's sort values — here a display name — into query strings and access logs, against the discipline that keeps credentials out of URLs (`docs/frontend-architecture.md` §13). No paging precedent exists in the backend; the Audit design's keyset rule (IMPL-12) rests on the trail being append-only and ordered by `Sequence`, which the user table is not.
+
+**The model is not justified by tenant size.** No upper bound on users per tenant is documented, and none is assumed here. The protection is the server-enforced maximum and the deterministic order. A demonstrated scale requirement would reopen the model on its evidence.
+
+**Why no total.** Paging forward and back needs only `hasMore`. A total would disclose the tenant's population to every holder of `user.read`, and would add a count to every request. It may be added later if a client demonstrates a need, under the same evidence as any other field.
+
+**Why this order.** The list is read by a person, and `DisplayName` is the field a row is recognised by, so alphabetical order makes page navigation predictable. `DisplayName` is not unique, so `UserId` makes the order total; without a total order, pages overlap or drop rows even when nothing changes.
+
+> **The list does not promise a snapshot across separate requests.** A user created between two page requests can cause rows to shift between pages.
+
+That is a property of the contract, not a defect to be engineered away. Snapshots, timestamps, cursor tokens or similar machinery are **not** introduced to prevent it.
+
+What this does **not** decide:
+
+- **The numeric maximum and default page size.** Established when the query is designed, on evidence.
+- **Comparison semantics for `DisplayName`** — collation, case and locale. Decided with the query design or the sorting gate; no rule is invented here.
+- **An index.** None supports this order today. Whether one is warranted is established from the query plan at implementation, not added in advance.
+- **User-selectable sorting.** The order above is the pagination foundation, not the sorting model.
+- **The response shape and parameter names.** `page`, `pageSize` and `hasMore` name the concepts; their representation belongs to the response envelope decision.
+- **The status code of an invalid-request refusal.**
+
 ### Lifecycle status
 
 `Status` is **not** in the row.
@@ -450,10 +485,15 @@ A field joins the row only with the same evidence that admitted these three:
 - **P6** A row's `UserId` is accepted, unchanged, as `{userId}` by `POST /api/users/{userId}/password-reset` and `POST /api/users/{userId}/sign-out-everywhere`.
 
   P6 is limited to the routes **accepting the identifier** — that it binds and addresses the user the row describes. It does not assert that either command succeeds: each keeps its own authorization and eligibility rules, and a refusal by those rules is not a P6 failure.
+- **P7** A request returns at most one page, and the server never returns more rows than the server-enforced maximum. This is a bound on what is returned, not permission to cap: a request for more than the maximum is refused (P8), never accepted and truncated.
+- **P8** A page number or page size that is not a positive integer, or a page size above the maximum, is refused as an invalid request and is never silently corrected.
+- **P9** Rows are ordered by `DisplayName` ascending, then `UserId` ascending, and consecutive pages over unchanged data neither repeat nor omit a row.
+- **P10** The result states whether another page exists and does not contain a total user count.
+- **P11** A page beyond the last is empty and states that no further page exists.
 
 ### Notes
 
-**Not decided here:** pagination, sorting, filtering, the response envelope, the refusal status code, and the query and result type names. Also not decided: a detail route, `Location` on create, a path from a row to unlock, and correlating a row with the caller.
+**Not decided here:** sorting, filtering, the response envelope, the refusal status code, and the query and result type names. Also not decided: a detail route, `Location` on create, a path from a row to unlock, and correlating a row with the caller.
 
 ---
 
