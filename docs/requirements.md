@@ -485,7 +485,7 @@ A field joins the row only with the same evidence that admitted these three:
 - **P6** A row's `UserId` is accepted, unchanged, as `{userId}` by `POST /api/users/{userId}/password-reset` and `POST /api/users/{userId}/sign-out-everywhere`.
 
   P6 is limited to the routes **accepting the identifier** — that it binds and addresses the user the row describes. It does not assert that either command succeeds: each keeps its own authorization and eligibility rules, and a refusal by those rules is not a P6 failure.
-- **P7** A request returns at most one page, never more rows than the server-enforced maximum, whatever the caller asked for.
+- **P7** A request returns at most one page, and the server never returns more rows than the server-enforced maximum. This is a bound on what is returned, not permission to cap: a request for more than the maximum is refused (P8), never accepted and truncated.
 - **P8** A page number or page size that is not a positive integer, or a page size above the maximum, is refused as an invalid request and is never silently corrected.
 - **P9** Rows are ordered by `DisplayName` ascending, then `UserId` ascending, and consecutive pages over unchanged data neither repeat nor omit a row.
 - **P10** The result states whether another page exists and does not contain a total user count.
