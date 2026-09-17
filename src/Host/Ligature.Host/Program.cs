@@ -4,6 +4,7 @@ using Ligature.Host.Configuration;
 using Ligature.Host.Notifications;
 using Ligature.Platform.Application;
 using Ligature.Platform.Application.Audit;
+using Ligature.Platform.Application.Dispatching;
 using Ligature.Platform.Persistence;
 using Scalar.AspNetCore;
 
@@ -91,6 +92,13 @@ var app = builder.Build();
 // fail on the first affected command, in production, with a 500.
 AuditDeclarations.VerifyAgainst(
     app.Services.GetRequiredService<IAuditEventCatalogue>());
+
+// Every registered query handler carries an authorization classification
+// (docs/architecture.md section 11). A handler that forgot its check would not
+// fail — it would serve the data — so a registration that bypassed AddQuery
+// stops the process here instead. After Build, so registrations made while the
+// host was being built are verified too.
+QueryAuthorizationVerification.Verify(builder.Services);
 
 // Order matters, in both directions.
 //
