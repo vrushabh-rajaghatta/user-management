@@ -216,17 +216,15 @@ Outcome  = Refused
 Reasons  = PermissionMissingFromSeed
 ```
 
-The database remains the source of truth for what the catalogue now contains, so the event carries counts, reason codes and a digest — never the changed rows:
+The database remains the source of truth for what the catalogue now contains, so the event carries counts and reason codes — never the changed rows:
 
 | Field | Content |
 | --- | --- |
 | Release identifier | The synchronisation tool's assembly informational version — deterministic, and requires nothing of the operator |
-| Database identity | `current_database()` |
 | Actor | The System actor, as `TenantProvisioned` uses — which exists by definition wherever this event does, since an unprovisioned database emits none |
 | Outcome | `Succeeded` or `Refused` |
 | Counts | permissions inserted; permission metadata reconciled; roles inserted; role metadata reconciled; grants inserted |
 | Refusal reasons | On refusal, the distinct reason codes found and a count per code |
-| Refusal digest | On refusal, a SHA-256 over the canonical, sorted list of findings (reason code and subject code), hex-encoded |
 
 **Refusal reason codes.** A closed set, one per detectable condition, so the set stays bounded however large the drift is:
 
@@ -239,7 +237,15 @@ The database remains the source of truth for what the catalogue now contains, so
 | `RevokedGrantInSeed` | A grant revoked in the database and listed in the catalogue | F6 |
 | `SecuritySemanticDrift` | `Code`, `Resource`, `Action`, `RequiresHumanActor` or `IsSystemRole` differs | F7 |
 
-**The human-readable detail — which permission, which role, which field — goes to the operator's output and the exit code, not into the audit trail.** The reason codes say what kind of refusal it was; the digest lets two refusals be compared for identity. Neither puts catalogue contents into audit.
+**The human-readable detail — which permission, which role, which field — goes to the operator's output and the exit code, not into the audit trail.** The reason codes say what KIND of refusal it was, with a count each; the subjects stay with the operator. Nothing here puts catalogue contents into audit.
+
+> **Amended during implementation. Neither a cryptographic digest nor a database identifier appears in this payload.**
+>
+> Behaviour 14's secret scan rejects a hex digest of 40 characters or more, and rejects a high-entropy string that is not a GUID; a match is a defect under §15.1, so the record is not written at all. A SHA-256 refusal digest is therefore rejected on **every** refused run, and `current_database()` is rejected whenever a deployment's database name happens to look high-entropy.
+>
+> C2 does not place either value in the audit payload. **Refusal identity is represented by reason codes and counts, and by the operator output.** The database identifier is redundant in any case: the record is written to the database whose synchronisation it describes.
+>
+> **Behaviour 14 is not modified, and no encoding is chosen to evade it.** Designing around a frozen secret-detection control to preserve a convenience fingerprint would trade a security property for forensic tidiness. If Audit later defines a sanctioned non-secret digest representation, it arrives through Audit's own change control, not through this requirement.
 
 **A refused run must still record its event**, per the transaction boundary above. `AuditCommandScopeBehavior` wraps the transaction for exactly this reason — what it writes must outlive the transaction's fate.
 
