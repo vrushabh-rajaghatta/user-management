@@ -323,13 +323,13 @@ The write path is the correction that matters: a `Transactional` record would be
 
 **`AuditEventCatalogue.Version` is not bumped, and must not be.** It is a whole-catalogue revision identifier, not a per-event one: `EventTypeSeed.Version` returns that same constant, so raising it would insert 49 new event-type rows at version 2, deactivate all 49 version-1 rows, and write every future audit record against `(code, 2)`. Propagation does not depend on it either — `AuditCatalogueSeeder` upserts every seed unconditionally on each `audit-schema` run, so the corrected definition reaches existing databases on the next deployment. The constant's documented consumers are `TenantProvisioned`'s payload and AUD-C3's future comparison.
 
-## User list — row projection
+## User list — row projection and endpoint
 
 **Requirement ID:** Pending assignment under the project's query-requirement numbering convention; **implementation must not begin until the requirement has a stable ID.**
 
 *Identifier Format* defines only the `-C` family for commands, and no query convention exists yet. One is not invented locally for this entry: a story that needs an ID asks the owner (`AGENTS.md` §16).
 
-**Status:** Approved as a partial contract — the row projection only. Decided 2026-09-17 by owner decision. **Not fully frozen:** the requirement has no stable ID, and pagination, sorting, filtering and the endpoint are **not yet decided**. Not implemented.
+**Status:** Approved as a partial contract — the row projection, and the endpoint and identifier semantics. Both decided 2026-09-17 by owner decision. **Not fully frozen:** the requirement has no stable ID, and pagination, sorting, filtering and the response envelope are **not yet decided**. Not implemented.
 
 ### Requirement
 
@@ -374,6 +374,46 @@ Each of these stays out of the row until a named story brings the evidence below
 | Session and sign-in activity | Behavioural data; no row operation needs it |
 | Credential state, lockout counters, deactivation details | Security internals |
 
+### Endpoint
+
+**`GET /api/users`** is the user-list read. It is a **collection endpoint**: it returns user-list rows, and it requires `user.read`.
+
+It sits beside the existing user routes — `POST /api/users` creates a user, and `/api/users/{userId}/…` addresses one — and shares their prefix, not their authorization. Holding `user.read` permits seeing the list and nothing else; every operation a row can start is a separate command that enforces its own permission, whatever the list returned.
+
+What this does **not** decide:
+
+- **A detail route.** `GET /api/users/{userId}` is a plausible future shape, but it is not implied by the collection taking `/api/users`, and it is not frozen here.
+- **`Location` on create.** `POST /api/users` omits it deliberately, because no canonical retrieval URI exists. The collection is not one. A future detail-read story may introduce it explicitly; this one does not change it.
+
+### Identifier semantics
+
+> **The `UserId` returned by each user-list row is the `app_user.id` of that user and is the identifier accepted by existing user-scoped endpoints under `/api/users/{userId}/...`.**
+
+This was traced, not assumed. Both existing user-scoped operations take the row's identifier as it is:
+
+| Row → route | Command | Permission | How the target is resolved |
+| --- | --- | --- | --- |
+| `UserId` → `POST /api/users/{userId}/password-reset` | `AdminResetPasswordCommand` (CRD-C5) | `user.resetpassword` | By `UserId`; the handler requires exactly one active local identity and refuses rather than choose between identities |
+| `UserId` → `POST /api/users/{userId}/sign-out-everywhere` | `RevokeUserSessionsCommand` (SES-C4, administrator form) | `session.revoke` | By `UserId`; every active session of every identity the user holds |
+
+It is the same identifier `POST /api/users` already returns as `UserId`.
+
+### Unlock is not reachable from a row
+
+`POST /api/identities/{identityId}/unlock` (CRD-C6) is **out of scope** for the user list, and a row's `UserId` is **not** a way to reach it.
+
+Unlock is identity-scoped by decision, not by accident. `UnlockAccountCommand` is keyed by `UserIdentityId` because lockout lives on one identity's credential, and it records that resolving through the user *"would have to choose between identities, and choosing is how a command reaches one it was never asked about."* `IdentityEndpoints` keeps the route off `/api/users` so that it cannot suggest otherwise.
+
+`IUserIdentityRepository.FindLocalByUserIdAsync` exists, and CRD-C5 applies an *exactly one* rule to it — as its own eligibility rule. Carrying that rule over to unlock would be the identity selection CRD-C6 refused. Any path from a row to unlock is therefore a new identity-selection contract, however it is built: a `UserIdentityId` in the row, a lookup endpoint, or a client-side join.
+
+**`UserIdentityId` is not added to the row because unlock needs it.** That would design the read around a command whose contract says it is identity-scoped. Making unlock reachable from a user list needs its own decision.
+
+### Correlating a row with the caller
+
+Whether a row is the signed-in user is **out of scope**. `GET /api/me` identifies the caller by `UserIdentityId`, not `UserId`, so a client cannot match a row to itself — and neither the list nor `/me` changes to allow it.
+
+Nothing depends on the match. The server owns the rules it would inform: an administrator signing out their own user everywhere ends their own current session too (SES-C4, D4). A client does not reconstruct identity rules the server already enforces.
+
 ### Lifecycle status
 
 `Status` is **not** in the row.
@@ -406,10 +446,14 @@ A field joins the row only with the same evidence that admitted these three:
 - **P4** Identifier usage: `UserId` is the only identifier exposed by this projection. `DisplayName` and `Email` must not be used as identifiers by clients. Server-side tests verify that only `UserId` is designated as an identifier; client tests, where applicable, verify that `DisplayName` and `Email` are not used as keys, routes, cache identities, or matching identities.
 
   P4 is an API consumer contract as well as a server one. The server cannot prove a future client's behaviour, so its verification is split deliberately; the absence of a backend test for the client half is by design, not an omission.
+- **P5** `GET /api/users` requires `user.read`, and returns user-list rows as a collection.
+- **P6** A row's `UserId` is accepted, unchanged, as `{userId}` by `POST /api/users/{userId}/password-reset` and `POST /api/users/{userId}/sign-out-everywhere`.
+
+  P6 is limited to the routes **accepting the identifier** — that it binds and addresses the user the row describes. It does not assert that either command succeeds: each keeps its own authorization and eligibility rules, and a refusal by those rules is not a P6 failure.
 
 ### Notes
 
-**Not decided here:** pagination, sorting, filtering, the endpoint, the refusal status code, and the query and result type names.
+**Not decided here:** pagination, sorting, filtering, the response envelope, the refusal status code, and the query and result type names. Also not decided: a detail route, `Location` on create, a path from a row to unlock, and correlating a row with the caller.
 
 ---
 
