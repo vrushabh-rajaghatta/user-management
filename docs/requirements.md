@@ -449,6 +449,8 @@ A field joins the row only with the same evidence that admitted these three:
 - **P5** `GET /api/users` requires `user.read`, and returns user-list rows as a collection.
 - **P6** A row's `UserId` is accepted, unchanged, as `{userId}` by `POST /api/users/{userId}/password-reset` and `POST /api/users/{userId}/sign-out-everywhere`.
 
+  P6 is limited to the routes **accepting the identifier** — that it binds and addresses the user the row describes. It does not assert that either command succeeds: each keeps its own authorization and eligibility rules, and a refusal by those rules is not a P6 failure.
+
 ### Notes
 
 **Not decided here:** pagination, sorting, filtering, the response envelope, the refusal status code, and the query and result type names. Also not decided: a detail route, `Location` on create, a path from a row to unlock, and correlating a row with the caller.
