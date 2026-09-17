@@ -158,17 +158,40 @@ public sealed class AuditTamperBoundaryTests
     /// An owner can grant itself anything. migration_role is not an owner
     /// here, which is what makes withholding DELETE meaningful rather than
     /// decorative.
+    ///
+    /// ASSERTS THE OUTCOME, NOT THE MECHANISM, and that distinction is the
+    /// point. PostgreSQL refuses a grant a role cannot make in two different
+    /// ways: with no privilege at all on the table it raises 42501, and
+    /// holding one privilege without GRANT OPTION — which migration_role now
+    /// does, since 005 gave it INSERT for PRV-C2 — it emits
+    /// "WARNING: no privileges were granted" and the statement completes.
+    ///
+    /// This test asserted the error. It therefore broke when 005 landed, while
+    /// the boundary it exists to defend had not moved an inch: the attempt was
+    /// still refused, and DELETE was still not held. Asserting the privilege
+    /// state afterwards catches a grant that actually succeeds however the
+    /// server chose to report it, which is the thing worth defending.
     /// </summary>
     [Fact]
     public async Task The_migration_role_cannot_grant_itself_delete()
     {
         await using var database = await AuditBoundaryDatabase.CreateAsync();
 
-        var failure = await Refused(
+        await ExecuteAsync(
             database.ConnectionFor(AuditBoundaryDatabase.MigrationRole),
             $"GRANT DELETE ON audit.audit_record TO {AuditBoundaryDatabase.MigrationRole}");
 
-        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, failure.SqlState);
+        await using var connection = new NpgsqlConnection(database.PrivilegedConnection);
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand(
+            "SELECT has_table_privilege(@role, 'audit.audit_record', 'DELETE')", connection);
+
+        command.Parameters.AddWithValue("role", AuditBoundaryDatabase.MigrationRole);
+
+        Assert.False(
+            (bool)(await command.ExecuteScalarAsync())!,
+            "migration_role granted itself DELETE on the trail.");
     }
 
     [Theory]

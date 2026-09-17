@@ -31,6 +31,21 @@ public sealed class AuditDeclarationsTests
         Assert.Equal(["UserCreated", "IdentityCreated", "TokenIssued"], declaration.Codes);
     }
 
+    /// <summary>
+    /// PRV-C2 — catalogue synchronisation, the second emitter that is not a
+    /// command. One code: the event is about the synchronisation OPERATION, so
+    /// a run emits exactly one record whatever it changed.
+    /// </summary>
+    [Fact]
+    public void PRV_C2_declares_PermissionCatalogUpdated()
+    {
+        var declaration = AuditDeclarations.For(typeof(CatalogueSynchronisation));
+
+        Assert.NotNull(declaration);
+        Assert.Equal("UserManagement", declaration!.OwningContext);
+        Assert.Equal(["PermissionCatalogUpdated"], declaration.Codes);
+    }
+
     [Fact]
     public void SES_C2_declares_SignedOut()
     {
@@ -161,7 +176,7 @@ public sealed class AuditDeclarationsTests
                 typeof(UnlockAccountCommand),
                 typeof(RevokeSessionCommand), typeof(RevokeUserSessionsCommand),
                 typeof(SignOutEverywhereCommand),
-                typeof(PlatformProvisioning),
+                typeof(PlatformProvisioning), typeof(CatalogueSynchronisation),
             }
             .SelectMany(x => AuditDeclarations.For(x)!.Codes)
             .Distinct()];

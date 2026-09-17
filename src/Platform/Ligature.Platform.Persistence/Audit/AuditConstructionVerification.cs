@@ -98,11 +98,21 @@ internal static class AuditConstructionVerification
         ("app_role", "audit_retention_policy", "UPDATE", false),
         ("app_role", "audit_retention_policy", "DELETE", false),
 
-        // migration_role — nothing at all on the trail
+        // migration_role — APPENDS to the trail, and can do nothing else with
+        // it (005, PRV-C2). It is permitted to append audit evidence for
+        // release-controlled migration operations, because catalogue
+        // synchronisation changes authorization and an authorization change
+        // with no provenance is what the trail exists to prevent. It has no
+        // authority to read, modify, or delete audit records: this role can
+        // reshape the schema, which is exactly why the other three stay denied
+        // (AR19).
         ("migration_role", "audit_record", "SELECT", false),
-        ("migration_role", "audit_record", "INSERT", false),
+        ("migration_role", "audit_record", "INSERT", true),
         ("migration_role", "audit_record", "UPDATE", false),
         ("migration_role", "audit_record", "DELETE", false),
+        ("migration_role", "audit_entity_ref", "SELECT", false),
+        ("migration_role", "audit_entity_ref", "INSERT", true),
+        ("migration_role", "audit_entity_ref", "UPDATE", false),
         ("migration_role", "audit_entity_ref", "DELETE", false),
         ("migration_role", "audit_event_type", "INSERT", true),
         ("migration_role", "audit_event_type", "UPDATE", true),
