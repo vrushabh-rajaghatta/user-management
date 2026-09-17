@@ -147,7 +147,6 @@ Exhaustive. Anything not listed here is forbidden.
 | M2 | INSERT a role |
 | M3 | INSERT a role-permission grant |
 | M4 | UPDATE permission metadata — `Name`, `Description` |
-| M5 | UPDATE role metadata — `Name`, `Description` |
 
 ### Forbidden — each is a refusal, never a repair
 
@@ -161,6 +160,18 @@ Exhaustive. Anything not listed here is forbidden.
 | F6 | Re-create a revoked grant | Revoked means a human decided. Re-granting is an authorization expansion a deploy is not entitled to make |
 | F7 | Modify an immutable or security-semantic field — `Code`, `Resource`, `Action`, `RequiresHumanActor`, `IsSystemRole` | Identity and security semantics. Flipping `RequiresHumanActor` false→true makes every agent holding that permission non-compliant under RP6; true→false silently weakens a human-only control |
 | F8 | Modify an existing `role_permission` row in any way | A grant is either newly introduced or it already represents authorization state. Its revocation history is authoritative and is never edited — there is no such thing as reconciling a grant |
+
+> **Amended during implementation. Role metadata is not reconciled, and M5 is withdrawn.**
+>
+> `Name` and `Description` are non-security metadata for an ordinary role. Every role the catalogue seeds is a **system role**, and `Role.UpdateMetadata` refuses one outright — *"System roles cannot be modified."* M5 could therefore never legitimately execute: role metadata drift threw a domain exception out of the middle of a run instead of reconciling or refusing.
+>
+> Role metadata drift is classified as `SecuritySemanticDrift` and **causes refusal**. No domain mutator may be introduced to let synchronisation bypass this invariant, and no seventh reason code is added for it.
+>
+> `Permission.UpdateMetadata` carries no such guard, which is why M4 stands and M5 does not. The asymmetry is the domain's, not this requirement's.
+>
+> The rule that survives is worth stating plainly, because it is what four mutations instead of five buys:
+>
+> **Synchronisation mutates only state for which the domain already provides the mutation.** No cleverness, and no C2-specific bypass.
 
 **F7 is already enforced by the domain and must stay that way.** `Permission.Code`, `Resource`, `Action` and `RequiresHumanActor` are get-only, as are `Role.IsSystemRole`. The only mutators are `UpdateMetadata` (name and description) and `Deactivate`/`Reactivate`. Synchronisation therefore *cannot* change authorization semantics without someone first adding a domain mutator — a visible, reviewable act. No mutator may be added for the convenience of this process.
 
@@ -223,7 +234,7 @@ The database remains the source of truth for what the catalogue now contains, so
 | Release identifier | The synchronisation tool's assembly informational version — deterministic, and requires nothing of the operator |
 | Actor | The System actor, as `TenantProvisioned` uses — which exists by definition wherever this event does, since an unprovisioned database emits none |
 | Outcome | `Succeeded` or `Refused` |
-| Counts | permissions inserted; permission metadata reconciled; roles inserted; role metadata reconciled; grants inserted |
+| Counts | permissions inserted; permission metadata reconciled; roles inserted; grants inserted |
 | Refusal reasons | On refusal, the distinct reason codes found and a count per code |
 
 **Refusal reason codes.** A closed set, one per detectable condition, so the set stays bounded however large the drift is:
@@ -235,7 +246,7 @@ The database remains the source of truth for what the catalogue now contains, so
 | `GrantMissingFromSeed` | An active grant in the database, absent from the catalogue | F5 |
 | `InactiveCatalogueEntry` | A permission or role inactive in the database and listed in the catalogue | F4 |
 | `RevokedGrantInSeed` | A grant revoked in the database and listed in the catalogue | F6 |
-| `SecuritySemanticDrift` | `Code`, `Resource`, `Action`, `RequiresHumanActor` or `IsSystemRole` differs | F7 |
+| `SecuritySemanticDrift` | `Code`, `Resource`, `Action`, `RequiresHumanActor` or `IsSystemRole` differs, or a role's `Name` or `Description` differs — the domain forbids modifying a system role | F7 |
 
 **The human-readable detail — which permission, which role, which field — goes to the operator's output and the exit code, not into the audit trail.** The reason codes say what KIND of refusal it was, with a count each; the subjects stay with the operator. Nothing here puts catalogue contents into audit.
 
@@ -273,9 +284,9 @@ The migration principal can therefore create immutable audit evidence and can ne
 - **A1** A permission in the catalogue and absent from the database is inserted.
 - **A2** A role in the catalogue and absent from the database is inserted.
 - **A3** A grant in the catalogue and absent from the database is inserted.
-- **A4** A permission or role whose `Name` or `Description` differs from the catalogue is updated to match.
+- **A4** A permission whose `Name` or `Description` differs from the catalogue is updated to match. A ROLE whose `Name` or `Description` differs causes refusal, because the domain forbids modifying a system role.
 - **A5** A permission or role in the database and absent from the catalogue causes refusal, naming it.
-- **A6** A difference in `Resource`, `Action`, `RequiresHumanActor` or `IsSystemRole` causes refusal, naming the field.
+- **A6** A difference in `Resource`, `Action`, `RequiresHumanActor` or `IsSystemRole`, or in a role's `Name` or `Description`, causes refusal as `SecuritySemanticDrift`, naming the subject.
 - **A7** A permission or role that is inactive in the database and present in the catalogue causes refusal — it is neither reactivated nor ignored.
 - **A8** A grant present in the catalogue and revoked in the database causes refusal — it is not re-granted.
 - **A9** A refused run commits no mutations to `permission`, `role` or `role_permission`. Its audit record is the deliberate exception and is expected to be present.
