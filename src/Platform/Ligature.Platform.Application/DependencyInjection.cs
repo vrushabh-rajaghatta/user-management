@@ -17,6 +17,7 @@ using Ligature.Platform.Application.Users.Commands.RevokeUserSessions;
 using Ligature.Platform.Application.Users.Commands.SignOutEverywhere;
 using Ligature.Platform.Application.Users.Commands.UnlockAccount;
 using Ligature.Platform.Application.Users.Queries.Me;
+using Ligature.Platform.Application.Users.Queries.UserList;
 using Ligature.SharedKernel.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -276,5 +277,8 @@ public static class DependencyInjection
     {
         // B6
         services.AddQuery<MeQuery, MeResult, MeQueryHandler>();
+
+        // USR-Q1
+        services.AddQuery<UsersQuery, UsersResult, UsersQueryHandler>();
     }
 }

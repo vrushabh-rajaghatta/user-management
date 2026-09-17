@@ -1,14 +1,17 @@
+using System.Globalization;
 using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.RevokeUserSessions;
+using Ligature.Platform.Application.Users.Queries.UserList;
 using Ligature.Platform.Domain.Users;
 
 namespace Ligature.Host.Api;
 
 /// <summary>
-/// USR-C1 over HTTP.
+/// USR-C1 over HTTP, and the user-scoped administrator routes beside it;
+/// USR-Q1, the user list, shares the prefix.
 ///
 /// The first AUTHORIZED endpoint. Sign-out proved that a caller can be
 /// established and that an unestablished one is refused; this proves the next
@@ -57,6 +60,31 @@ public static class UserEndpoints
             // caller without 'user.create'; this marker refuses nothing.
             .WithMetadata(new RequiresCarrier());
 
+        // USR-Q1. Same prefix as the user commands, not the same authorization:
+        // this requires user.read and nothing else, and every action a row can
+        // start authorizes itself.
+        routes.MapGet("/api/users", ListAsync)
+            .WithTags("Users")
+            .WithSummary("List the tenant's human users, one page at a time.")
+            .WithDescription(
+                "Requires a carrier and the 'user.read' permission. Each row is "
+                + "exactly userId, displayName and email; userId is the only "
+                + "identifier, and is what /api/users/{userId}/... accepts. "
+                + "email may be null.\n\n"
+                + "Optional 'page' (default 1) and 'pageSize' (default 25, "
+                + "maximum 100). A value that is not an integer, does not fit "
+                + "one, or is supplied twice is 400; so is an out-of-range value, "
+                + "which is refused rather than corrected. Unknown parameters are "
+                + "ignored. A page past the end is empty with hasMore false.\n\n"
+                + "Ordered by displayName (ICU root collation), then userId. There "
+                + "is no sorting, filtering or total count, and the list is not a "
+                + "snapshot across requests. A caller without 'user.read' "
+                + "receives 400, not 403.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+
         routes.MapPost("/api/users/{userId:guid}/password-reset", ResetPasswordAsync)
             .WithTags("Users")
             .WithSummary("Send a user a password reset link (administrator).")
@@ -89,6 +117,85 @@ public static class UserEndpoints
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
             .WithMetadata(new RequiresCarrier());
+    }
+
+    /// <summary>
+    /// USR-Q1 over HTTP.
+    ///
+    /// THE PARAMETERS ARE READ AS TEXT AND PARSED HERE, not bound as int?.
+    /// Framework binding refuses page=abc itself, with an EMPTY-bodied 400 that
+    /// ProblemMiddleware never sees — a second error shape for one kind of
+    /// failure. Reading the raw values also sees a parameter supplied twice,
+    /// which binding would not report as such.
+    ///
+    /// Only malformed values stop here, where there is no value to hand on. An
+    /// integer out of range is the query's refusal, so the bound holds for
+    /// every caller of the handler and follows its authorization.
+    ///
+    /// Anything else in the query string is ignored: no parameter but these two
+    /// is read, so none can change the order or narrow the set (P12, P14).
+    /// </summary>
+    private static async Task<IResult> ListAsync(
+        HttpRequest request,
+        IQueryDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadInteger(request, "page", out var page, out var pageProblem))
+            return Results.BadRequest(new { Error = pageProblem });
+
+        if (!TryReadInteger(request, "pageSize", out var pageSize, out var pageSizeProblem))
+            return Results.BadRequest(new { Error = pageSizeProblem });
+
+        var result = await dispatcher.SendAsync<UsersQuery, UsersResult>(
+            new UsersQuery(page, pageSize),
+            cancellationToken);
+
+        return Results.Ok(
+            new
+            {
+                Users = result.Users.Select(x => new
+                {
+                    UserId = x.UserId.Value,
+                    x.DisplayName,
+                    x.Email,
+                }),
+                result.Page,
+                result.PageSize,
+                result.HasMore,
+            });
+    }
+
+    /// <summary>
+    /// Absent is null and valid. Present means exactly one value that parses as
+    /// an int — an optional sign and digits, invariant culture — and nothing
+    /// else: not a decimal, not an exponent, not a number too large for int.
+    /// </summary>
+    private static bool TryReadInteger(
+        HttpRequest request,
+        string name,
+        out int? value,
+        out string? problem)
+    {
+        value = null;
+        problem = null;
+
+        if (!request.Query.TryGetValue(name, out var values))
+            return true;
+
+        if (values.Count != 1)
+        {
+            problem = $"'{name}' may be supplied only once.";
+            return false;
+        }
+
+        if (!int.TryParse(values[0], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var parsed))
+        {
+            problem = $"'{name}' must be a whole number.";
+            return false;
+        }
+
+        value = parsed;
+        return true;
     }
 
     /// <summary>
