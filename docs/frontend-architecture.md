@@ -642,7 +642,8 @@ The page body never scrolls sideways. Wide content scrolls inside its own contai
 > - it holds only whether the sidebar is expanded — no authentication or authorization state;
 > - it is not `HttpOnly`, because shadcn's component writes it from script;
 > - its path is `/`, so it is sent with every same-origin request, API requests included;
-> - the backend does not read it.
+> - the backend does not read it;
+> - **nothing reads it.** The provider writes it and never reads it back — the upstream design has a server render read it, and this client has none — so a collapsed sidebar is expanded again after a reload. Observed in the running client, not inferred.
 >
 > It is not redesigned, and the vendored component is not edited to remove it.
 
