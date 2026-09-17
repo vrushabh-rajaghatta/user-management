@@ -323,6 +323,94 @@ The write path is the correction that matters: a `Transactional` record would be
 
 **`AuditEventCatalogue.Version` is not bumped, and must not be.** It is a whole-catalogue revision identifier, not a per-event one: `EventTypeSeed.Version` returns that same constant, so raising it would insert 49 new event-type rows at version 2, deactivate all 49 version-1 rows, and write every future audit record against `(code, 2)`. Propagation does not depend on it either — `AuditCatalogueSeeder` upserts every seed unconditionally on each `audit-schema` run, so the corrected definition reaches existing databases on the next deployment. The constant's documented consumers are `TenantProvisioned`'s payload and AUD-C3's future comparison.
 
+## User list — row projection
+
+**Requirement ID:** Pending assignment under the project's query-requirement numbering convention; **implementation must not begin until the requirement has a stable ID.**
+
+*Identifier Format* defines only the `-C` family for commands, and no query convention exists yet. One is not invented locally for this entry: a story that needs an ID asks the owner (`AGENTS.md` §16).
+
+**Status:** Approved as a partial contract — the row projection only. Decided 2026-09-17 by owner decision. **Not fully frozen:** the requirement has no stable ID, and pagination, sorting, filtering and the endpoint are **not yet decided**. Not implemented.
+
+### Requirement
+
+A caller holding `user.read` can list the tenant's human users. Each row exposes the minimum a person needs to recognise a user and safely start an operation on them — nothing more.
+
+The projection was built up from an empty row, not cut down from the `app_user` and `user_identity` models. A field is in the row because a supported operation needs it, never because a column exists. The authorization and audit posture are already decided in `docs/architecture.md` §11: the read declares `Required("user.read")`, its handler enforces it, and it is not audited.
+
+### The row
+
+| Field | Role | Why it is present |
+| --- | --- | --- |
+| `UserId` | **identity and routing** | Every operation a row can start is addressed by it: `POST /api/users/{userId}/password-reset` and `POST /api/users/{userId}/sign-out-everywhere` |
+| `DisplayName` | recognition | A list of identifiers is not usable by a person |
+| `Email` | disambiguation | `DisplayName` is not unique. Once the list is the entry point for password reset and sign-out-everywhere, two users with the same display name must be distinguishable before acting on either |
+
+> **`UserId` is the only identifier. `DisplayName` is presentation data used to recognise a person. `Email` is presentation and disambiguation data used to distinguish users with similar display names. Neither `DisplayName` nor `Email` is a stable identity, and clients must not use either as a user key, route identifier, cache key, equality identity, or stable user reference.**
+
+That prohibition is grounded in the model, not in caution. `Email` is unique only among *active* humans and may be reassigned — which is precisely why sign-in refuses it as a lookup key (`IUserIdentityRepository.FindLocalByUsernameAsync`). `DisplayName` carries no uniqueness at all.
+
+### Scope: human users only
+
+The list contains users whose actor type is `Human`. **The System user is excluded by the read itself**, and `ActorType` is not exposed to explain its absence.
+
+The System actor is an infrastructure actor, not an administrable account, and no operation a row can start applies to it. Exposing `ActorType` would create a client-side distinction between human and system users in a list whose only purpose is administering human users.
+
+### Excluded fields
+
+Each of these stays out of the row until a named story brings the evidence below for it:
+
+| Field | Why it is excluded |
+| --- | --- |
+| `Username` | A sign-in handle, and not required to identify a user for any row operation. `Email` already serves disambiguation |
+| `FirstName`, `LastName` | `DisplayName` serves recognition |
+| `Status` | See *Lifecycle status* below |
+| Pending activation | Derived from the absence of a credential (inv. 15); no row operation acts on it |
+| Locked | Derived from `credential.LockedUntil` against the current time; unlock is addressed by identity, not user, and is not a row operation here |
+| `UserIdentityId` | A user may hold more than one identity, so it has no single value on a user row; only unlock needs it |
+| `IdentityProvider`, `IdentityType` | Per identity, not per user; constant (`Application`, `Local`) in every current row |
+| `ActorType` | The scope rule above makes it unnecessary |
+| `CreatedAt`, `CreatedBy` | No row operation needs them; `CreatedBy` exposes a relationship between people |
+| Roles | Authority held is not what this read is for |
+| Session and sign-in activity | Behavioural data; no row operation needs it |
+| Credential state, lockout counters, deactivation details | Security internals |
+
+### Lifecycle status
+
+`Status` is **not** in the row.
+
+The `user.read` permission is described as *"View user accounts and their current lifecycle status."* That description states the authority `user.read` grants; it is **not** the response schema of every read that uses it:
+
+> `user.read` authorizes viewing user accounts and their lifecycle information where a particular read exposes such information. This user-list projection does not expose lifecycle status.
+
+Exposing `app_user.status` today would be misleading rather than informative. Nothing can deactivate a user, so the value would read `Active` in every row, while the lifecycle states that are meaningful — pending activation and locked — are derived from other tables and would be absent from it. A later read that exposes lifecycle information decides what "status" means there, and whether `user.read` is sufficient for it.
+
+No permission catalogue change and no audit catalogue change accompany this.
+
+### Adding a field later
+
+A field joins the row only with the same evidence that admitted these three:
+
+1. **Concrete use** — which supported operation or interface needs it.
+2. **Data exposure** — what information it discloses.
+3. **Necessity** — why the use cannot be met without it.
+4. **Removal cost** — the compatibility consequence of withdrawing it later.
+5. **Stable identity** — whether a client could mistake it for an identifier.
+
+*"The column already exists"* is not evidence. A field is cheap to add and expensive to remove once a client depends on it, which is why the default is absence.
+
+### Acceptance Criteria
+
+- **P1** A user-list row contains exactly `UserId`, `DisplayName`, and `Email`; no additional fields are exposed by the projection.
+- **P2** The System user never appears in the list.
+- **P3** No excluded field appears in a row, under any name.
+- **P4** Identifier usage: `UserId` is the only identifier exposed by this projection. `DisplayName` and `Email` must not be used as identifiers by clients. Server-side tests verify that only `UserId` is designated as an identifier; client tests, where applicable, verify that `DisplayName` and `Email` are not used as keys, routes, cache identities, or matching identities.
+
+  P4 is an API consumer contract as well as a server one. The server cannot prove a future client's behaviour, so its verification is split deliberately; the absence of a backend test for the client half is by design, not an omission.
+
+### Notes
+
+**Not decided here:** pagination, sorting, filtering, the endpoint, the refusal status code, and the query and result type names.
+
 ---
 
 # Known Gaps and Deliberate Deferrals
