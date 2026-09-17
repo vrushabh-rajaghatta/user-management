@@ -208,6 +208,10 @@ export default defineConfig([
       "@typescript-eslint/restrict-template-expressions": "off",
       "@typescript-eslint/no-confusing-void-expression": "off",
       "react-hooks/set-state-in-effect": "off",
+
+      // PaginationLink renders an anchor whose content arrives as children,
+      // which the rule cannot see through the render prop.
+      "jsx-a11y/anchor-has-content": "off",
     },
   },
 
