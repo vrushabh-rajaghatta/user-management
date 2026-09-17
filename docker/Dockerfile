@@ -38,10 +38,12 @@ COPY src/Platform/Ligature.Platform.Persistence/*.csproj                src/Plat
 COPY src/Host/Ligature.Host/*.csproj                                    src/Host/Ligature.Host/
 COPY src/Tools/Ligature.Provisioning/*.csproj                           src/Tools/Ligature.Provisioning/
 COPY src/Tools/Ligature.AuditSchema/*.csproj                            src/Tools/Ligature.AuditSchema/
+COPY src/Tools/Ligature.CatalogueSync/*.csproj                        src/Tools/Ligature.CatalogueSync/
 
 RUN dotnet restore src/Host/Ligature.Host/Ligature.Host.csproj \
  && dotnet restore src/Tools/Ligature.Provisioning/Ligature.Provisioning.csproj \
- && dotnet restore src/Tools/Ligature.AuditSchema/Ligature.AuditSchema.csproj
+ && dotnet restore src/Tools/Ligature.AuditSchema/Ligature.AuditSchema.csproj \
+ && dotnet restore src/Tools/Ligature.CatalogueSync/Ligature.CatalogueSync.csproj
 
 COPY src/ src/
 
@@ -53,6 +55,9 @@ RUN dotnet publish src/Tools/Ligature.Provisioning/Ligature.Provisioning.csproj 
 
 RUN dotnet publish src/Tools/Ligature.AuditSchema/Ligature.AuditSchema.csproj \
         --configuration Release --no-restore --output /out/audit-schema
+
+RUN dotnet publish src/Tools/Ligature.CatalogueSync/Ligature.CatalogueSync.csproj \
+        --configuration Release --no-restore --output /out/catalogue-sync
 
 
 # ------------------------------------------------------------ migrations
@@ -184,6 +189,35 @@ USER $APP_UID
 # authority to create a schema owned by another role, which is deliberately not
 # what the application or the migrator connects with.
 ENTRYPOINT ["dotnet", "Ligature.AuditSchema.dll"]
+
+
+# ---------------------------------------------------------- catalogue-sync
+
+FROM mcr.microsoft.com/dotnet/runtime:${DOTNET_VERSION} AS catalogue-sync
+
+# Npgsql probes for GSSAPI/Kerberos when it opens a connection. The .NET runtime
+# images do not carry it, so without this every connection logs
+# "Cannot load library libgssapi_krb5.so.2" as an Error. Password authentication
+# works either way; this exists so the logs do not cry wolf.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libgssapi-krb5-2 \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=build /out/catalogue-sync ./
+
+USER $APP_UID
+
+# PRV-C2. Runs AFTER the audit schema, which deploys both the corrected
+# PermissionCatalogUpdated definition this records itself with and the 005
+# privileges it needs to record anything at all. Before the host, so a refused
+# synchronisation stops the deployment rather than leaving the API serving
+# against a catalogue the release has determined is unsafe.
+#
+# LIGATURE_CONNECTION as migration_role. NOT the provisioning connection: PE2
+# puts catalogue writes under a migration role, and provisioning_role's
+# catalogue privileges were deliberately removed by 004.
+ENTRYPOINT ["dotnet", "Ligature.CatalogueSync.dll"]
 
 
 # =====================================================================
