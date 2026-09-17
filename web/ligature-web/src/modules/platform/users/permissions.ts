@@ -9,4 +9,9 @@ import { definePermission } from "@/shared/auth/permissions";
 export const UserPermissions = {
   create: definePermission("user.create"),
   read: definePermission("user.read"),
+  resetPassword: definePermission("user.resetpassword"),
+
+  // A session permission, used here because signing a user out everywhere is
+  // started from the Users table. No sessions module exists to own it yet.
+  revokeSessions: definePermission("session.revoke"),
 } as const;

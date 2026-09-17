@@ -512,8 +512,10 @@ describe("resetting a user's password", () => {
     expect(screen.getByRole("dialog", { name: "Reset password for Ada Lovelace" })).toBeInTheDocument();
 
     // The live region exists before anything is announced — that is what makes
-    // an announcement reliable — so a refusal leaves it present and empty.
-    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    // an announcement reliable — so a refusal leaves it present and empty. It
+    // is behind the open modal, hidden from assistive technology, so it is
+    // found with hidden: true.
+    expect(screen.getByRole("status", { hidden: true })).toBeEmptyDOMElement();
   });
 
   it("is busy while sending, and sends once however often confirm is pressed", async () => {

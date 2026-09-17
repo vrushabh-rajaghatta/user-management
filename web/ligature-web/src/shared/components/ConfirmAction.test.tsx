@@ -17,7 +17,9 @@ function Harness({ busy = false, onConfirm = vi.fn() }: { busy?: boolean; onConf
 
   return (
     <>
-      <button ref={opener} type="button" onClick={() => setOpen(true)}>
+      <button ref={opener} type="button" onClick={() => {
+        setOpen(true);
+      }}>
         Open
       </button>
       <ConfirmAction
