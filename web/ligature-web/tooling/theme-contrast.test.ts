@@ -31,6 +31,12 @@ const TEXT_PAIRS: [string, string][] = [
   ["muted-foreground", "card"],
   ["muted-foreground", "muted"],
   ["destructive", "background"],
+
+  // The shadcn sidebar's surfaces (the Administration shell).
+  ["sidebar-foreground", "sidebar"],
+  ["sidebar-accent-foreground", "sidebar-accent"],
+  ["sidebar-primary-foreground", "sidebar-primary"],
+  ["muted-foreground", "sidebar"],
 ];
 
 /**
@@ -44,6 +50,7 @@ const NON_TEXT_PAIRS: [string, string][] = [
   ["input", "background"],
   ["input", "card"],
   ["input", "muted"],
+  ["sidebar-ring", "sidebar"],
 ];
 
 /**

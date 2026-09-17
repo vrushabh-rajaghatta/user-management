@@ -111,7 +111,7 @@ describe("signing in", () => {
   it("refuses a permission-gated page to a caller the server reports with no permissions", async () => {
     host(() => Promise.resolve(HttpResponse.json(caller([]))));
 
-    const { user } = arrive("/users/new");
+    const { user } = arrive("/admin/users/new");
 
     await signIn(user);
 
@@ -122,7 +122,7 @@ describe("signing in", () => {
   it("renders the page to a caller the server reports as holding the permission", async () => {
     const conversation = host();
 
-    const { user } = arrive("/users/new");
+    const { user } = arrive("/admin/users/new");
 
     await signIn(user);
 
@@ -152,7 +152,7 @@ describe("signing in", () => {
       return HttpResponse.json(caller([CREATE]));
     });
 
-    const { user } = arrive("/users/new");
+    const { user } = arrive("/admin/users/new");
 
     await signIn(user);
 
@@ -177,7 +177,7 @@ describe("signing in", () => {
   it("does not enter the application when the caller cannot be resolved", async () => {
     host(() => Promise.resolve(HttpResponse.json({ error: "Nope." }, { status: 500 })));
 
-    const { user } = arrive("/users/new");
+    const { user } = arrive("/admin/users/new");
 
     await signIn(user);
 
@@ -189,7 +189,7 @@ describe("signing in", () => {
   it("does not claim a caller when the server answers that there is none", async () => {
     host(() => Promise.resolve(HttpResponse.json({ error: "Authentication is required." }, { status: 401 })));
 
-    const { user } = arrive("/users/new");
+    const { user } = arrive("/admin/users/new");
 
     await signIn(user);
 

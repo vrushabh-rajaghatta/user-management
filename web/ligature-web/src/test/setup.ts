@@ -2,6 +2,9 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll } from "vitest";
 import { server } from "./msw/server";
+import { DESKTOP_WIDTH, installViewport, setViewportWidth } from "./viewport";
+
+installViewport();
 
 // A request no handler answers is an error, never a pass-through. A test that
 // quietly reached the network would depend on whatever happened to be
@@ -13,6 +16,9 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   server.resetHandlers();
+
+  // A test that narrowed the viewport must not leave the next one on a phone.
+  setViewportWidth(DESKTOP_WIDTH);
 });
 
 afterAll(() => {

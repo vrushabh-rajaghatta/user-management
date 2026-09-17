@@ -1,6 +1,6 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { definePermission } from "@/shared/auth/permissions";
+import { definePermission, type PermissionCode } from "@/shared/auth/permissions";
 import { renderWithApp } from "@/test/renderWithApp";
 import { TestSessionSource } from "@/test/sessions";
 import { appRoutes, composeRoutes } from "./router";
@@ -14,12 +14,16 @@ const signedIn = () => new TestSessionSource({ status: "authenticated", principa
 /** Authenticated, with effective permissions that do NOT include user.create. */
 const denied = () => new TestSessionSource({ status: "authenticated", principal: { permissions: [] } });
 
+const CREATE = definePermission("user.create");
+const READ = definePermission("user.read");
+
 /** Authenticated, holding user.create. */
 const holding = () =>
-  new TestSessionSource({
-    status: "authenticated",
-    principal: { permissions: [{ code: definePermission("user.create") }] },
-  });
+  new TestSessionSource({ status: "authenticated", principal: { permissions: [{ code: CREATE }] } });
+
+/** Authenticated, holding exactly the permissions named. */
+const holdingOnly = (...codes: PermissionCode[]) =>
+  new TestSessionSource({ status: "authenticated", principal: { permissions: codes.map((code) => ({ code })) } });
 
 describe("the application routes", () => {
   it("load the placeholder home page lazily at /, for a signed-in visitor", async () => {
@@ -70,62 +74,117 @@ describe("the application routes", () => {
   });
 
 
-  it("load the create user page for a signed-in visitor whose permissions are not yet known", async () => {
-    renderWithApp(appRoutes, { path: "/users/new", source: signedIn() });
+  // ------------------------------------------------------------ Administration
+
+  it("redirect /admin to its first page, /admin/users", async () => {
+    const { router } = renderWithApp(appRoutes, { path: "/admin", source: signedIn() });
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Users" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/admin/users");
+  });
+
+  it("load the Users page for a visitor who holds user.read", async () => {
+    renderWithApp(appRoutes, { path: "/admin/users", source: holdingOnly(READ) });
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Users" })).toBeInTheDocument();
+  });
+
+  it("refuse the Users page to a visitor without user.read, even one who holds user.create", async () => {
+    renderWithApp(appRoutes, { path: "/admin/users", source: holdingOnly(CREATE) });
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Not available" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
+  });
+
+  it("send a signed-out visitor from an Administration page to sign-in", async () => {
+    renderWithApp(appRoutes, { path: "/admin/users" });
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Sign in" })).toBeInTheDocument();
+  });
+
+  it("load the create user page at /admin/users/new for a signed-in visitor whose permissions are not yet known", async () => {
+    renderWithApp(appRoutes, { path: "/admin/users/new", source: signedIn() });
 
     expect(await screen.findByRole("heading", { level: 1, name: "Create user" })).toBeInTheDocument();
   });
 
   it("load the create user page for a visitor who holds the permission", async () => {
-    renderWithApp(appRoutes, { path: "/users/new", source: holding() });
+    renderWithApp(appRoutes, { path: "/admin/users/new", source: holding() });
 
     expect(await screen.findByRole("heading", { level: 1, name: "Create user" })).toBeInTheDocument();
   });
 
   it("send a signed-out visitor from the create user page to sign-in", async () => {
-    renderWithApp(appRoutes, { path: "/users/new" });
+    renderWithApp(appRoutes, { path: "/admin/users/new" });
 
     expect(await screen.findByRole("heading", { level: 1, name: "Sign in" })).toBeInTheDocument();
   });
 
-  it("offer the Users area in the navigation of a signed-in page", async () => {
-    renderWithApp(appRoutes, { path: "/", source: signedIn() });
+  /** Moved, not aliased: nothing linked to the old path, and no redirect is kept. */
+  it("no longer serve the create user page at /users/new", async () => {
+    renderWithApp(appRoutes, { path: "/users/new", source: signedIn() });
 
-    expect(await screen.findByRole("heading", { level: 1, name: "Home" })).toBeInTheDocument();
-    expect(screen.getByRole("navigation")).toBeInTheDocument();
-    expect(screen.getByText("Users")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Create user" })).toHaveAttribute("href", "/users/new");
+    expect(await screen.findByRole("heading", { level: 1, name: "Page not found" })).toBeInTheDocument();
   });
 
   /**
-   * The B6 amendment to §5, stated as a test. W4 left this route ungated for one
-   * reason — without a server-backed source every permission was permanently
-   * unknown, so a gate would have been unreachable and untestable. /me removes
-   * that reason, so the route guards itself, and a denial renders an EXPLICIT
-   * denied state rather than a blank page or a 404 that lies about the route.
-   *
-   * The server still authorises POST /api/users either way. This decides what a
-   * person is shown, not what they are permitted to do.
+   * The B6 amendment to §5, stated as a test: the route guards itself, and a
+   * denial renders an EXPLICIT denied state rather than a blank page or a 404
+   * that lies about the route. The server still authorises POST /api/users.
    */
   it("refuse the create user page to a visitor whose permission is denied", async () => {
-    renderWithApp(appRoutes, { path: "/users/new", source: denied() });
+    renderWithApp(appRoutes, { path: "/admin/users/new", source: denied() });
 
     expect(await screen.findByRole("heading", { level: 1, name: "Not available" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Create user" })).toBeNull();
   });
 
+  it("offer Administration in a Platform group of the main navigation", async () => {
+    renderWithApp(appRoutes, { path: "/", source: signedIn() });
+
+    const nav = await screen.findByRole("navigation", { name: "Main" });
+
+    expect(within(nav).getByText("Platform")).toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "Administration" })).toHaveAttribute("href", "/admin");
+  });
+
+  it("show both navigation landmarks on an Administration page, with Users current in each sense", async () => {
+    renderWithApp(appRoutes, { path: "/admin/users/new", source: signedIn() });
+
+    const main = await screen.findByRole("navigation", { name: "Main" });
+    const administration = screen.getByRole("navigation", { name: "Administration" });
+
+    expect(within(main).getByRole("link", { name: "Administration" })).toHaveAttribute("aria-current", "page");
+    expect(within(administration).getByRole("link", { name: "Users" })).toHaveAttribute("href", "/admin/users");
+    expect(within(administration).getByRole("link", { name: "Users" })).toHaveAttribute("aria-current", "page");
+  });
+
+  /** Only real destinations: no read capability exists for either yet. */
+  it("list no Audit trail or Notifications entry", async () => {
+    renderWithApp(appRoutes, { path: "/admin/users", source: signedIn() });
+
+    await screen.findByRole("navigation", { name: "Administration" });
+
+    expect(screen.queryByRole("link", { name: "Audit trail" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Notifications" })).toBeNull();
+  });
+
+  it.each(["/admin/audit-trail", "/admin/notifications"])("serve no page at %s", async (path) => {
+    renderWithApp(appRoutes, { path, source: signedIn() });
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Page not found" })).toBeInTheDocument();
+  });
+
   /**
-   * Deliberately a SEPARATE test from the one above, and the separation is the
-   * point. Removing the NAVIGATION gate must fail this one and leave that one
-   * passing; removing the ROUTE guard must fail that one and leave this one
-   * passing. W4 produced concrete evidence that a single test covering both
-   * reports the wrong mechanism as broken.
+   * Deliberately SEPARATE from the route-guard tests above. Removing the
+   * navigation filter must fail this one and leave those passing, and the
+   * reverse (W4).
    */
-  it("hide the create user navigation from a visitor whose permission is denied", async () => {
-    renderWithApp(appRoutes, { path: "/", source: denied() });
+  it("hide Administration from a visitor who holds user.create but not user.read", async () => {
+    renderWithApp(appRoutes, { path: "/", source: holdingOnly(CREATE) });
 
     expect(await screen.findByRole("heading", { level: 1, name: "Home" })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Create user" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Administration" })).toBeNull();
   });
 
   it("show the route error inside the shell when a public page throws, without its detail", async () => {

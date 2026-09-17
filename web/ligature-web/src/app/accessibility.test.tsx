@@ -24,6 +24,16 @@ describe("the foundation's rendered accessibility", () => {
     await expectNoAccessibilityViolations(container);
   });
 
+  it("has no violations on an Administration page, with both navigation levels", async () => {
+    const { container } = renderWithApp(appRoutes, {
+      path: "/admin/users",
+      source: new TestSessionSource({ status: "authenticated", principal: null }),
+    });
+
+    await screen.findByRole("navigation", { name: "Administration" });
+    await expectNoAccessibilityViolations(container);
+  });
+
   it("has no violations on the sign-in page", async () => {
     const { container } = renderWithApp(appRoutes, { path: "/sign-in" });
 
