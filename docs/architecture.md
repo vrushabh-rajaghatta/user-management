@@ -305,6 +305,10 @@ The caller is established by middleware **before** any pipeline runs, so a query
 >
 > A query that requires no authorization declares `NotRequired`. A permission-gated query declares the required permission **on the query type itself**, as a static abstract member of its classification interface — the single source of truth, consumed by both registration and enforcement.
 >
+> **The classification is two explicit states, never one nullable value.** `NotRequired` and `Required(<permission>)` are both positive declarations. A single nullable member — `static abstract string? RequiredPermission`, where `null` is taken to mean "no authorization required" — is forbidden, and an absent, null or blank permission is not a declaration of anything and must be rejected by the verifier.
+>
+> The reason is the same one the whole contract rests on: it would make the most consequential state in the system the one you get by **not typing anything**. "This query is deliberately open" and "somebody left this blank" would become indistinguishable, which is precisely the implicitness being removed.
+>
 > Query registration must require an authorization classification and must not provide an unclassified registration path.
 >
 > The application verifies all registered query handlers at startup. Any handler registered outside the approved registration mechanism, or whose query does not provide a valid authorization classification, **prevents application startup**.
