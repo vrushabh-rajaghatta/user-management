@@ -43,6 +43,7 @@ web/ligature-web/src/
 │   ├── layout/         AppShell, PublicShell, RouteError, NotFound
 │   └── format/         dates, numbers
 ├── components/ui/      vendored shadcn primitives, never hand-edited
+├── hooks/              vendored shadcn hooks (use-mobile), never hand-edited
 ├── lib/                cn() and similar pure helpers
 └── modules/
     └── platform/
@@ -63,7 +64,10 @@ web/ligature-web/src/
 | `modules/x/y/*` | its own files, `shared/`, `components/ui`, `lib/`, another module's `index.ts` | another module's internals, `app/`, `shared/api/client` outside `api/` (§6) |
 | a platform module | other platform modules' `index.ts` | any business module |
 | `shared/` | `components/ui`, `lib/`, other `shared/` | any module, `app/` |
-| `components/ui` | `lib/` | everything else |
+| `components/ui` | `lib/`, `hooks/` | everything else |
+| `hooks/` | `lib/`, other `hooks/` | everything else |
+
+`hooks/` exists because the shadcn CLI installs a component's hooks there (`sidebar` brings `use-mobile`). It is a vendored layer like `components/ui`: only primitives use it, and application code reaches its behaviour through the primitive, not the hook.
 
 **Proven, not just asserted.** Each boundary rule has a fixture that breaks it on purpose, and lint must fail on that fixture. A rule that has been quietly switched off then fails loudly instead of passing (§16).
 
@@ -175,6 +179,31 @@ export const userRoutes: RouteObject[] = [
 > A route that requires a permission now guards it, and **denial renders an explicit denied state** — never a blank page, never a redirect that makes the route look as though it does not exist. A hidden route is not an authorization outcome; a stated refusal is.
 >
 > This does not merge the two concerns. An entry's `permission` still decides only whether it is **shown**; the route's guard decides whether it may be **reached**; and the server still authorizes the operation whatever either of them did.
+
+> **Amended (Administration shell). Navigation has two levels: the shell lists areas, and an area lists its pages.**
+>
+> The primary sidebar lists **areas** in labelled groups; an area with pages of its own renders a **secondary navigation** beside them. Both levels are read from ONE data object, which the module owning the area exports:
+>
+> ```ts
+> // shared/layout/navigation.ts — shape only
+> interface NavigationItem  { label: string; to: string; permission?: PermissionCode }
+> interface NavigationArea  { label: string; to: string; title: string; description?: string; items: readonly NavigationItem[] }
+> interface NavigationGroup { label: string; areas: readonly NavigationArea[] }
+>
+> // modules/platform/administration — the vocabulary
+> export const administrationArea: NavigationArea = {
+>   label: "Administration", to: "/admin", title: "Administration", items: [...usersNavigation],
+> };
+> ```
+>
+> - **An area has no permission of its own.** It is visible when at least one of its items is visible, and both levels filter the SAME items with the same `can()`. The primary navigation therefore cannot offer an area whose secondary navigation is empty, and the two cannot disagree about what is available.
+> - **Only real destinations are listed.** An item enters an area's `items` when its page and its read capability exist. There are no placeholder entries for planned pages or modules.
+> - **URLs are the state.** An area is a nested layout route (`/admin`) whose index redirects to its first page (`/admin/users`), and each page is a child path. An entry is active when the current path is its `to` or beneath it, so Administration is active on every `/admin/*` path and Users on `/admin/users/new`. Every page is a deep link; back and forward work because nothing about navigation lives outside the URL.
+> - **`AreaLayout` is generic.** It lives in `shared/layout`, renders the area it is given beside an `<Outlet />`, and knows no area's name, pages or permissions. The owning module supplies all three.
+>
+> Both levels are built from shadcn's `sidebar` primitives (`Sidebar`, `SidebarMenu`, `SidebarMenuButton` rendering a `NavLink`), and each is a `<nav>` landmark with its own label.
+>
+> **`/users/new` moved to `/admin/users/new`.** It was a client-chosen path, never a backend contract, and nothing linked to it; no redirect is kept.
 
 ---
 
@@ -595,6 +624,27 @@ The identity-establishing request itself also uses `unauthorized: "return"`: its
 | Timeline / metadata | Two columns | Stacked |
 
 The page body never scrolls sideways. Wide content scrolls inside its own container.
+
+> **Amended (Administration shell). Navigation uses two breakpoints, taken from the shadcn `sidebar` rather than imposed on it.**
+>
+> | Width | Primary sidebar | An area's secondary navigation |
+> | --- | --- | --- |
+> | < `md` (< 768px) | A sheet, opened from the header | A horizontal row above the page |
+> | `md` – < `lg` | Persistent | A horizontal row above the page |
+> | ≥ `lg` | Persistent | A persistent column beside the page |
+>
+> The primary breakpoint is `md`, not `lg`, because the vendored `use-mobile` hook switches there, and vendored files are never hand-edited. The table above replaces the "App navigation" row's `lg` for navigation only.
+>
+> **The header carries a `SidebarTrigger` at every width.** Below `md` it opens the sheet; above, it collapses and restores the sidebar. `SidebarProvider` also binds **Ctrl/⌘+B** to the same toggle, so the visible trigger is the way back for anyone who collapsed the sidebar by keyboard. The shortcut uses a modifier and is therefore not a single-character shortcut under WCAG 2.1.4. Navigating from the sheet closes it.
+>
+> **`sidebar_state` is accepted as a UI-state cookie.** `SidebarProvider` writes `sidebar_state=true|false; path=/` when the sidebar is toggled. Recorded because this client is otherwise deliberate about cookies (`docs/architecture.md` §17):
+>
+> - it holds only whether the sidebar is expanded — no authentication or authorization state;
+> - it is not `HttpOnly`, because shadcn's component writes it from script;
+> - its path is `/`, so it is sent with every same-origin request, API requests included;
+> - the backend does not read it.
+>
+> It is not redesigned, and the vendored component is not edited to remove it.
 
 ---
 
