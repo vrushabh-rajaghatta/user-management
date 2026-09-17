@@ -51,19 +51,24 @@ public enum CatalogueRefusalReason
 /// </summary>
 public sealed record CatalogueRefusal(CatalogueRefusalReason Reason, string Subject);
 
-/// <summary>The five permitted mutations, counted (M1-M5).</summary>
+/// <summary>
+/// The four permitted mutations, counted (M1-M4).
+///
+/// There is no role-metadata count, and its absence is the contract rather than
+/// an omission: M5 was withdrawn because every seeded role is a system role and
+/// the domain refuses to modify one. A count that could only ever be zero would
+/// tell a reader something false about what this does.
+/// </summary>
 public sealed record CatalogueSyncCounts(
     int PermissionsInserted,
     int PermissionMetadataReconciled,
     int RolesInserted,
-    int RoleMetadataReconciled,
     int GrantsInserted)
 {
-    public static CatalogueSyncCounts None { get; } = new(0, 0, 0, 0, 0);
+    public static CatalogueSyncCounts None { get; } = new(0, 0, 0, 0);
 
     public int Total
-        => PermissionsInserted + PermissionMetadataReconciled
-            + RolesInserted + RoleMetadataReconciled + GrantsInserted;
+        => PermissionsInserted + PermissionMetadataReconciled + RolesInserted + GrantsInserted;
 }
 
 /// <summary>

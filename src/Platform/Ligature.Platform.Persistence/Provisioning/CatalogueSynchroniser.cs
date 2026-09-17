@@ -194,7 +194,6 @@ public sealed class CatalogueSynchroniser
         }
 
         var toInsertRoles = new List<RoleSeedPlan>();
-        var metadataRoles = new List<(Role Row, string Name, string? Description)>();
 
         foreach (var seed in roleSeeds)
         {
@@ -216,10 +215,16 @@ public sealed class CatalogueSynchroniser
                 continue;
             }
 
+            // ROLE METADATA IS NOT RECONCILED (M5 withdrawn). Role.UpdateMetadata
+            // refuses a system role outright, and every seeded role is one — so
+            // an attempt would throw a domain exception out of the middle of a
+            // run rather than reconciling or refusing. Refusing is the honest
+            // outcome, and no mutator is added to make it convenient: the
+            // contract forbids exactly that.
             if (!string.Equals(row.Name, seed.Name, StringComparison.Ordinal)
                 || !string.Equals(row.Description, seed.Description, StringComparison.Ordinal))
             {
-                metadataRoles.Add((row, seed.Name, seed.Description));
+                refusals.Add(new(CatalogueRefusalReason.SecuritySemanticDrift, seed.Code));
             }
         }
 
@@ -284,9 +289,6 @@ public sealed class CatalogueSynchroniser
             byRoleCode[seed.Code] = role;
         }
 
-        foreach (var (row, name, description) in metadataRoles)
-            row.UpdateMetadata(name, description);
-
         foreach (var seed in toInsertGrants)
         {
             _dbContext.Add(
@@ -307,7 +309,6 @@ public sealed class CatalogueSynchroniser
                 toInsertPermissions.Count,
                 metadataPermissions.Count,
                 toInsertRoles.Count,
-                metadataRoles.Count,
                 toInsertGrants.Count),
             []);
     }
@@ -352,7 +353,6 @@ public sealed class CatalogueSynchroniser
                 permissionsInserted = result.Counts.PermissionsInserted,
                 permissionMetadataReconciled = result.Counts.PermissionMetadataReconciled,
                 rolesInserted = result.Counts.RolesInserted,
-                roleMetadataReconciled = result.Counts.RoleMetadataReconciled,
                 grantsInserted = result.Counts.GrantsInserted,
                 driftDetected = result.Refusals.Count > 0,
                 refusalReasons = result.RefusalsByReason

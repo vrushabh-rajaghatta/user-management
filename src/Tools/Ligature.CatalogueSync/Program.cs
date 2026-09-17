@@ -174,7 +174,6 @@ public static class Program
                 output.WriteLine($"  Permissions added:              {result.Counts.PermissionsInserted}");
                 output.WriteLine($"  Permission metadata updated:    {result.Counts.PermissionMetadataReconciled}");
                 output.WriteLine($"  Roles added:                    {result.Counts.RolesInserted}");
-                output.WriteLine($"  Role metadata updated:          {result.Counts.RoleMetadataReconciled}");
                 output.WriteLine($"  Grants added:                   {result.Counts.GrantsInserted}");
 
                 return Success;

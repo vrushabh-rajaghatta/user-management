@@ -71,6 +71,8 @@ public sealed class CatalogueSynchronisationTests
         Assert.Equal(CatalogueSyncOutcome.Succeeded, result.Outcome);
         Assert.Equal(1, result.Counts.PermissionsInserted);
         Assert.Equal(1, await CountAsync(database, "SELECT count(*) FROM permission WHERE code = 'user.read'"));
+
+        await AssertConvergedAsync(database);
     }
 
     /// <summary>A2.</summary>
@@ -90,6 +92,8 @@ public sealed class CatalogueSynchronisationTests
         Assert.Equal(CatalogueSyncOutcome.Succeeded, result.Outcome);
         Assert.Equal(1, result.Counts.RolesInserted);
         Assert.True(result.Counts.GrantsInserted > 0, "the role's grants were not restored with it");
+
+        await AssertConvergedAsync(database);
     }
 
     /// <summary>A4 — the only mutation to an existing row this is entitled to make.</summary>
@@ -108,6 +112,8 @@ public sealed class CatalogueSynchronisationTests
         Assert.Equal(
             "View Users",
             await ScalarAsync(database, "SELECT name FROM permission WHERE code = 'user.read'"));
+
+        await AssertConvergedAsync(database);
     }
 
     /// <summary>A10 — a run that changes nothing is a success, not a skip.</summary>
@@ -120,6 +126,110 @@ public sealed class CatalogueSynchronisationTests
 
         Assert.Equal(CatalogueSyncOutcome.Succeeded, result.Outcome);
         Assert.Equal(0, result.Counts.Total);
+    }
+
+    /// <summary>
+    /// A3 — the grant case on its own. A release that grants an existing
+    /// permission to an existing role changes no catalogue entry at all, so
+    /// nothing but the grant table would notice it was missing.
+    /// </summary>
+    [Fact]
+    public async Task A_grant_the_release_adds_reaches_an_existing_database()
+    {
+        await using var database = await ProvisionedAsync();
+
+        await ExecuteAsync(database, """
+            DELETE FROM role_permission
+             WHERE role_id = (SELECT id FROM role WHERE code = 'access-reviewer')
+               AND permission_id = (SELECT id FROM permission WHERE code = 'user.read');
+            """);
+
+        var result = await SynchroniseAsync(database);
+
+        Assert.Equal(CatalogueSyncOutcome.Succeeded, result.Outcome);
+        Assert.Equal(1, result.Counts.GrantsInserted);
+        Assert.Equal(0, result.Counts.PermissionsInserted);
+
+        await AssertConvergedAsync(database);
+    }
+
+    /// <summary>
+    /// A18, and the one that matters most for a real release: several additive
+    /// changes at once, converged in ONE run. A release rarely adds exactly one
+    /// thing, and a synchroniser that handled each kind only in isolation would
+    /// pass every test above and still not do its job.
+    /// </summary>
+    [Fact]
+    public async Task Several_additive_changes_converge_in_one_run()
+    {
+        await using var database = await ProvisionedAsync();
+
+        await ExecuteAsync(database, """
+            DELETE FROM role_permission
+             WHERE permission_id IN (SELECT id FROM permission WHERE code = 'user.read');
+            DELETE FROM permission WHERE code = 'user.read';
+
+            DELETE FROM role_permission
+             WHERE role_id IN (SELECT id FROM role WHERE code = 'access-reviewer');
+            DELETE FROM role WHERE code = 'access-reviewer';
+
+            DELETE FROM role_permission
+             WHERE role_id = (SELECT id FROM role WHERE code = 'user-administrator')
+               AND permission_id = (SELECT id FROM permission WHERE code = 'user.unlock');
+
+            UPDATE permission SET name = 'Stale name' WHERE code = 'user.create';
+            """);
+
+        var result = await SynchroniseAsync(database);
+
+        Assert.Equal(CatalogueSyncOutcome.Succeeded, result.Outcome);
+        Assert.Equal(1, result.Counts.PermissionsInserted);
+        Assert.Equal(1, result.Counts.RolesInserted);
+        Assert.Equal(1, result.Counts.PermissionMetadataReconciled);
+        Assert.True(result.Counts.GrantsInserted >= 3, $"only {result.Counts.GrantsInserted} grants restored");
+
+        await AssertConvergedAsync(database);
+    }
+
+    /// <summary>
+    /// CLASSIFICATION PRECEDES MUTATION, ACROSS HETEROGENEOUS FINDINGS — and
+    /// this test is why M5 was withdrawn.
+    ///
+    /// Four additive things to do and one reason not to, in one run. Every
+    /// single-change test passed while role metadata drift threw a domain
+    /// exception out of the middle of a synchronisation, because none of them
+    /// put the two kinds of finding together.
+    ///
+    /// Role metadata is refused rather than reconciled: Role.UpdateMetadata
+    /// declines a system role, and every seeded role is one.
+    /// </summary>
+    [Fact]
+    public async Task Additive_work_alongside_role_metadata_drift_refuses_everything()
+    {
+        await using var database = await ProvisionedAsync();
+
+        await ExecuteAsync(database, """
+            DELETE FROM role_permission
+             WHERE permission_id IN (SELECT id FROM permission WHERE code = 'user.read');
+            DELETE FROM permission WHERE code = 'user.read';
+
+            DELETE FROM role_permission
+             WHERE role_id IN (SELECT id FROM role WHERE code = 'access-reviewer');
+            DELETE FROM role WHERE code = 'access-reviewer';
+
+            UPDATE role SET name = 'Stale role name' WHERE code = 'user-administrator';
+            """);
+
+        var result = await SynchroniseAsync(database);
+
+        AssertRefused(result, CatalogueRefusalReason.SecuritySemanticDrift, "user-administrator");
+
+        // Nothing additive was applied "while we are here".
+        Assert.Equal(0, await CountAsync(database, "SELECT count(*) FROM permission WHERE code = 'user.read'"));
+        Assert.Equal(0, await CountAsync(database, "SELECT count(*) FROM role WHERE code = 'access-reviewer'"));
+
+        // The refusal is evidenced despite the rollback.
+        Assert.Equal(1, await AuditRecordCountAsync(database));
     }
 
     // ------------------------------------------------------------- refusals
@@ -330,6 +440,71 @@ public sealed class CatalogueSynchronisationTests
     }
 
     // -------------------------------------------------------------- helpers
+
+    /// <summary>
+    /// THE POSTCONDITION, and the same comparison CatalogueDriftTests makes
+    /// against the shared database: every catalogue row the release declares is
+    /// present, with the values it declares, and no extra.
+    ///
+    /// Asserted here rather than inferred from the counts. A synchroniser that
+    /// reported "1 permission inserted" and inserted it wrong would satisfy
+    /// every count assertion in this file and leave the database still drifted.
+    /// </summary>
+    private static async Task AssertConvergedAsync(AuditBoundaryDatabase database)
+    {
+        var permissions = await RowsAsync(database,
+            "SELECT code, name, resource, action, requires_human_actor FROM permission WHERE is_active");
+
+        Assert.Equal(
+            PlatformProvisioner.GetPermissionSeeds()
+                .Select(x => $"{x.Code}|{x.Name}|{x.Resource}|{x.Action}|{x.RequiresHumanActor}")
+                .OrderBy(x => x, StringComparer.Ordinal),
+            permissions);
+
+        var roles = await RowsAsync(database,
+            "SELECT code, name FROM role WHERE is_active");
+
+        Assert.Equal(
+            PlatformProvisioner.GetRoleSeeds()
+                .Select(x => $"{x.Code}|{x.Name}")
+                .OrderBy(x => x, StringComparer.Ordinal),
+            roles);
+
+        var grants = await RowsAsync(database, """
+            SELECT r.code, p.code
+              FROM role_permission rp
+              JOIN role r       ON r.id = rp.role_id
+              JOIN permission p ON p.id = rp.permission_id
+             WHERE rp.revoked_at IS NULL
+            """);
+
+        Assert.Equal(
+            PlatformProvisioner.GetRolePermissionSeeds()
+                .Select(x => $"{x.RoleCode}|{x.PermissionCode}")
+                .OrderBy(x => x, StringComparer.Ordinal),
+            grants);
+    }
+
+    private static async Task<IReadOnlyList<string>> RowsAsync(
+        AuditBoundaryDatabase database,
+        string sql)
+    {
+        await using var connection = new NpgsqlConnection(database.PrivilegedConnection);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        await using var reader = await command.ExecuteReaderAsync();
+
+        var rows = new List<string>();
+
+        while (await reader.ReadAsync())
+        {
+            rows.Add(string.Join(
+                "|",
+                Enumerable.Range(0, reader.FieldCount).Select(i => reader.GetValue(i).ToString())));
+        }
+
+        return [.. rows.OrderBy(x => x, StringComparer.Ordinal)];
+    }
 
     private static void AssertRefused(
         CatalogueSyncResult result,

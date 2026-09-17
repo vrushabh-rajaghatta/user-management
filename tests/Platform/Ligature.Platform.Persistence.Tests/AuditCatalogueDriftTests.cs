@@ -13,9 +13,17 @@ namespace Ligature.Platform.Persistence.Tests;
 /// checking rather than assuming — a database that missed a deployment, or a
 /// reconcile that skipped a column, both show up here.
 ///
-/// Note the asymmetry: the PERMISSION catalogue is NOT reconciled. PRV-C2 is
-/// still unimplemented, so adding a permission changes nothing for an existing
-/// database, and CatalogueDriftTests covers that hazard for real.
+/// The asymmetry this note used to describe is GONE. It read "the PERMISSION
+/// catalogue is NOT reconciled, PRV-C2 is still unimplemented", which stopped
+/// being true when catalogue synchronisation landed: both catalogues are now
+/// reconciled on every deployment, each by its own step and its own role — the
+/// event catalogue by Ligature.AuditSchema as audit_owner, the permission
+/// catalogue by Ligature.CatalogueSync as migration_role.
+///
+/// The two differ in what they may do about drift, and that difference is the
+/// point. This one upserts whatever the release declares. The permission
+/// catalogue refuses anything that would remove, reactivate or weaken existing
+/// authorization, because its rows decide what people are allowed to do.
 ///
 /// A drift here is more than a stale row. The catalogue is what AR4 and AR5
 /// resolve against and what behaviour 13 will copy onto every record, so a
