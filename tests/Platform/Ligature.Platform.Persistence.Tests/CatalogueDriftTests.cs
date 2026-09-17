@@ -5,9 +5,19 @@ namespace Ligature.Platform.Persistence.Tests;
 
 /// <summary>
 /// PRV-C1 seeds the catalogues once and then no-ops forever, so a provisioned
-/// database silently keeps the values it was seeded with. Editing a catalogue
-/// in code therefore causes drift that nothing else reports. These tests read
-/// the deployed rows and compare them against what the code would seed today.
+/// database keeps the values it was seeded with. These tests read the deployed
+/// rows and compare them against what the code would seed today.
+///
+/// PRV-C2 now provides the cure, and these remain the POSTCONDITION of it: the
+/// deployed catalogue matches the release-controlled one. A failure here still
+/// means what it always meant — this database has not been reconciled with the
+/// release — but the remedy is no longer hand-written SQL:
+///
+///     dotnet run --project src/Tools/Ligature.CatalogueSync
+///
+/// Detection and convergence are deliberately separate. These tests prove the
+/// state; CatalogueSynchronisationTests proves that synchronisation reaches it,
+/// and that drift it may not resolve is refused instead.
 ///
 /// Target database comes from LIGATURE_CONNECTION. These tests FAIL rather
 /// than skip when PostgreSQL is unreachable — see TestDatabase.

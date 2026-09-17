@@ -22,6 +22,8 @@ const OVERLAY = path.join(REPO_ROOT, "compose.dev.yaml");
 
 const DOCKERIGNORE = path.join(REPO_ROOT, ".dockerignore");
 
+const DOCKERFILE = path.join(REPO_ROOT, "docker", "Dockerfile");
+
 interface ComposeHealthcheck {
   readonly test?: readonly string[] | string;
   readonly interval?: string;
@@ -29,8 +31,13 @@ interface ComposeHealthcheck {
   readonly start_period?: string;
 }
 
+interface ComposeDependency {
+  readonly condition?: string;
+}
+
 interface ComposeService {
   readonly build?: { readonly target?: string };
+  readonly depends_on?: Readonly<Record<string, ComposeDependency>>;
   readonly ports?: readonly string[];
   readonly volumes?: readonly string[];
   readonly environment?: Readonly<Record<string, string>>;
@@ -99,6 +106,82 @@ describe("the base Compose file", () => {
    */
   it("declares no web service, because development is an overlay", () => {
     expect(Object.keys(read(BASE).services ?? {})).not.toContain("web");
+  });
+});
+
+/**
+ * PRV-C2's deployment step (docs/requirements.md). It lives in the BASE file,
+ * not the overlay: reconciling a release's catalogue with the database it is
+ * deployed against is what a deployment does, not a convenience for developers.
+ *
+ * The chain it belongs to, and the reason the order is not arbitrary:
+ *
+ *     roles -> migrator -> audit-schema -> catalogue-sync -> host
+ *
+ * audit-schema first, because it deploys both the corrected
+ * PermissionCatalogUpdated definition the synchronisation records itself with
+ * and the 005 privileges without which it could not record anything. The host
+ * last, because a refused synchronisation must stop the deployment.
+ */
+describe("catalogue synchronisation in the deployment chain", () => {
+  const base = read(BASE);
+
+  const sync = base.services?.["catalogue-sync"];
+
+  const dockerfile = readFileSync(DOCKERFILE, "utf8");
+
+  it("is a step in the base file, because it is part of deploying", () => {
+    expect(sync).toBeDefined();
+    expect(sync?.build?.target).toBe("catalogue-sync");
+  });
+
+  /**
+   * PE2 puts catalogue writes under a migration role. provisioning_role's
+   * catalogue privileges were deliberately removed by audit script 004, so
+   * running this as that role would both break and undo a decision.
+   */
+  it("connects as the migration role, and as nothing else", () => {
+    // The anchor is resolved by the parser, so this reads the credential the
+    // container is actually given rather than the alias it was written as.
+    const connection = sync?.environment?.LIGATURE_CONNECTION ?? "";
+
+    expect(connection).toContain("Username=migration_role");
+    expect(connection).not.toContain("provisioning_role");
+    expect(connection).not.toContain("app_role");
+  });
+
+  it("runs after the audit schema has completed", () => {
+    expect(sync?.depends_on?.["audit-schema"]?.condition).toBe("service_completed_successfully");
+  });
+
+  /**
+   * FAIL CLOSED, and this is the deployment-level expression of it. A refusal
+   * exits 2 and an operational failure exits 3; Compose treats both as "did not
+   * complete successfully", so neither starts the API. Serving against a
+   * catalogue state the release has determined is unsafe is the outcome this
+   * prevents.
+   */
+  it("gates the host, which no longer depends on the audit schema directly", () => {
+    const host = base.services?.host;
+
+    expect(host?.depends_on?.["catalogue-sync"]?.condition).toBe("service_completed_successfully");
+    expect(host?.depends_on?.["audit-schema"]).toBeUndefined();
+  });
+
+  /**
+   * The image has to contain the executable the entry point names. A target
+   * that copies from a publish output nobody wrote produces a container that
+   * starts and immediately cannot find its DLL — which looks like a runtime
+   * fault rather than a build one.
+   */
+  it("publishes the tool into the output its target copies from", () => {
+    expect(dockerfile).toContain("--output /out/catalogue-sync");
+    expect(dockerfile).toContain("COPY --from=build /out/catalogue-sync ./");
+    expect(dockerfile).toContain('ENTRYPOINT ["dotnet", "Ligature.CatalogueSync.dll"]');
+  });
+
+  it("restores the tool's project, so the publish is not resolving it by accident", () => {
+    expect(dockerfile).toContain("dotnet restore src/Tools/Ligature.CatalogueSync/Ligature.CatalogueSync.csproj");
   });
 });
 

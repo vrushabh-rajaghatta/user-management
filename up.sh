@@ -251,7 +251,7 @@ echo "==> Proving it is actually up."
 
 failed=0
 
-for step in roles migrator audit-schema; do
+for step in roles migrator audit-schema catalogue-sync; do
     code="$(exit_code_of "$step")"
 
     if [ "$code" = "0" ]; then

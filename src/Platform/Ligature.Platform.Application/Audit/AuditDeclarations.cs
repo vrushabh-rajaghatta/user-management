@@ -151,6 +151,15 @@ public static class AuditDeclarations
             [typeof(PlatformProvisioning)] = new(
                 "UserManagement",
                 ["TenantProvisioned"]),
+
+            // PRV-C2 — catalogue synchronisation, emitted by the sync tool on
+            // its own connection rather than by a command. ONE code, because
+            // the event is about the synchronisation operation: a run emits a
+            // single record whether it inserted, changed nothing, or refused.
+            // Listed here so the start-time check covers it.
+            [typeof(CatalogueSynchronisation)] = new(
+                "UserManagement",
+                ["PermissionCatalogUpdated"]),
         };
 
     public static AuditDeclaration? For(Type commandType)
@@ -198,9 +207,19 @@ public static class AuditDeclarations
 public sealed record AuditDeclaration(string OwningContext, IReadOnlyList<string> Codes);
 
 /// <summary>
-/// A marker for the one emitter that is not a command: PRV-C1, which writes
+/// A marker for an emitter that is not a command: PRV-C1, which writes
 /// TenantProvisioned from the provisioning tool on its own transaction.
 /// </summary>
 public static class PlatformProvisioning
+{
+}
+
+/// <summary>
+/// The second emitter that is not a command: PRV-C2, which writes
+/// PermissionCatalogUpdated from the catalogue synchronisation tool on its own
+/// connection — independently of the catalogue transaction, so a refused
+/// synchronisation keeps the evidence of its refusal.
+/// </summary>
+public static class CatalogueSynchronisation
 {
 }

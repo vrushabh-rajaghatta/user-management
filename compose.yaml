@@ -133,6 +133,35 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # ------------------------------------------------------ catalogue (PRV-C2)
+
+  # Reconciles the release's permission, role and grant catalogue with the
+  # database. ProvisionAsync seeds it once, on first provision, and then never
+  # again — so without this step a permission a release adds reaches no existing
+  # tenant, silently.
+  #
+  # AFTER audit-schema, which deploys the corrected PermissionCatalogUpdated
+  # definition and the 005 privileges this needs to record what it did. BEFORE
+  # the host, which depends on it completing successfully: a refused
+  # synchronisation must stop the deployment rather than leave the API serving
+  # against a catalogue state the release has determined is unsafe. Fail closed.
+  #
+  # migration_role, per PE2. Exit 2 is a refusal — the tool decided the database
+  # violates the reconciliation policy — and exit 3 is an operational failure.
+  # Compose treats both the same way here, which is correct: neither may start
+  # the host.
+  catalogue-sync:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: catalogue-sync
+    environment:
+      LIGATURE_CONNECTION: *migration-conn
+    depends_on:
+      audit-schema:
+        condition: service_completed_successfully
+    restart: "no"
+
   # --------------------------------------------------------------- host
 
   host:
@@ -175,7 +204,7 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      audit-schema:
+      catalogue-sync:
         condition: service_completed_successfully
     restart: unless-stopped
 
