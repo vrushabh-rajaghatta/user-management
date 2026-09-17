@@ -546,7 +546,7 @@ The decisions the conceptual contract left open, settled from implementation evi
 
 A recognised parameter is refused when it is:
 
-- **malformed** — not an integer, or supplied more than once (`page=abc`, `page=1&page=2`); refused where the request is bound, since there is no value to hand on;
+- **malformed** — not representable as the query's accepted integer parameter type, or supplied more than once (`page=abc`, `page=2147483648`, `page=1&page=2`); refused where the request is bound, since there is no value to hand on. A value that is mathematically an integer but does not fit the accepted type is malformed, not out of range;
 - **out of range** — `page` below 1, `pageSize` below 1 or above 100; refused by the query itself, so the bound holds for every caller of the query and not only for HTTP.
 
 Both are an invalid request. Parameters are bound as text and parsed explicitly rather than by framework binding, because framework binding refuses a malformed integer with an empty-bodied `400` that the host's error mapping never sees — a second error shape for the same kind of failure.
@@ -568,6 +568,8 @@ Both are an invalid request. Parameters are bound as text and parsed explicitly 
 
 A response type specific to this query. `pageSize` is the size applied, so a caller that omitted it sees the default. Property names follow the host's JSON conventions (camel case).
 
+**`email` may be `null`.** The column is nullable and no database constraint requires a human user to have an address, although every current creation path supplies one. A row with no address is represented as `"email": null`; the query does not pretend the database guarantees what it does not.
+
 #### Refusals
 
 The existing exception model, unchanged:
@@ -578,7 +580,16 @@ The existing exception model, unchanged:
 | Caller lacks `user.read` | `400` | `BusinessRuleViolationException` — as a command's authorization refusal is today. Distinguishing the two remains the known gap *Authorization failures are not distinguishable from validation failures* |
 | Invalid recognised parameter | `400` | the host's `{ "error": … }` body |
 
-A query has no pipeline, so the handler establishes both conditions itself, in that order — authentication, then authorization — before any read. Authorization consumes `IsAllowed` only.
+A query has no pipeline, so the handler establishes these itself, **in this order**:
+
+1. **Authenticate** — no established caller is refused.
+2. **Authorize `user.read`** — a caller without it is refused.
+3. **Validate** `page` and `pageSize` ranges.
+4. **Read.**
+
+Authorization precedes parameter validation deliberately: a caller not entitled to the list receives the authorization refusal whatever parameters it sent, and learns nothing about which values are valid. Authorization consumes `IsAllowed` only.
+
+The order governs the *range* of a value. A *malformed* parameter is refused where the request is bound, before the handler runs and therefore before authentication: there is no value to hand on. That refusal discloses only the request's syntax, which this contract publishes, and it matches the existing endpoints, which refuse a missing required field at binding for any caller.
 
 #### Page-size values
 
