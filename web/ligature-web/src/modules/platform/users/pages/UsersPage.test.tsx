@@ -510,7 +510,10 @@ describe("resetting a user's password", () => {
       "This user's password cannot be reset by an administrator.",
     );
     expect(screen.getByRole("dialog", { name: "Reset password for Ada Lovelace" })).toBeInTheDocument();
-    expect(screen.queryByRole("status")).toBeNull();
+
+    // The live region exists before anything is announced — that is what makes
+    // an announcement reliable — so a refusal leaves it present and empty.
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
   });
 
   it("is busy while sending, and sends once however often confirm is pressed", async () => {
