@@ -323,13 +323,13 @@ The write path is the correction that matters: a `Transactional` record would be
 
 **`AuditEventCatalogue.Version` is not bumped, and must not be.** It is a whole-catalogue revision identifier, not a per-event one: `EventTypeSeed.Version` returns that same constant, so raising it would insert 49 new event-type rows at version 2, deactivate all 49 version-1 rows, and write every future audit record against `(code, 2)`. Propagation does not depend on it either — `AuditCatalogueSeeder` upserts every seed unconditionally on each `audit-schema` run, so the corrected definition reaches existing databases on the next deployment. The constant's documented consumers are `TenantProvisioned`'s payload and AUD-C3's future comparison.
 
-## User list — row projection, endpoint, pagination and sorting
+## User list — row projection, endpoint, pagination, sorting and filtering
 
 **Requirement ID:** Pending assignment under the project's query-requirement numbering convention; **implementation must not begin until the requirement has a stable ID.**
 
 *Identifier Format* defines only the `-C` family for commands, and no query convention exists yet. One is not invented locally for this entry: a story that needs an ID asks the owner (`AGENTS.md` §16).
 
-**Status:** Approved as a partial contract — the row projection, the endpoint and identifier semantics, the pagination model, and sorting. All decided 2026-09-17 by owner decision. **Not fully frozen:** the requirement has no stable ID, and filtering and the response envelope are **not yet decided**. Not implemented.
+**Status:** Approved as a partial contract — the row projection, the endpoint and identifier semantics, the pagination model, sorting, and filtering. All decided 2026-09-17 by owner decision; the conceptual contract is complete. **Not fully frozen:** the requirement has no stable ID. The remaining open items — wire parameter names, the response envelope, numeric page limits, the invalid-request status and the query and index implementation — are resolved in the implementation contract, not by further design gates. Not implemented.
 
 ### Requirement
 
@@ -492,6 +492,37 @@ What this does **not** decide:
 - **The wider difference between the deployment and test database images.** Only its effect on this ordering is resolved here.
 - Wire parameter names, the response shape, numeric page limits and the invalid-request status, as before.
 
+### Filtering
+
+> **No filtering or search in this version.** `GET /api/users` returns the complete set of human users, subject to the frozen pagination rules and default ordering. No request parameter may narrow the result set.
+
+The decision rests on the absence of a workflow, not on the absence of a filter:
+
+- **No administrator workflow requires finding a user by name or email.** Every user-scoped administrator command is addressed by an identifier — `UserId` for password reset and sign-out-everywhere, `UserIdentityId` for unlock — and none accepts a searchable value. Before this list, the only way an administrator obtained a `UserId` was by creating the user.
+- **The list is the first mechanism that makes those operations reachable.** No client page yet starts a user-scoped administrator action, so no existing interface needs to locate a user.
+- **The only lookup by a personal value is not a precedent.** `IUserIdentityRepository.FindPasswordResetCandidatesAsync` serves the anonymous, self-service password reset request: an exact match, anti-enumeration by design, carried in a `POST` body. It locates one's own account, not somebody else's.
+- **Filtering is additive later.** A new optional request parameter does not break a client of this contract.
+
+`docs/frontend-architecture.md` defines how a filtered list is *presented* — distinct empty-state wording (§11), and a filters bar that collapses into a sheet (§14). Those are presentation conventions for a list that has filters; they do not establish that this one needs any.
+
+#### Future filters
+
+> **A future user-list filter may only operate on fields present in the row projection. This constraint does not make any row field filterable by itself.**
+
+A filter on a field outside the row discloses it more directly than sorting would: `status=Inactive` names exactly who is inactive through which rows come back, although status is not a column.
+
+#### Known consequence for a future filter
+
+**Request query strings reach the host's logs.** The host configures no logging, so ASP.NET Core's default request logging writes the full request URL, query string included, at Information level. Observed against the running host:
+
+```text
+Request starting HTTP/1.1 GET http://localhost:8080/api/probe?email=probe.person%40example.com
+```
+
+A name or email filter carried in a `GET` query string would therefore write personal data to the host's logs on every use. This does not affect this version — the pagination parameters carry no personal data — and it is **not** a prohibition on future filtering. A future filter's own decision must address how its values travel; changing request handling or logging is a legitimate answer.
+
+The logging behaviour itself is a platform finding, independent of this read, and is not changed here.
+
 ### Lifecycle status
 
 `Status` is **not** in the row.
@@ -535,10 +566,11 @@ A field joins the row only with the same evidence that admitted these three:
 - **P11** A page beyond the last is empty and states that no further page exists.
 - **P12** The list offers no client-controlled sort field or sort direction: no request parameter changes the order, and every request returns rows in the default order. How an unrecognised parameter is treated is not decided here.
 - **P13** The default order is the same in every environment the platform runs in, including where the database's default collation differs.
+- **P14** No request parameter narrows the result set: every request pages over the complete set of human users.
 
 ### Notes
 
-**Not decided here:** filtering, the response envelope, the refusal status code, and the query and result type names. Also not decided: a detail route, `Location` on create, a path from a row to unlock, and correlating a row with the caller.
+**Not decided here:** the response envelope, the refusal status code, and the query and result type names. Also not decided: a detail route, `Location` on create, a path from a row to unlock, and correlating a row with the caller.
 
 ---
 
