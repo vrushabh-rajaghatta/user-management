@@ -434,7 +434,7 @@ Nothing depends on the match. The server owns the rules it would inform: an admi
 
 **Why no total.** Paging forward and back needs only `hasMore`. A total would disclose the tenant's population to every holder of `user.read`, and would add a count to every request. It may be added later if a client demonstrates a need, under the same evidence as any other field.
 
-**Why this order.** The list is read by a person, and `DisplayName` is the field a row is recognised by, so alphabetical order makes page navigation predictable. `DisplayName` is not unique, so `UserId` makes the order total; without a total order, pages overlap or drop rows even when nothing changes.
+**Why this order.** The list is read by a person, and `DisplayName` is the field a row is recognised by, so a stable, human-scannable order makes page navigation predictable. `DisplayName` is not unique, so `UserId` makes the order total; without a total order, pages overlap or drop rows even when nothing changes.
 
 > **The list does not promise a snapshot across separate requests.** A user created between two page requests can cause rows to shift between pages.
 
