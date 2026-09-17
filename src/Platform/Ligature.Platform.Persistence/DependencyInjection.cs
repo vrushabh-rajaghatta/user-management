@@ -81,6 +81,9 @@ public static class DependencyInjection
         services.AddScoped<
             IAuthenticatedCallerReader, AuthenticatedCallerReader>();
 
+        // USR-Q1 — the user list read.
+        services.AddScoped<IUserListReader, UserListReader>();
+
         // CRD-C1
         services.AddSingleton<IPasswordHasher, PasswordHasher>();
 

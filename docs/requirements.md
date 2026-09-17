@@ -25,11 +25,13 @@ Rules:        AU3 AU8 AU11  UI5 UI7 UI8  UT4 UT5 UT7  UR3 UR5 UR7 UR8 UR9 UR10 U
 
 ## Identifier Format
 
-Two families are in use.
+Three families are in use.
 
 **Command / capability IDs** — `<AREA>-C<n>`, e.g. `USR-C1`, `PRV-C3`. Areas observed so far: `PRV` (provisioning), `USR` (user), `CRD` (credential / token lifecycle), `AUT` (role assignment and authorization), `IDN` (identity), `SES` (session / authentication). Define an area here before using a new one.
 
 `CRD` and `SES` are deliberately distinct: `CRD` owns credential and token lifecycle, `SES` owns sessions and authentication.
+
+**Query IDs** — `<AREA>-Q<n>`, e.g. `USR-Q1`. The same areas as commands; `Q` means query and `C` means command, so a read is not forced into the command catalogue. Numbered independently of the area's commands: `USR-Q1` and `USR-C1` are unrelated.
 
 **Rule / constraint IDs** — `<TABLE><n>`, e.g. `AU3`, `UI7`. The prefix names the table the rule governs:
 
@@ -323,13 +325,11 @@ The write path is the correction that matters: a `Transactional` record would be
 
 **`AuditEventCatalogue.Version` is not bumped, and must not be.** It is a whole-catalogue revision identifier, not a per-event one: `EventTypeSeed.Version` returns that same constant, so raising it would insert 49 new event-type rows at version 2, deactivate all 49 version-1 rows, and write every future audit record against `(code, 2)`. Propagation does not depend on it either — `AuditCatalogueSeeder` upserts every seed unconditionally on each `audit-schema` run, so the corrected definition reaches existing databases on the next deployment. The constant's documented consumers are `TenantProvisioned`'s payload and AUD-C3's future comparison.
 
-## User list — row projection, endpoint, pagination, sorting and filtering
+## USR-Q1 — User List Query
 
-**Requirement ID:** Pending assignment under the project's query-requirement numbering convention; **implementation must not begin until the requirement has a stable ID.**
+**Requirement ID:** `USR-Q1`, assigned by the owner 2026-09-17 — the first ID in the query family (*Identifier Format*).
 
-*Identifier Format* defines only the `-C` family for commands, and no query convention exists yet. One is not invented locally for this entry: a story that needs an ID asks the owner (`AGENTS.md` §16).
-
-**Status:** Approved as a partial contract — the row projection, the endpoint and identifier semantics, the pagination model, sorting, and filtering. All decided 2026-09-17 by owner decision; the conceptual contract is complete. **Not fully frozen:** the requirement has no stable ID. The remaining open items — wire parameter names, the response envelope, numeric page limits, the invalid-request status and the query and index implementation — are resolved in the implementation contract, not by further design gates. Not implemented.
+**Status:** Approved and frozen — the row projection, the endpoint and identifier semantics, pagination, sorting, filtering, and the implementation contract. All decided 2026-09-17 by owner decision. Not yet implemented.
 
 ### Requirement
 
@@ -420,7 +420,7 @@ Nothing depends on the match. The server owns the rules it would inform: an admi
 
 | | Contract |
 | --- | --- |
-| **Request** | The caller supplies a page number, counted from 1, and may supply a page size. |
+| **Request** | The caller may supply a page number, counted from 1, and may supply a page size. An omitted page number means page 1. |
 | **Page size** | Chosen by the caller, up to a server-enforced maximum. When the caller supplies none, the server applies a default no larger than the maximum. **The server never executes an unbounded user-list query based on caller input.** |
 | **Invalid values** | A page number or page size that is not a positive integer, or a page size above the maximum, is **refused as an invalid request** — never silently corrected. `0`, a negative value and an oversized value are not turned into something the caller did not ask for. |
 | **Response** | The result identifies the page returned and states whether another page exists (`hasMore`). **The total number of users is not returned.** |
@@ -523,6 +523,104 @@ A name or email filter carried in a `GET` query string would therefore write per
 
 The logging behaviour itself is a platform finding, independent of this read, and is not changed here.
 
+### Implementation contract
+
+The decisions the conceptual contract left open, settled from implementation evidence. Nothing here introduces a new exception type, authorization abstraction, query pipeline or generic pagination type.
+
+| | Contract |
+| --- | --- |
+| **Endpoint** | `GET /api/users` |
+| **Authorization** | An authenticated caller holding `user.read` |
+| **Parameters** | `page` — optional, default `1`. `pageSize` — optional, default `25`, maximum `100` |
+| **Unknown parameters** | Ignored. `/api/users`, `/api/users?sortBy=email` and `/api/users?whatever=abc` return the same rows in the same order |
+| **Recognised parameters** | Validated: an invalid value is refused as below, never ignored |
+| **Ordering** | `DisplayName` ascending under `COLLATE "unicode"`, then `UserId` ascending |
+| **Filtering** | None; human users only |
+| **Pagination** | Offset; `hasMore`; no total |
+| **Audit** | None |
+| **Index** | None in this version |
+
+#### Request parameters
+
+**Unknown parameters are ignored; recognised parameters are validated.** No strict mechanism rejecting unknown query parameters is introduced for this endpoint.
+
+A recognised parameter is refused when it is:
+
+- **malformed** — not representable as the query's accepted integer parameter type, or supplied more than once (`page=abc`, `page=2147483648`, `page=1&page=2`); refused where the request is bound, since there is no value to hand on. A value that is mathematically an integer but does not fit the accepted type is malformed, not out of range;
+- **out of range** — `page` below 1, `pageSize` below 1 or above 100; refused by the query itself, so the bound holds for every caller of the query and not only for HTTP.
+
+Both are an invalid request. Parameters are bound as text and parsed explicitly rather than by framework binding, because framework binding refuses a malformed integer with an empty-bodied `400` that the host's error mapping never sees — a second error shape for the same kind of failure.
+
+**Offset beyond representation.** If `(page − 1) × pageSize` cannot be represented by the query implementation's offset type, the result is an empty page with `hasMore: false`, and no query is executed.
+
+#### Response
+
+```json
+{
+  "users": [
+    { "userId": "…", "displayName": "…", "email": "…" }
+  ],
+  "page": 1,
+  "pageSize": 25,
+  "hasMore": false
+}
+```
+
+A response type specific to this query. `pageSize` is the size applied, so a caller that omitted it sees the default. Property names follow the host's JSON conventions (camel case).
+
+**`email` may be `null`.** The column is nullable and no database constraint requires a human user to have an address, although every current creation path supplies one. A row with no address is represented as `"email": null`; the query does not pretend the database guarantees what it does not.
+
+#### Refusals
+
+The existing exception model, unchanged:
+
+| Condition | Status | Mechanism |
+| --- | --- | --- |
+| No established caller | `401` | `AuthenticationFailedException`, with the host's fixed message |
+| Caller lacks `user.read` | `400` | `BusinessRuleViolationException` — as a command's authorization refusal is today. Distinguishing the two remains the known gap *Authorization failures are not distinguishable from validation failures* |
+| Invalid recognised parameter | `400` | the host's `{ "error": … }` body |
+
+A query has no pipeline, so the handler establishes these itself, **in this order**:
+
+1. **Authenticate** — no established caller is refused.
+2. **Authorize `user.read`** — a caller without it is refused.
+3. **Validate** `page` and `pageSize` ranges.
+4. **Read.**
+
+Authorization precedes parameter validation deliberately: a caller not entitled to the list receives the authorization refusal whatever parameters it sent, and learns nothing about which values are valid. Authorization consumes `IsAllowed` only.
+
+The order governs the *range* of a value. A *malformed* parameter is refused where the request is bound, before the handler runs and therefore before authentication: there is no value to hand on. That refusal discloses only the request's syntax, which this contract publishes, and it matches the existing endpoints, which refuse a missing required field at binding for any caller.
+
+#### Page-size values
+
+`25` by default and `100` at most. **These are judgements supported by evidence, not values the evidence establishes.** Measured on the deployment image (`postgres:18-alpine`), reading `pageSize + 1` rows to determine `hasMore`, without an index:
+
+| Human users | First page | Deep page (offset 89,900) |
+| --- | --- | --- |
+| 1,000 | 0.6 ms (top-N heapsort, 52 kB) | — |
+| 100,000 | 11 ms (parallel scan, top-N heapsort) | 96 ms (sort spills 12 MB to disk) |
+
+A row is three short strings, so a full page is small. `25` is a screen of a data table; `100` keeps the first-page read in single-digit to low-double-digit milliseconds at a hundred thousand users.
+
+#### Query
+
+One statement per page, with no count:
+
+```sql
+SELECT id, display_name, email
+FROM app_user
+WHERE actor_type = 'Human'
+ORDER BY display_name COLLATE "unicode", id
+OFFSET (page − 1) × pageSize
+LIMIT pageSize + 1
+```
+
+The extra row determines `hasMore` and is not returned.
+
+#### No index in this version
+
+With the index `(display_name COLLATE "unicode", id) WHERE actor_type = 'Human'`, the same 100,000-user measurements were 0.07 ms for the first page and 22 ms for the deep page — the index scan still walks every skipped row. The unindexed plan is already fast at plausible tenant sizes, and the index is not free: under an explicit ICU collation it must be rebuilt when ICU's version changes. It is not added in advance; tenant-scale evidence reopens it.
+
 ### Lifecycle status
 
 `Status` is **not** in the row.
@@ -570,7 +668,7 @@ A field joins the row only with the same evidence that admitted these three:
 
 ### Notes
 
-**Not decided here:** the response envelope, the refusal status code, and the query and result type names. Also not decided: a detail route, `Location` on create, a path from a row to unlock, and correlating a row with the caller.
+**Not decided here:** a detail route, `Location` on create, a path from a row to unlock, and correlating a row with the caller.
 
 ---
 
