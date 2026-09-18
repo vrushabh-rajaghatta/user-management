@@ -177,6 +177,13 @@ public sealed class UserIdentityRepository : IUserIdentityRepository
                 x => x.Id == userIdentityId, cancellationToken);
     }
 
-    public Task<IReadOnlyList<UserIdentity>> FindByUserIdAsync(UserId userId, CancellationToken cancellationToken)
-        => throw new NotImplementedException();
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<UserIdentity>> FindByUserIdAsync(UserId userId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(userId);
+
+        return await _dbContext.Set<UserIdentity>()
+            .Where(x => x.UserId == userId)
+            .ToListAsync(cancellationToken);
+    }
 }

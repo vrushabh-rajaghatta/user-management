@@ -29,6 +29,13 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
                     "ck_app_user_deactivation_pair",
                     "(\"deactivated_at\" IS NULL) = (\"deactivated_by\" IS NULL)");
 
+                // USR-C4/C5 D12: status and stamp agree. With the pair check
+                // above, Inactive without a stamp and Active with one are both
+                // refused, whatever wrote them.
+                table.HasCheckConstraint(
+                    "ck_app_user_status_deactivation",
+                    "(\"status\" = 'Inactive') = (\"deactivated_at\" IS NOT NULL)");
+
                 table.HasCheckConstraint(
                     "ck_app_user_system_not_deactivated",
                     "\"actor_type\" <> 'System' OR \"deactivated_at\" IS NULL");

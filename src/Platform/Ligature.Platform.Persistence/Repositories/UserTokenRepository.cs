@@ -157,6 +157,28 @@ public sealed class UserTokenRepository : IUserTokenRepository
             : null;
     }
 
-    public Task<int> InvalidateOutstandingForUserAsync(UserId userId, DateTimeOffset now, CancellationToken cancellationToken)
-        => throw new NotImplementedException();
+    /// <inheritdoc />
+    /// <remarks>
+    /// Outstanding means what InvalidatePriorAsync means — unused and not
+    /// already invalidated, expired or not. The two types are NAMED, not
+    /// implied by "every type": a token type added later (email
+    /// re-verification, say) decides its own fate on deactivation rather than
+    /// being swept in here unnoticed. One statement, in the caller's
+    /// transaction, so a fault after it rolls it back with the cascade.
+    /// </remarks>
+    public async Task<int> InvalidateOutstandingForUserAsync(UserId userId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(userId);
+
+        return await _dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE user_token
+            SET    invalidated_at = {now}
+            WHERE  user_identity_id IN (SELECT id FROM user_identity WHERE user_id = {userId.Value})
+              AND  token_type IN ('Activation', 'PasswordReset')
+              AND  used_at IS NULL
+              AND  invalidated_at IS NULL
+            """,
+            cancellationToken);
+    }
 }

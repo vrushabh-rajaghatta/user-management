@@ -64,7 +64,7 @@ public sealed class UserLifecycleCommandTests
         var unitOfWork = new CountingUnitOfWork();
 
         var handler = new ReactivateUserCommandHandler(
-            Untouched<IExecutionContext>(), Untouched<IClock>(), unitOfWork,
+            unitOfWork,
             Untouched<IUserRepository>(), Untouched<IUserIdentityRepository>(), Untouched<IAuditEvents>());
 
         var refusal = await Assert.ThrowsAsync<BusinessRuleViolationException>(() => handler.Handle(

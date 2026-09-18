@@ -31,6 +31,9 @@ internal static class SessionRevocations
     /// <summary>SES-C4 SignOutEverywhere.</summary>
     internal const string SignOutEverywhere = "SignOutEverywhere";
 
+    /// <summary>USR-C4 DeactivateUser's cascade (D4).</summary>
+    internal const string UserDeactivated = "UserDeactivated";
+
     /// <summary>
     /// Records a revocation that has already happened on <paramref name="session"/>
     /// — call only when UserSession.Revoke returned true, so a record never
@@ -40,7 +43,8 @@ internal static class SessionRevocations
         IAuditEvents auditEvents,
         UserSession session,
         UserId owner,
-        string explanation)
+        string explanation,
+        AuditEventDeclaration? cause = null)
     {
         ArgumentNullException.ThrowIfNull(auditEvents);
         ArgumentNullException.ThrowIfNull(session);
@@ -53,7 +57,7 @@ internal static class SessionRevocations
                 + "session that has not been revoked.");
         }
 
-        auditEvents.Emit("SessionRevoked", version: 1)
+        var declaration = auditEvents.Emit("SessionRevoked", version: 1)
             .Primary("Session", session.Id.Value)
             .Ref("Identity", session.UserIdentityId.Value, role: "Target")
             .Ref("User", owner.Value, role: "Subject")
@@ -70,5 +74,9 @@ internal static class SessionRevocations
                 RevocationReason = session.RevocationReason,
             })
             .WithReason(explanation);
+
+        // A cascade step names the event that started it (behaviour 18).
+        if (cause is not null)
+            declaration.CausedBy(cause);
     }
 }

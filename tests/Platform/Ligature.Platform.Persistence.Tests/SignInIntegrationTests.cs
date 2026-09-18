@@ -585,12 +585,18 @@ public sealed class SignInIntegrationTests
     private static Task SetIdentityStatusAsync(
         UserIdentityId identityId, string status)
         => ExecuteAsync(
-            "UPDATE user_identity SET status = @value WHERE id = @id",
+            // With its stamp: the database refuses the two apart (USR-C4/C5 D12).
+            "UPDATE user_identity SET status = @value, "
+            + "deactivated_at = CASE WHEN @value = 'Inactive' THEN now() END, "
+            + "deactivated_by = CASE WHEN @value = 'Inactive' THEN '00000000-0000-0000-0000-000000000001'::uuid END WHERE id = @id",
             identityId.Value, ("value", status));
 
     private static Task SetUserStatusAsync(UserId userId, string status)
         => ExecuteAsync(
-            "UPDATE app_user SET status = @value WHERE id = @id",
+            // With its stamp: the database refuses the two apart (USR-C4/C5 D12).
+            "UPDATE app_user SET status = @value, "
+            + "deactivated_at = CASE WHEN @value = 'Inactive' THEN now() END, "
+            + "deactivated_by = CASE WHEN @value = 'Inactive' THEN '00000000-0000-0000-0000-000000000001'::uuid END WHERE id = @id",
             userId.Value, ("value", status));
 
     private static Task DeleteCredentialAsync(UserIdentityId identityId)

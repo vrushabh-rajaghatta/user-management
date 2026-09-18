@@ -382,6 +382,12 @@ public sealed class UserLifecycleIntegrationTests : IClassFixture<ActivationData
     /// <summary>
     /// K1, the other order — deactivation takes the lock before reading the
     /// assignments, so one committed while it waited is revoked with the rest.
+    ///
+    /// clock_timestamp(), not now(): the assignment is made at the real moment
+    /// of the insert, AFTER the deactivation began waiting — as a racing grant
+    /// would be. A deactivation that read its clock before the lock would then
+    /// date the revocation before the assignment, and UserRole.Revoke refuses
+    /// that.
     /// </summary>
     [Fact]
     public async Task A_deactivation_waits_for_the_users_lock_and_then_revokes_what_was_granted()
@@ -404,7 +410,7 @@ public sealed class UserLifecycleIntegrationTests : IClassFixture<ActivationData
             $"""
             INSERT INTO user_role (id, user_id, actor_type, role_id, scope_type, scope_id,
                                    effective_from, effective_to, assigned_at, assigned_by, assignment_reason)
-            SELECT '{late}', @id, 'Human', r.id, 'Global', NULL, now(), NULL, now(), @system, 'Granted while deactivation waited.'
+            SELECT '{late}', @id, 'Human', r.id, 'Global', NULL, clock_timestamp(), NULL, clock_timestamp(), @system, 'Granted while deactivation waited.'
               FROM role r WHERE r.code = 'security-administrator'
             """, target.UserId.Value);
 

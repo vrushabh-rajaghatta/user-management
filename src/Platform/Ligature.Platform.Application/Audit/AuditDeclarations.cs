@@ -2,6 +2,8 @@ using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Users.Commands.GrantRole;
+using Ligature.Platform.Application.Users.Commands.DeactivateUser;
+using Ligature.Platform.Application.Users.Commands.ReactivateUser;
 using Ligature.Platform.Application.Users.Commands.RevokeRole;
 using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
@@ -95,6 +97,18 @@ public static class AuditDeclarations
             // carrying the required reason. A refusal declares nothing.
             [typeof(GrantRoleCommand)] = new("UserManagement", ["RoleGranted"]),
             [typeof(RevokeRoleCommand)] = new("UserManagement", ["RoleRevoked"]),
+
+            // USR-C4 — the cascade, one operation caused by UserDeactivated.
+            // NOT TokenInvalidated: its frozen definition requires a
+            // SupersededBy token and deactivation issues none (D13).
+            [typeof(DeactivateUserCommand)] = new(
+                "UserManagement",
+                ["UserDeactivated", "IdentityDeactivated", "RoleRevoked", "SessionRevoked"]),
+
+            // USR-C5 — restores nothing, so only the lifecycle events.
+            [typeof(ReactivateUserCommand)] = new(
+                "UserManagement",
+                ["UserReactivated", "IdentityReactivated"]),
 
             // SES-C3 and both SES-C4 commands — SessionRevoked (n), one per
             // session actually ended, each with the caller's explanation as its

@@ -39,6 +39,13 @@ public sealed class UserRoleRepository : IUserRoleRepository
             .FirstOrDefaultAsync(x => x.Id == assignmentId, cancellationToken);
     }
 
-    public Task<IReadOnlyList<UserRole>> FindForUserAsync(UserId userId, CancellationToken cancellationToken)
-        => throw new NotImplementedException();
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<UserRole>> FindForUserAsync(UserId userId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(userId);
+
+        return await _dbContext.Set<UserRole>()
+            .Where(x => x.UserId == userId)
+            .ToListAsync(cancellationToken);
+    }
 }

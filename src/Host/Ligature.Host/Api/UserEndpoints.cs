@@ -2,6 +2,8 @@ using System.Globalization;
 using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
+using Ligature.Platform.Application.Users.Commands.DeactivateUser;
+using Ligature.Platform.Application.Users.Commands.ReactivateUser;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
 using Ligature.Platform.Application.Users.Commands.RevokeUserSessions;
@@ -121,6 +123,39 @@ public static class UserEndpoints
                 + "or the link, and the mail is the only delivery. A refusal, "
                 + "including a missing permission or an ineligible user, is 400.")
             .Produces(StatusCodes.Status202Accepted)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+
+        // USR-C4. One controlled operation, not a status change.
+        routes.MapPost("/api/users/{userId:guid}/deactivate", DeactivateAsync)
+            .WithTags("Users")
+            .WithSummary("Deactivate a user (administrator).")
+            .WithDescription(
+                "Requires a carrier, the 'user.deactivate' permission and a reason. "
+                + "In one transaction: the user and their identities become "
+                + "inactive, their live sessions and their active and future role "
+                + "assignments are revoked, and their outstanding activation and "
+                + "password-reset links stop working. Success is 204 with no body. "
+                + "An unknown, inactive or non-human user, the caller themselves, "
+                + "and a missing permission are 400.")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+
+        // USR-C5. Restores nothing: access is granted afresh.
+        routes.MapPost("/api/users/{userId:guid}/reactivate", ReactivateAsync)
+            .WithTags("Users")
+            .WithSummary("Reactivate a deactivated user (administrator).")
+            .WithDescription(
+                "Requires a carrier, the 'user.reactivate' permission and a reason. "
+                + "The user and the identities their deactivation stamped become "
+                + "active again. No role assignment, session or link is restored; "
+                + "access is granted afresh. Success is 204 with no body. An "
+                + "unknown, active or non-human user, an email address now held "
+                + "by another active user, and a missing permission are 400.")
+            .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
             .WithMetadata(new RequiresCarrier());
@@ -301,6 +336,46 @@ public static class UserEndpoints
     }
 
     private sealed record ReissueActivationLinkRequest(string? Reason);
+
+    private static async Task<IResult> DeactivateAsync(
+        Guid userId,
+        UserLifecycleRequest? request,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        if (request?.Reason is null)
+        {
+            return Results.BadRequest(
+                new { Error = "A reason is required." });
+        }
+
+        await dispatcher.SendAsync<DeactivateUserCommand, DeactivateUserResult>(
+            new DeactivateUserCommand(new UserId(userId), request.Reason),
+            cancellationToken);
+
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> ReactivateAsync(
+        Guid userId,
+        UserLifecycleRequest? request,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        if (request?.Reason is null)
+        {
+            return Results.BadRequest(
+                new { Error = "A reason is required." });
+        }
+
+        await dispatcher.SendAsync<ReactivateUserCommand, ReactivateUserResult>(
+            new ReactivateUserCommand(new UserId(userId), request.Reason),
+            cancellationToken);
+
+        return Results.NoContent();
+    }
+
+    private sealed record UserLifecycleRequest(string? Reason);
 
     private static async Task<IResult> CreateAsync(
         CreateUserRequest? request,

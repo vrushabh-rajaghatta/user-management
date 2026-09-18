@@ -311,7 +311,11 @@ internal static class AuditEventCatalogue
                 IsActive: true,
                 Origins: ["Authenticated", "System"]),
 
-            // IDN-C4, OPR-C1
+            // IDN-C4, USR-C5, OPR-C1. USR-C5 is a provenance correction: it
+            // reactivates identities (D5) and the workbook omits it. Change
+            // control is recorded; the definition below is unchanged, so no
+            // version question arises (docs/requirements.md, Known Gaps,
+            // "USR-C4/C5 change control").
             new(
                 "IdentityReactivated",
                 "UserManagement",
