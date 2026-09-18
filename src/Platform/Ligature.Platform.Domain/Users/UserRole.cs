@@ -153,6 +153,10 @@ public sealed class UserRole : Entity<UserRoleId>
             createdBy);
     }
 
+    /// <summary>AUT-Q2. RED STUB.</summary>
+    public RoleAssignmentState StateAt(DateTimeOffset now)
+        => throw new NotImplementedException("AUT-Q2 is not implemented.");
+
     public void Revoke(
         DateTimeOffset revokedAt,
         UserId revokedBy,
