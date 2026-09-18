@@ -15,7 +15,8 @@ import { UsersPage } from "./UsersPage";
  * (sign out everywhere).
  *
  * The backend contract is fixed (docs/requirements.md, USR-Q1): rows of
- * userId, displayName, email and (amendment 1) activationPending; page, pageSize
+ * userId, displayName, email, (amendment 1) activationPending and (amendment 2)
+ * status; page, pageSize
  * and hasMore; a fixed order; no total, filtering or client sorting. These tests are about how that contract
  * is presented and driven, never about reopening it.
  */
@@ -32,12 +33,14 @@ const ADA = {
   displayName: "Ada Lovelace",
   email: "ada@example.test",
   activationPending: false,
+  status: "Active" as const,
 };
 const GRACE = {
   userId: "b0000000-0000-4000-8000-00000000c0de",
   displayName: "Grace Hopper",
   email: null,
   activationPending: false,
+  status: "Active" as const,
 };
 
 /** Never activated: a local identity and no credential (USR-Q1 amendment 1). */
@@ -46,9 +49,16 @@ const KATHERINE = {
   displayName: "Katherine Johnson",
   email: "katherine@example.test",
   activationPending: true,
+  status: "Active" as const,
 };
 
-type Row = { userId: string; displayName: string; email: string | null; activationPending: boolean };
+type Row = {
+  userId: string;
+  displayName: string;
+  email: string | null;
+  activationPending: boolean;
+  status: "Active" | "Inactive";
+};
 
 interface Listing {
   readonly users: readonly Row[];

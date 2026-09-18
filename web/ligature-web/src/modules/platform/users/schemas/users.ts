@@ -10,6 +10,11 @@ import { z } from "zod";
  * activationPending (amendment 1) decides which actions a row offers and
  * nothing else. False means only "not pending": never read it as "activated",
  * "has a password" or "can sign in".
+ *
+ * status (amendment 2) is the stored lifecycle status, "Active" or "Inactive",
+ * and is independent of activationPending: all four combinations occur. It
+ * decides the Inactive marker and which actions a row offers — an affordance,
+ * never authorization. Any other value is a contract error, not a guess.
  */
 export const usersPageSchema = z.object({
   users: z.array(
@@ -18,6 +23,7 @@ export const usersPageSchema = z.object({
       displayName: z.string(),
       email: z.string().nullable(),
       activationPending: z.boolean(),
+      status: z.enum(["Active", "Inactive"]),
     }),
   ),
   page: z.number().int().positive(),

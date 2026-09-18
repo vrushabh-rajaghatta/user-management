@@ -4,6 +4,8 @@
  */
 export const userKeys = {
   all: ["users"] as const,
+  /** Every page of the list. */
+  lists: ["users", "list"] as const,
   list: (params: { page: number }) => ["users", "list", params] as const,
 
   /** Every read of one user's assignments, current and history alike. */

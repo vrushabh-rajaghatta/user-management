@@ -53,6 +53,10 @@ interface ManageRolesDialogProps {
  * role.revoke a Revoke on each Active or Future assignment. Hidden, never
  * disabled.
  *
+ * AN INACTIVE USER KEEPS THEIR HISTORY AND GETS NO GRANT FORM (USR-C4/C5 UI,
+ * U8): the server refuses a grant to them, so the form is not offered. The
+ * row's status decides it — an affordance; the server remains the authority.
+ *
  * THE STATE IS THE SERVER'S. Each row shows `state` exactly as sent; nothing
  * here derives one from the dates. After a grant or a revocation the
  * assignments are read again — nothing is manufactured client-side.
@@ -209,7 +213,7 @@ export function ManageRolesDialog({ open, user, returnFocus, onClose, onClosed }
           />
         )}
 
-        {canGrant ? <GrantRoleForm user={user} /> : null}
+        {canGrant && user.status === "Active" ? <GrantRoleForm user={user} /> : null}
 
         {revoking === undefined ? null : (
           <RevokeRoleConfirmation

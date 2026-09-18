@@ -66,6 +66,11 @@ public sealed class UserListReader : IUserListReader
                 x.DisplayName,
                 x.Email,
 
+                // USR-Q1 Amendment 2: the stored status, exactly. On the row
+                // already read, so it costs nothing and takes no part in
+                // which rows or in what order.
+                x.Status,
+
                 // USR-Q1 amendment 1 (D1), exactly and nothing broader: at
                 // least one local identity, and no credential on any identity
                 // of the user. It takes no part in which rows or in what order.
@@ -79,7 +84,7 @@ public sealed class UserListReader : IUserListReader
             .ToListAsync(cancellationToken);
 
         return rows
-            .Select(x => new UserListRow(x.Id, x.DisplayName, x.Email?.Value, x.ActivationPending))
+            .Select(x => new UserListRow(x.Id, x.DisplayName, x.Email?.Value, x.ActivationPending, x.Status))
             .ToList();
     }
 }

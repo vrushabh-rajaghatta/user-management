@@ -11,6 +11,10 @@ export const UserPermissions = {
   read: definePermission("user.read"),
   resetPassword: definePermission("user.resetpassword"),
 
+  // USR-C4 / USR-C5.
+  deactivate: definePermission("user.deactivate"),
+  reactivate: definePermission("user.reactivate"),
+
   // A session permission, used here because signing a user out everywhere is
   // started from the Users table. No sessions module exists to own it yet.
   revokeSessions: definePermission("session.revoke"),
