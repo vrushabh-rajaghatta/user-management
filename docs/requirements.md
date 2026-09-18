@@ -434,6 +434,7 @@ The projection was built up from an empty row, not cut down from the `app_user` 
 | `DisplayName` | recognition | A list of identifiers is not usable by a person |
 | `Email` | disambiguation | `DisplayName` is not unique. Once the list is the entry point for password reset and sign-out-everywhere, two users with the same display name must be distinguishable before acting on either |
 | `ActivationPending` | presentation | Amendment 1. Whether the user has never activated, so a client offers *Resend activation link* (CRD-C7) only where it can succeed. Informational; never authorization |
+| `Status` | presentation | Amendment 2. `Active` or `Inactive`, the stored lifecycle status, so a client offers the lifecycle actions (USR-C4, USR-C5) where they apply and marks inactive users. Informational; never authorization |
 
 > **`UserId` is the only identifier. `DisplayName` is presentation data used to recognise a person. `Email` is presentation and disambiguation data used to distinguish users with similar display names. Neither `DisplayName` nor `Email` is a stable identity, and clients must not use either as a user key, route identifier, cache key, equality identity, or stable user reference.**
 
@@ -453,7 +454,7 @@ Each of these stays out of the row until a named story brings the evidence below
 | --- | --- |
 | `Username` | A sign-in handle, and not required to identify a user for any row operation. `Email` already serves disambiguation |
 | `FirstName`, `LastName` | `DisplayName` serves recognition |
-| `Status` | See *Lifecycle status* below |
+| ~~`Status`~~ | **Admitted by Amendment 2** (USR-C4 and USR-C5 made it meaningful). See *Lifecycle status* below |
 | Locked | Derived from `credential.LockedUntil` against the current time; unlock is addressed by identity, not user, and is not a row operation here |
 | `UserIdentityId` | A user may hold more than one identity, so it has no single value on a user row; only unlock needs it |
 | `IdentityProvider`, `IdentityType` | Per identity, not per user; constant (`Application`, `Local`) in every current row |
@@ -712,6 +713,8 @@ With the index `(display_name COLLATE "unicode", id) WHERE actor_type = 'Human'`
 
 ### Lifecycle status
 
+> **Superseded by Amendment 2.** USR-C4 and USR-C5 made status meaningful, so `status` is in the row; see *Amendment 2 — `status`*. The text below is the original reasoning. It was correct while nothing could deactivate a user.
+
 `Status` is **not** in the row. Amendment 1 exposes exactly one derived lifecycle fact, `activationPending`, and nothing more; see below.
 
 The `user.read` permission is described as *"View user accounts and their current lifecycle status."* That description states the authority `user.read` grants; it is **not** the response schema of every read that uses it:
@@ -813,6 +816,48 @@ The outer order is the contract order again: SQL does not carry a subquery's ord
 | **Page first, then derived** (adopted) | **11 ms** | **88 ms** |
 
 Derived in the same `SELECT`, PostgreSQL hashed both existence tests over the whole of `user_identity` and `credential` on every request. Page first, each test is an index probe per returned row (26 and 101 probes). The top-N sort is unchanged, and no new index is needed.
+
+### Amendment 2 — `status`
+
+**Decided 2026-09-18 (U1).** USR-C4 and USR-C5 made lifecycle status meaningful. Before them nothing could deactivate a user, so the value read `Active` on every row, and *Lifecycle status* above left the field out on exactly that ground. It left the decision to *"a later read that exposes lifecycle information"*. This amendment makes that decision for the list.
+
+#### Definition
+
+> **`status` is the user's stored lifecycle status, `app_user.status`, exactly: `"Active"` or `"Inactive"`.**
+
+It is not derived and not combined with anything. In particular:
+
+- **It is independent of `activationPending`.** All four combinations occur: active and pending, active and activated, inactive and pending, inactive and activated. Neither field implies the other, and a client infers nothing about one from the other.
+- **It is not "locked".** A lockout is credential state, derived per identity, and stays excluded.
+- **It carries no deactivation details.** Who deactivated the user, when, and why stay out of the row as *"security internals"* (*Excluded fields*). They are in the audit trail.
+
+#### Authority: `user.read` is sufficient
+
+`user.read` is described as *"View user accounts and their current lifecycle status."* The frozen command catalogue's own reads agree: its admin list filters by `Status` and its detail read returns it, both under `user.read`. Every `user.read` holder sees the field, including `access-reviewer`. There is no permission catalogue change.
+
+#### Pagination, order and filtering are unaffected
+
+Inactive users were already in the list, which scopes to human actors only. They were indistinguishable from active ones. Nothing about which rows are returned, or in what order, changes. There is **no status filter and no status sort** in this amendment; either would need its own decision. `?status=Inactive` is an unknown parameter and is ignored.
+
+#### The evidence (*Adding a field later*)
+
+1. **Concrete use.** The Users table offers *Deactivate* only on active rows and *Reactivate* only on inactive ones. It withholds actions an inactive user can only be refused (reset, resend, sign out everywhere, grant), and it marks inactive users so an administrator can tell them apart.
+2. **Data exposure.** One of two values per human user, already within what `user.read` authorises. It carries no who, when or why.
+3. **Necessity.** Without it a client must offer both lifecycle actions on every row and rely on refusals, or read each user separately. The first is the pattern CRD-C7 rejected. The second has no read to use.
+4. **Removal cost.** Once the table depends on it, removing it brings back actions that routinely fail and makes inactive users look active. It is additive for existing clients: the web schema strips unknown members.
+5. **Stable identity.** A two-valued status cannot be mistaken for an identifier (P4 unchanged).
+
+#### Query
+
+The inner page selection gains `status`. Nothing else changes: the page is still chosen first, and `activationPending` is still derived over the returned rows only. The column is on the row already read, so this adds no measurable cost.
+
+#### Acceptance Criteria
+
+- **S1** Every row has `status`, exactly `"Active"` or `"Inactive"`, equal to the stored value.
+- **S2** Inactive users appear in the list, in the same order and paging as before.
+- **S3** The row's field set is exactly `userId`, `displayName`, `email`, `activationPending` and `status`.
+- **S4** An `access-reviewer` sees `status`.
+- **S5** `status` is independent of `activationPending`: an inactive pending user reads `Inactive` and `true`.
 
 ### Adding a field later
 
@@ -1457,8 +1502,112 @@ The session-revocation change control's item 5 (*USR-C4 spelling*) is **resolved
 ### Not decided here
 
 - A **last-administrator** protection (see *The self rule*).
-- The Users-table UI for deactivate and reactivate, and how the list shows lifecycle status: USR-Q1 Amendment 2, the following story (D1).
+- ~~The Users-table UI for deactivate and reactivate, and how the list shows lifecycle status~~: see *USR-C4 / USR-C5 — the Users-table UI* and USR-Q1 Amendment 2.
 - Agents (D11), and per-token audit records (D13).
+
+---
+
+## USR-C4 / USR-C5 — the Users-table UI
+
+**Status:** Contract, awaiting owner review. The decisions (U1–U8) were settled by the owner on 2026-09-18. This is the UI story that USR-C4/C5 D1 deferred. It depends on USR-Q1 Amendment 2 (`status`).
+
+### Requirement
+
+An administrator deactivates and reactivates users from the Users table. The table shows who is inactive, and offers each row only what its lifecycle status and the caller's permissions allow. The consequences of each action are stated before it is confirmed. Neither action is a toggle: deactivation is a cascade, and reactivation restores nothing.
+
+### Affordance, not authorization
+
+> **Action visibility is a client-side affordance derived from the row's current status and caller permissions. It is not an authorization decision. The API remains authoritative and may refuse a mutation.**
+
+A row may be stale: another administrator may have acted since it was read. Every refusal is shown word for word, through the existing error handling. The client branches on structured data (`status`, `activationPending`, the caller's permissions) and on status codes, **never on message text** (web client design v2).
+
+### The caller's own row (U4)
+
+> **The UI does not determine whether a row is the caller. Deactivate is therefore rendered according to row status and `user.deactivate`; self-deactivation remains a server-enforced refusal. The UI must display the server refusal using the existing status-code/error handling.**
+
+This preserves USR-Q1's frozen rule, *"Whether a row is the signed-in user is out of scope"*, with `/me` identifying the caller by `UserIdentityId`. It does not reopen that rule. Exposing the caller's `UserId`, or an `isSelf` fact, would add an identity-resolution contract only to improve one menu item.
+
+### The marker (U2)
+
+An inactive row carries a visible **Inactive** marker beside the user's name, readable as text by assistive technology. An active row carries none. `activationPending` stays action-only, as today: there is no "Pending" marker.
+
+### The action matrix (U3, U5)
+
+Rows are Active or Inactive; the caller's permissions come from `GET /api/me`. *Hidden, never disabled*, and a row with no action has no Actions button, as in USR-Q1 Amendment 1.
+
+| Row | Deactivate | Reactivate | Resend activation link | Reset password | Sign out everywhere | Manage roles |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Active, pending** | `user.deactivate` | — | `user.create` | — | `session.revoke` | `role.read` |
+| **Active, activated** | `user.deactivate` | — | — | `user.resetpassword` | `session.revoke` | `role.read` |
+| **Inactive, pending** | — | `user.reactivate` | — | — | — | `role.read` |
+| **Inactive, activated** | — | `user.reactivate` | — | — | — | `role.read` |
+
+Each cell names the permission that shows the action; — means never shown.
+
+- **Resend, Reset and Sign out everywhere are withheld from inactive rows.** Resend and Reset would be refused. Sign out everywhere would succeed and change nothing, because deactivation already revoked every session.
+- **A pending user may be deactivated** (USR-C4 D9d).
+- **The caller's own row** follows the matrix like any other (U4).
+
+### Manage roles on an inactive user (U8)
+
+The dialog still shows the assignments, and history on request. That includes the assignments deactivation revoked, which show `Revoked` by the System actor. **The Grant form is not shown for an inactive user**, because the server refuses a grant to one. The dialog receives the row's `status` to decide this. Revoke is still offered only on `Active` and `Future` assignments, and after USR-C4 an inactive user has none.
+
+### The confirmations (U6)
+
+Both are the existing confirmation-with-reason, and **a reason is required**.
+
+**Deactivate *{name}*.** The description states the cascade and that it does not come back:
+
+> They'll be signed out everywhere and won't be able to sign in. All of their current and future roles are revoked, and reactivating them later will not restore any of them. Any activation or password-reset link they have stops working.
+
+Confirm: **Deactivate**. On success: *"{name} has been deactivated."*
+
+**Reactivate *{name}*.** The description states what returns and what does not:
+
+> They'll be able to sign in again, but they will have no roles: grant any access they need afresh. If they had activated their account, they sign in with their existing password. If they had not, send them a new activation link.
+
+Confirm: **Reactivate**. On success: *"{name} has been reactivated."*
+
+The copy claims no more than the server confirmed.
+
+### Refresh (U7)
+
+After a successful deactivation or reactivation, the client reads again:
+
+- **the user list**, so the row's `status`, marker and actions are the server's. Until now no row action changed a listed field; these two do.
+- **that user's role assignments**, because deactivation revoked them.
+
+### The recovery paths, after reactivation (U5)
+
+- **A pending user** comes back without a credential and without a link (USR-C4 invalidated it; USR-C5 restores nothing). The row reads Active and pending, so *Resend activation link* is offered again (CRD-C7).
+- **An activated user** comes back with their credential, which §11.8 preserves, and can sign in with their existing password. They hold no roles. The row offers *Reset password*, as for any activated user.
+
+### Acceptance Criteria
+
+- **U-M1** A table-driven test over the matrix covers every combination of:
+  - lifecycle: active or inactive, and pending or activated;
+  - permissions: none, each relevant one, and read-only (`user.read` with `role.read`).
+
+  It asserts the exact menu of every row.
+- **U-M2** A row with no permitted action has no Actions button.
+- **U-M3** An inactive row shows the Inactive marker; an active row does not.
+- **U-D1** Each dialog shows the copy above. A blank reason sends nothing. The request carries exactly the reason to the right route.
+- **U-D2** A server refusal, including self-deactivation, is shown word for word and the dialog stays open.
+- **U-D3** Success announces the outcome, and refreshes the list and that user's role assignments.
+- **U-R1** Manage roles on an inactive user shows the assignments and no Grant form. On an active user, Grant is shown as before (with `role.grant`).
+- **U-A1** No accessibility violations with either dialog open.
+- **U-B1** Browser, in the dev stack, each state change approved by the owner:
+  - Active → Deactivate → the list refreshes → the Inactive marker shows, with only Reactivate and Manage roles offered;
+  - → Reactivate → Active, with Resend or Reset per `activationPending`.
+
+  Both recovery paths are shown: a pending user gets a new activation link, and an activated user signs in with their existing password.
+
+### Not decided here
+
+- A status **filter** or **sort** on the list.
+- A **"Pending"** marker.
+- The **USR-Q1 ID reconciliation**: the frozen catalogue's `USR-Q1 GetUser` versus the repo's list read. It is a separate contract task, taken before USR-C2 and deliberately not bundled here.
+- Whether a returning, activated user should be made to change their password. The frozen model preserves the credential (§11.8), and no rule forces a change today.
 
 ---
 
