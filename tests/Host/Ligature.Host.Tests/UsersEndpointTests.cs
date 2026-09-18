@@ -79,13 +79,14 @@ public sealed class UsersEndpointTests
     }
 
     /// <summary>
-    /// P1 (as amended), P3, P16 and P18, on every row the caller can reach:
-    /// exactly four members, activationPending always a JSON boolean. An exact
-    /// member set is also what proves no credential or token detail rides
-    /// along under another name.
+    /// P1 (as amended twice), P3, P16 and P18, on every row the caller can
+    /// reach: exactly five members, activationPending always a JSON boolean
+    /// and status always "Active" or "Inactive" (Amendment 2, S3). An exact
+    /// member set is also what proves no credential, token or deactivation
+    /// detail rides along under another name.
     /// </summary>
     [Fact]
-    public async Task Every_row_has_exactly_user_id_display_name_email_and_activation_pending()
+    public async Task Every_row_has_exactly_user_id_display_name_email_activation_pending_and_status()
     {
         await RunAsync(async (client, callers) =>
         {
@@ -96,12 +97,14 @@ public sealed class UsersEndpointTests
             Assert.All(rows, row =>
             {
                 Assert.Equal(
-                    ["activationPending", "displayName", "email", "userId"],
+                    ["activationPending", "displayName", "email", "status", "userId"],
                     row.EnumerateObject().Select(x => x.Name).Order(StringComparer.Ordinal));
 
                 Assert.Contains(
                     row.GetProperty("activationPending").ValueKind,
                     new[] { JsonValueKind.True, JsonValueKind.False });
+
+                Assert.Contains(row.GetProperty("status").GetString(), new[] { "Active", "Inactive" });
             });
         });
     }
@@ -131,6 +134,54 @@ public sealed class UsersEndpointTests
             {
                 await DeleteUserAsync(pending);
                 await DeleteUserAsync(activated);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Amendment 2, S1, S4 and S5 as served: an inactive user who never
+    /// activated reads "Inactive" and pending, to the administrator and to
+    /// the access reviewer alike; an active one reads "Active".
+    /// </summary>
+    [Fact]
+    public async Task An_inactive_user_reads_inactive_to_every_user_read_holder()
+    {
+        await RunAsync(async (client, callers) =>
+        {
+            var marker = Guid.NewGuid().ToString("N")[..10];
+            var inactive = await SeedPendingUserAsync($"Inactive Row {marker}");
+            var active = await SeedPendingUserAsync($"Active Row {marker}");
+
+            try
+            {
+                await using (var connection = await TestDatabase.OpenAsync())
+                {
+                    foreach (var sql in new[]
+                    {
+                        "UPDATE app_user SET status = 'Inactive', deactivated_at = now(), deactivated_by = @system WHERE id = @id",
+                        "UPDATE user_identity SET status = 'Inactive', deactivated_at = now(), deactivated_by = @system WHERE user_id = @id",
+                    })
+                    {
+                        await using var command = new NpgsqlCommand(sql, connection);
+                        command.Parameters.AddWithValue("id", inactive);
+                        command.Parameters.AddWithValue("system", User.SystemUserId.Value);
+                        await command.ExecuteNonQueryAsync();
+                    }
+                }
+
+                foreach (var caller in new[] { callers.Administrator, callers.Reviewer })
+                {
+                    var rows = (await ReadAllRowsAsync(client, caller)).ToDictionary(x => x.GetProperty("userId").GetGuid());
+
+                    Assert.Equal("Inactive", rows[inactive].GetProperty("status").GetString());
+                    Assert.True(rows[inactive].GetProperty("activationPending").GetBoolean());
+                    Assert.Equal("Active", rows[active].GetProperty("status").GetString());
+                }
+            }
+            finally
+            {
+                await DeleteUserAsync(inactive);
+                await DeleteUserAsync(active);
             }
         });
     }

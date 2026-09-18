@@ -32,6 +32,7 @@ const VRU = {
   displayName: "Vru Raj",
   email: "vru@example.test",
   activationPending: false,
+  status: "Active" as const,
 };
 
 const ADA = { userId: "a1000000-0000-4000-8000-0000000000ad", displayName: "Ada Lovelace" };

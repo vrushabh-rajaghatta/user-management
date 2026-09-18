@@ -37,4 +37,5 @@ public sealed record UserListRow(
     UserId UserId,
     string DisplayName,
     string? Email,
-    bool ActivationPending);
+    bool ActivationPending,
+    UserStatus Status);

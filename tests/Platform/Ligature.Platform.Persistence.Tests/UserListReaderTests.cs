@@ -353,6 +353,51 @@ public sealed class UserListReaderTests
         }
     }
 
+    // ---------------------------------------------------- Amendment 2: status
+
+    /// <summary>
+    /// S1, S5 — the stored status, exactly, and independent of
+    /// activationPending: all four combinations occur and read as themselves.
+    /// </summary>
+    [Fact]
+    public async Task Status_is_the_stored_value_and_independent_of_activation_pending()
+    {
+        await WithStatesAsync(
+            [State.Pending, State.Activated, State.InactivePending, State.InactiveActivated],
+            async seeded =>
+            {
+                var rows = await RowsForAsync(seeded);
+
+                Assert.Equal((UserStatus.Active, true), (rows[seeded[0].Id].Status, rows[seeded[0].Id].ActivationPending));
+                Assert.Equal((UserStatus.Active, false), (rows[seeded[1].Id].Status, rows[seeded[1].Id].ActivationPending));
+                Assert.Equal((UserStatus.Inactive, true), (rows[seeded[2].Id].Status, rows[seeded[2].Id].ActivationPending));
+                Assert.Equal((UserStatus.Inactive, false), (rows[seeded[3].Id].Status, rows[seeded[3].Id].ActivationPending));
+            });
+    }
+
+    /// <summary>
+    /// S2 — inactive users are listed, in the contract order; status takes no
+    /// part in which rows or in what order.
+    /// </summary>
+    [Fact]
+    public async Task Status_changes_neither_which_rows_nor_their_order()
+    {
+        await WithStatesAsync(
+            [State.InactiveActivated, State.Activated, State.InactivePending, State.Pending],
+            async seeded =>
+            {
+                var ids = seeded.Select(x => x.Id).ToHashSet();
+
+                var order = (await ReadAllAsync(pageSize: 100)).Where(x => ids.Contains(x.UserId.Value)).ToList();
+
+                Assert.Equal(seeded.Select(x => x.Id), order.Select(x => x.UserId.Value));
+                Assert.Equal(
+                    [UserStatus.Inactive, UserStatus.Active, UserStatus.Inactive, UserStatus.Active],
+                    order.Select(x => x.Status));
+            },
+            names: ["Aa", "Bb", "Cc", "Dd"]);
+    }
+
     private enum State
     {
         Pending,
@@ -360,9 +405,16 @@ public sealed class UserListReaderTests
         NoIdentity,
         ExternalOnly,
         TwoLocalOneActivated,
+
+        // USR-Q1 Amendment 2: deactivated as USR-C4 leaves them — user and
+        // identity Inactive with a stamp — never activated, and activated.
+        InactivePending,
+        InactiveActivated,
     }
 
     private sealed record StateSeeded(Guid Id, State State);
+
+    private static bool IsInactive(State state) => state is State.InactivePending or State.InactiveActivated;
 
     private static async Task<Dictionary<Guid, UserListRow>> RowsForAsync(IReadOnlyList<StateSeeded> seeded)
     {
@@ -400,19 +452,22 @@ public sealed class UserListReaderTests
                     """
                     INSERT INTO app_user
                         (id, actor_type, first_name, last_name, display_name, email, status,
-                         created_at, created_by, updated_at, updated_by)
+                         created_at, created_by, updated_at, updated_by, deactivated_at, deactivated_by)
                     VALUES
-                        (@id, 'Human', 'Pending', 'State', @display, @email, 'Active',
-                         now(), @system, now(), @system)
+                        (@id, 'Human', 'Pending', 'State', @display, @email,
+                         CASE WHEN @inactive THEN 'Inactive' ELSE 'Active' END,
+                         now(), @system, now(), @system,
+                         CASE WHEN @inactive THEN now() END, CASE WHEN @inactive THEN @system END)
                     """,
                     ("id", id),
+                    ("inactive", IsInactive(state)),
                     ("display", $"{names?[i] ?? $"State {i}"} {marker}"),
                     ("email", $"usr-q1-a1-{marker}-{i}@example.test"),
                     ("system", system));
 
                 var locals = state switch
                 {
-                    State.Pending or State.Activated => 1,
+                    State.Pending or State.Activated or State.InactivePending or State.InactiveActivated => 1,
                     State.TwoLocalOneActivated => 2,
                     _ => 0,
                 };
@@ -425,18 +480,22 @@ public sealed class UserListReaderTests
                         """
                         INSERT INTO user_identity
                             (id, user_id, actor_type, identity_type, identity_provider,
-                             subject_id, username, status, created_at, created_by)
+                             subject_id, username, status, created_at, created_by,
+                             deactivated_at, deactivated_by)
                         VALUES
                             (@identity, @id, 'Human', 'Local', 'Application',
-                             @subject, @username, 'Active', now(), @system)
+                             @subject, @username, CASE WHEN @inactive THEN 'Inactive' ELSE 'Active' END,
+                             now(), @system,
+                             CASE WHEN @inactive THEN now() END, CASE WHEN @inactive THEN @system END)
                         """,
                         ("identity", identity),
                         ("id", id),
+                        ("inactive", IsInactive(state)),
                         ("subject", identity.ToString()),
                         ("username", $"usr-q1-a1-{marker}-{i}-{n}"),
                         ("system", system));
 
-                    var credentialed = state == State.Activated
+                    var credentialed = state is State.Activated or State.InactiveActivated
                         || (state == State.TwoLocalOneActivated && n == 1);
 
                     if (credentialed)

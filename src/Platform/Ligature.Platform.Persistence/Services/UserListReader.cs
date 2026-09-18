@@ -79,7 +79,7 @@ public sealed class UserListReader : IUserListReader
             .ToListAsync(cancellationToken);
 
         return rows
-            .Select(x => new UserListRow(x.Id, x.DisplayName, x.Email?.Value, x.ActivationPending))
+            .Select(x => new UserListRow(x.Id, x.DisplayName, x.Email?.Value, x.ActivationPending, UserStatus.Active /* stub: USR-Q1 Amendment 2 */))
             .ToList();
     }
 }
