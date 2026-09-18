@@ -31,7 +31,38 @@ Three families are in use.
 
 `CRD` and `SES` are deliberately distinct: `CRD` owns credential and token lifecycle, `SES` owns sessions and authentication.
 
-**Query IDs** — `<AREA>-Q<n>`, e.g. `USR-Q1`. The same areas as commands; `Q` means query and `C` means command, so a read is not forced into the command catalogue. Numbered independently of the area's commands: `USR-Q1` and `USR-C1` are unrelated.
+**Query IDs** — `<AREA>-Q<n>`, e.g. `USR-Q2`. The same areas as commands; `Q` means query and `C` means command, so a read is not forced into the command catalogue. Numbered independently of the area's commands: `USR-Q2` and `USR-C2` are unrelated. **Query IDs follow the frozen UM command catalogue's *Queries* sheet**, as every other query ID here already did (`AUT-Q2`, `AUT-Q5`). See *Reconciliation: USR-Q1 and USR-Q2* below.
+
+### Reconciliation: USR-Q1 and USR-Q2
+
+**Decided 2026-09-18 by owner decision (R1–R5).** This corrects an ID collision.
+
+The frozen UM command catalogue defines `USR-Q1` as **GetUser**, the single-user detail read, and `USR-Q2` as **SearchUsers**, *"the main administration list"*. On 2026-09-17 this repository assigned `USR-Q1` to its user list, the first query given an ID here, without checking the catalogue's *Queries* sheet. Every other query ID in this document follows the catalogue. `USR-Q1` was the only one that did not.
+
+The resolution:
+
+| ID | Means | Status |
+| --- | --- | --- |
+| `USR-Q1` | **GetUser**, as the catalogue defines it | Not specified. Its contract is decided from evidence when a story needs it (for example, a user-detail read for USR-C2). This reconciliation does not design it (R5). |
+| `USR-Q2` | **SearchUsers**: the Users list, `GET /api/users` | Implemented as a deliberately narrow first version: no filtering or search (owner decision, #51), and row fields admitted by the evidence rule. Being narrower than the catalogue's query does not make it a different query. |
+| `USR-Q3` | Whatever the catalogue defines (GetUserAccessSummary) | Not used here, and not repurposed. |
+
+**Rule 2, and why this is a recorded exception.** Rule 2 says *"Do not reuse an existing ID for a different requirement."* Returning `USR-Q1` to GetUser means that `USR-Q1` in this repository meant one thing before this date and another after it. The catalogue's assignment is older and frozen; this repository's was the collision. So the exception is recorded here, with the mapping below, rather than made quietly.
+
+#### Historical mapping
+
+> **Historical references to `USR-Q1` in commits, branches, PRs, and persisted test/audit data refer to the user administration list implemented during the pre-reconciliation period. That implementation is now identified as `USR-Q2 SearchUsers`. `USR-Q1` thereafter refers to the catalogue-defined `GetUser`.**
+
+That covers:
+
+- the commits and PRs #52, #54, #57 and #63, and the branches `feature/usr-q1-user-list` and `feature/usr-q1-activation-pending`;
+- reason text written into the shared test database and its audit trail by earlier test runs, such as *"USR-Q2 P6."*. Audit records are immutable and are not rewritten.
+
+> **Historical amendment mapping: The documents previously labelled `USR-Q1 Amendment 1` and `USR-Q1 Amendment 2` amended the repository's user-list implementation. Following ID reconciliation, those amendments are understood as amendments to `USR-Q2 SearchUsers`. They do not amend the catalogue-defined `USR-Q1 GetUser` contract.**
+
+In particular, `status` (Amendment 2) and `activationPending` (Amendment 1) are fields of the **list** row. GetUser has no contract yet, and acquired neither.
+
+**What was renamed, and what was not.** Every mention in current files was renamed: this document, `docs/architecture.md`, code comments and test strings. History was not: git commits, branch names, PR titles and persisted audit records stay as they were, and the mapping above is the bridge. Nothing in the code named the ID (no class, method, test, route or field), so no behaviour changed.
 
 **Rule / constraint IDs** — `<TABLE><n>`, e.g. `AU3`, `UI7`. The prefix names the table the rule governs:
 
@@ -153,7 +184,7 @@ The owner accepts this explicitly. It is a consequence of the provisioning model
 - **S2** A freshly provisioned tenant stores the amended composition: `security-administrator` holds an active `user.read` grant, granted by the System actor.
 - **S3** In a tenant provisioned before this amendment (simulated by removing only that grant), catalogue synchronisation inserts exactly that one grant and nothing else, and converges. A second run inserts nothing.
 - **S4** One-way: an active database grant that the seed does not list is refused as `GrantMissingFromSeed`, naming it, and nothing is committed. This also closes a gap in PRV-C2's own tests, where F5 was untested.
-- **S5** Through the pipeline, a caller holding only `security-administrator` is authorised for USR-Q1, which requires `user.read`.
+- **S5** Through the pipeline, a caller holding only `security-administrator` is authorised for USR-Q2, which requires `user.read`.
 - **S6** Over HTTP, a caller holding only `security-administrator` gets `200` from `GET /api/users`. The same caller is refused by each of the following. A permission refusal is `400` with a *"does not have permission"* message (Known Gaps, *Authorization failures are not distinguishable from validation failures*), and the test asserts the message, so a validation `400` cannot pass for a refusal:
   - `POST /api/users` (`user.create`);
   - `POST /api/users/{id}/password-reset` (`user.resetpassword`);
@@ -412,9 +443,9 @@ The write path is the correction that matters: a `Transactional` record would be
 
 **`AuditEventCatalogue.Version` is not bumped, and must not be.** It is a whole-catalogue revision identifier, not a per-event one: `EventTypeSeed.Version` returns that same constant, so raising it would insert 49 new event-type rows at version 2, deactivate all 49 version-1 rows, and write every future audit record against `(code, 2)`. Propagation does not depend on it either — `AuditCatalogueSeeder` upserts every seed unconditionally on each `audit-schema` run, so the corrected definition reaches existing databases on the next deployment. The constant's documented consumers are `TenantProvisioned`'s payload and AUD-C3's future comparison.
 
-## USR-Q1 — User List Query
+## USR-Q2 — User List Query
 
-**Requirement ID:** `USR-Q1`, assigned by the owner 2026-09-17 — the first ID in the query family (*Identifier Format*).
+**Requirement ID:** `USR-Q2` SearchUsers, as the UM command catalogue defines it. It was assigned `USR-Q1` by the owner on 2026-09-17 and renumbered by the reconciliation on 2026-09-18 (*Reconciliation: USR-Q1 and USR-Q2*). History before that date calls it `USR-Q1`.
 
 **Status:** Approved and frozen — the row projection, the endpoint and identifier semantics, pagination, sorting, filtering, and the implementation contract. All decided 2026-09-17 by owner decision. Implemented (#52).
 
@@ -985,7 +1016,7 @@ Neither the token nor its hash appears in any record.
 
 ### Endpoint
 
-**`POST /api/users/{userId}/activation-link`**, beside the existing per-user administrator commands and addressed by the same `UserId` that USR-Q1 rows and `POST /api/users` return.
+**`POST /api/users/{userId}/activation-link`**, beside the existing per-user administrator commands and addressed by the same `UserId` that USR-Q2 rows and `POST /api/users` return.
 
 Request body:
 
@@ -1027,7 +1058,7 @@ The notification is the existing `AccountActivation` type and template, so the m
 
 ### Not decided here
 
-- **Which users a client offers this command for.** USR-Q1's row stays exactly `UserId`, `DisplayName`, `Email`. A client that shows the action only to pending users needs a separate read contract, a USR-Q1 amendment for a derived `activationPending` flag with its own evidence (*Adding a field later*). The Users table is not changed until that contract exists. Offering the action on every row and relying on refusals was rejected.
+- **Which users a client offers this command for.** USR-Q2's row stays exactly `UserId`, `DisplayName`, `Email`. A client that shows the action only to pending users needs a separate read contract, a USR-Q2 amendment for a derived `activationPending` flag with its own evidence (*Adding a field later*). The Users table is not changed until that contract exists. Offering the action on every row and relying on refusals was rejected.
 - **The Notification specification's wording.** Its walkthrough (§11.4, §11.5) names CRD-C5 as the remedy for a failed activation mail. §10.1 speaks of *"the three issuing commands"*; with CRD-C7 there are four. Both are corrected through that specification's own change control, not here.
 
 ---
@@ -1188,13 +1219,13 @@ An administrator can see which roles a user holds, has held and will hold, and g
 
 ### AUT-Q2 — the read
 
-**`GET /api/users/{userId}/role-assignments?includeInactive=`**, requiring **`role.read`**. Not audited: reads are not events (as USR-Q1).
+**`GET /api/users/{userId}/role-assignments?includeInactive=`**, requiring **`role.read`**. Not audited: reads are not events (as USR-Q2).
 
 | Parameter | Rule |
 | --- | --- |
 | `includeInactive` | Optional; absent means `false`. Exactly `true` or `false`; any other value, or a repeated parameter, is refused as an invalid request. `false` returns `Active` and `Future` assignments; `true` adds `Ended` and `Revoked` |
 
-The handler establishes, in this order, as USR-Q1's does: authenticate (`401`), authorise `role.read` (`400`, the Known Gap on authorisation failures), then read. An unknown user is refused (`400`), as the commands addressed by `{userId}` refuse it.
+The handler establishes, in this order, as USR-Q2's does: authenticate (`401`), authorise `role.read` (`400`, the Known Gap on authorisation failures), then read. An unknown user is refused (`400`), as the commands addressed by `{userId}` refuse it.
 
 ```json
 {
@@ -1256,7 +1287,7 @@ AUT-Q5 ListRoles, as catalogued, also returns permission and active-holder count
 
 ### The UI (D1, D7, D8)
 
-- **Where:** a **Manage roles** action on each Users table row, opening a dialog for that user. No detail page (that needs the single-user read, which has no repo ID yet).
+- **Where:** a **Manage roles** action on each Users table row, opening a dialog for that user. No detail page (that needs the single-user read, `USR-Q1` GetUser, which is not yet specified).
 - **Who sees what** — from the caller's **effective permissions** (`GET /api/me`), never from role names:
 
   | Holds | Sees |
@@ -1265,7 +1296,7 @@ AUT-Q5 ListRoles, as catalogued, also returns permission and active-holder count
   | `role.grant` (with `role.read`) | a **Grant role** form |
   | `role.revoke` (with `role.read`) | **Revoke** on each `Active` or `Future` assignment, and on no other |
 
-  Hidden, never disabled. A row with no action at all has no Actions button (USR-Q1 amendment 1's rule).
+  Hidden, never disabled. A row with no action at all has no Actions button (USR-Q2 amendment 1's rule).
 - **The list** shows each assignment's role, `state` exactly as the server sent it, period, and who granted it, when and why (and revoked, when revoked). Current and future by default; **Show history** asks the server again with `includeInactive=true`. The client derives nothing from the dates.
 - **Grant:** an active role from `GET /api/roles`; optional start and end, entered in the browser's local time and **sent as UTC**; a required reason. The server is authoritative: an overlap, a past start or an empty period is refused there, and its message is shown word for word. The client does not pre-check overlap.
 - **Revoke:** a confirmation with a required reason, as the existing row actions.
@@ -1502,14 +1533,14 @@ The session-revocation change control's item 5 (*USR-C4 spelling*) is **resolved
 ### Not decided here
 
 - A **last-administrator** protection (see *The self rule*).
-- ~~The Users-table UI for deactivate and reactivate, and how the list shows lifecycle status~~: see *USR-C4 / USR-C5 — the Users-table UI* and USR-Q1 Amendment 2.
+- ~~The Users-table UI for deactivate and reactivate, and how the list shows lifecycle status~~: see *USR-C4 / USR-C5 — the Users-table UI* and USR-Q2 Amendment 2.
 - Agents (D11), and per-token audit records (D13).
 
 ---
 
 ## USR-C4 / USR-C5 — the Users-table UI
 
-**Status:** Contract, awaiting owner review. The decisions (U1–U8) were settled by the owner on 2026-09-18. This is the UI story that USR-C4/C5 D1 deferred. It depends on USR-Q1 Amendment 2 (`status`).
+**Status:** Contract, awaiting owner review. The decisions (U1–U8) were settled by the owner on 2026-09-18. This is the UI story that USR-C4/C5 D1 deferred. It depends on USR-Q2 Amendment 2 (`status`).
 
 ### Requirement
 
@@ -1525,7 +1556,7 @@ A row may be stale: another administrator may have acted since it was read. Ever
 
 > **The UI does not determine whether a row is the caller. Deactivate is therefore rendered according to row status and `user.deactivate`; self-deactivation remains a server-enforced refusal. The UI must display the server refusal using the existing status-code/error handling.**
 
-This preserves USR-Q1's frozen rule, *"Whether a row is the signed-in user is out of scope"*, with `/me` identifying the caller by `UserIdentityId`. It does not reopen that rule. Exposing the caller's `UserId`, or an `isSelf` fact, would add an identity-resolution contract only to improve one menu item.
+This preserves USR-Q2's frozen rule, *"Whether a row is the signed-in user is out of scope"*, with `/me` identifying the caller by `UserIdentityId`. It does not reopen that rule. Exposing the caller's `UserId`, or an `isSelf` fact, would add an identity-resolution contract only to improve one menu item.
 
 ### The marker (U2)
 
@@ -1533,7 +1564,7 @@ An inactive row carries a visible **Inactive** marker beside the user's name, re
 
 ### The action matrix (U3, U5)
 
-Rows are Active or Inactive; the caller's permissions come from `GET /api/me`. *Hidden, never disabled*, and a row with no action has no Actions button, as in USR-Q1 Amendment 1.
+Rows are Active or Inactive; the caller's permissions come from `GET /api/me`. *Hidden, never disabled*, and a row with no action has no Actions button, as in USR-Q2 Amendment 1.
 
 | Row | Deactivate | Reactivate | Resend activation link | Reset password | Sign out everywhere | Manage roles |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -1606,7 +1637,7 @@ After a successful deactivation or reactivation, the client reads again:
 
 - A status **filter** or **sort** on the list.
 - A **"Pending"** marker.
-- The **USR-Q1 ID reconciliation**: the frozen catalogue's `USR-Q1 GetUser` versus the repo's list read. It is a separate contract task, taken before USR-C2 and deliberately not bundled here.
+- ~~The **ID reconciliation**~~: done separately. See *Reconciliation: USR-Q1 and USR-Q2*. The list is `USR-Q2`.
 - Whether a returning, activated user should be made to change their password. The frozen model preserves the credential (§11.8), and no rule forces a change today.
 
 ---

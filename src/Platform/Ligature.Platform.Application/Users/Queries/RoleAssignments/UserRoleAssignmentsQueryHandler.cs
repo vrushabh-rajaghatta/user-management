@@ -8,7 +8,7 @@ namespace Ligature.Platform.Application.Users.Queries.RoleAssignments;
 /// <summary>
 /// AUT-Q2 (docs/requirements.md, "AUT-Q2"). A query has no pipeline, so the
 /// handler establishes, in order: authenticate, authorise role.read, then read
-/// the target, as USR-Q1's does.
+/// the target, as USR-Q2's does.
 ///
 /// THE STATE IS DERIVED HERE, AT THE CLOCK'S NOW, by the domain's one
 /// derivation (RoleAssignmentStates, which UserRole.StateAt also uses). The

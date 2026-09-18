@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * USR-Q1's response (docs/requirements.md): exactly userId, displayName, email
+ * USR-Q2's response (docs/requirements.md): exactly userId, displayName, email
  * and activationPending per row, and page, pageSize and hasMore. No total.
  *
  * email is nullable because the column is. userId is the only identifier; the

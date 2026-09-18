@@ -3,7 +3,7 @@ using Ligature.Platform.Domain.Users;
 namespace Ligature.Platform.Application.Users.Queries.UserList;
 
 /// <summary>
-/// USR-Q1. Specific to this query, deliberately: there is no generic paged
+/// USR-Q2. Specific to this query, deliberately: there is no generic paged
 /// result, because the first paginated read is not evidence that a second will
 /// want the same shape.
 ///

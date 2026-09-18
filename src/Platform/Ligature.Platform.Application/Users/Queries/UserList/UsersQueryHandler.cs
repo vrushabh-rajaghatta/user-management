@@ -5,7 +5,7 @@ using Ligature.SharedKernel.Exceptions;
 namespace Ligature.Platform.Application.Users.Queries.UserList;
 
 /// <summary>
-/// USR-Q1 — ListUsers.
+/// USR-Q2 — ListUsers.
 ///
 /// A QUERY HAS NO PIPELINE, so this handler is the whole of the boundary
 /// between a caller and the tenant's users, and it runs in a fixed order:
@@ -31,10 +31,10 @@ namespace Ligature.Platform.Application.Users.Queries.UserList;
 /// </summary>
 public sealed class UsersQueryHandler : IQueryHandler<UsersQuery, UsersResult>
 {
-    /// <summary>docs/requirements.md, USR-Q1 "Page-size values".</summary>
+    /// <summary>docs/requirements.md, USR-Q2 "Page-size values".</summary>
     private const int DefaultPageSize = 25;
 
-    /// <summary>docs/requirements.md, USR-Q1 "Page-size values".</summary>
+    /// <summary>docs/requirements.md, USR-Q2 "Page-size values".</summary>
     private const int MaximumPageSize = 100;
 
     private readonly IExecutionContext _executionContext;

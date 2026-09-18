@@ -88,7 +88,7 @@ public static class RoleAssignmentEndpoints
     }
 
     /// <summary>
-    /// includeInactive is read as text and parsed here, as USR-Q1's page
+    /// includeInactive is read as text and parsed here, as USR-Q2's page
     /// parameters are, so a malformed value gets the host's error body rather
     /// than framework binding's empty 400.
     /// </summary>

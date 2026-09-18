@@ -94,7 +94,7 @@ public sealed class RoleAssignmentReaderTests
     }
 
     /// <summary>
-    /// ICU "unicode", as USR-Q1: "de la Cruz" / "Delacroix" order differently
+    /// ICU "unicode", as USR-Q2: "de la Cruz" / "Delacroix" order differently
     /// under this database's default collation, so omitting the collation
     /// cannot pass.
     /// </summary>

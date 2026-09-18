@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Ligature.Platform.Application.Tests.Users.Queries;
 
 /// <summary>
-/// USR-Q1 — what the handler owns, which the HTTP suite cannot isolate.
+/// USR-Q2 — what the handler owns, which the HTTP suite cannot isolate.
 ///
 /// A query has no pipeline, so the handler is the only thing standing between
 /// a caller and the read: it authenticates, then authorizes, then validates the
@@ -312,7 +312,7 @@ public sealed class UsersQueryHandlerTests
         public Task<IReadOnlyList<EffectivePermission>> EnumerateAsync(
             EffectivePermissionsRequest request,
             CancellationToken cancellationToken)
-            => throw new InvalidOperationException("USR-Q1 does not enumerate permissions.");
+            => throw new InvalidOperationException("USR-Q2 does not enumerate permissions.");
     }
 
     /// <summary>

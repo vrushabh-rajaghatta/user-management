@@ -6,7 +6,7 @@ import { UsersTable } from "../components/UsersTable";
 import { UserPermissions } from "../permissions";
 
 /**
- * USR-Q1's page: the Users table, and New user (USR-C1) for holders of
+ * USR-Q2's page: the Users table, and New user (USR-C1) for holders of
  * user.create.
  *
  * <Can> decides what is SHOWN. Every route guards itself and the server

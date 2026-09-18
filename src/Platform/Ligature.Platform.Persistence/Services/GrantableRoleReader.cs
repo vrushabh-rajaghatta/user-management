@@ -9,7 +9,7 @@ namespace Ligature.Platform.Persistence.Services;
 /// <summary>
 /// The active roles the grant form offers. Deliberately narrow — not AUT-Q5:
 /// no counts, no includeInactive, no agent-assignable filter. Ordered by name
-/// under ICU "unicode" (PostgreSQL's root collation), then id, as USR-Q1 orders
+/// under ICU "unicode" (PostgreSQL's root collation), then id, as USR-Q2 orders
 /// users, so the order is the same whatever the database's default collation.
 /// </summary>
 public sealed class GrantableRoleReader : IGrantableRoleReader
