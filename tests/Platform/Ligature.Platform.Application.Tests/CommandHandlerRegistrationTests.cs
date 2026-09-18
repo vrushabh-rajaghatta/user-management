@@ -7,7 +7,9 @@ using Ligature.Platform.Application.Execution;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.GrantRole;
 using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
+using Ligature.Platform.Application.Users.Commands.RevokeRole;
 using Ligature.Platform.Application.Users.Commands.RevokeSession;
 using Ligature.Platform.Application.Users.Commands.RevokeUserSessions;
 using Ligature.Platform.Application.Users.Commands.SignOutEverywhere;
@@ -148,6 +150,32 @@ public sealed class CommandHandlerRegistrationTests
             .GetRequiredService<ICommandHandler<ReissueActivationLinkCommand, ReissueActivationLinkResult>>();
 
         Assert.IsType<ReissueActivationLinkCommandHandler>(handler);
+    }
+
+    /// <summary>AUT-C1, resolved for CRD-C5's reason.</summary>
+    [Fact]
+    public void The_dispatcher_can_resolve_the_GrantRole_handler()
+    {
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        var handler = scope.ServiceProvider
+            .GetRequiredService<ICommandHandler<GrantRoleCommand, GrantRoleResult>>();
+
+        Assert.IsType<GrantRoleCommandHandler>(handler);
+    }
+
+    /// <summary>AUT-C2, resolved for CRD-C5's reason.</summary>
+    [Fact]
+    public void The_dispatcher_can_resolve_the_RevokeRole_handler()
+    {
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        var handler = scope.ServiceProvider
+            .GetRequiredService<ICommandHandler<RevokeRoleCommand, RevokeRoleResult>>();
+
+        Assert.IsType<RevokeRoleCommandHandler>(handler);
     }
 
     /// <summary>

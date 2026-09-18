@@ -197,17 +197,16 @@ public sealed class ExceptionTranslationTests
     }
 
     /// <summary>
-    /// An exclusion-constraint violation (23P01), from UR5's no-overlap rule.
-    /// It passes through untranslated today because no command can trigger it
-    /// yet and its wording belongs to AUT-C1.
+    /// An exclusion-constraint violation (23P01), from UR5's no-overlap rule,
+    /// becomes the ordinary refusal AUT-C1 defines (docs/requirements.md,
+    /// "Role Assignment").
     ///
-    /// It is here for a second reason: it is the case that proves dispatch is
-    /// by constraint NAME rather than by SqlState. This error is not 23505, so
-    /// once AUT-C1 adds ex_user_role_global_no_overlap to the map, a
-    /// unique-violation-only guard would have made that mapping silently dead.
+    /// It is also the case that proves dispatch is by constraint NAME rather
+    /// than by SqlState: this error is not 23505, so a unique-violation-only
+    /// guard would leave this mapping silently dead.
     /// </summary>
     [Fact]
-    public async Task An_overlapping_assignment_raises_an_exclusion_violation()
+    public async Task An_overlapping_global_assignment_becomes_the_overlap_refusal()
     {
         await TestDatabase.EnsureProvisionedAsync();
 
@@ -224,7 +223,7 @@ public sealed class ExceptionTranslationTests
             context.Add(AssignmentFor(user, role));
             await context.SaveChangesAsync(CancellationToken.None);
 
-            var failure = await Assert.ThrowsAsync<DbUpdateException>(
+            var failure = await Assert.ThrowsAsync<BusinessRuleViolationException>(
                 () => unitOfWork.ExecuteInTransactionAsync(
                     _ =>
                     {
@@ -235,11 +234,51 @@ public sealed class ExceptionTranslationTests
                     },
                     CancellationToken.None));
 
-            var postgres = Assert.IsType<PostgresException>(failure.InnerException);
+            Assert.Equal(OverlapRefusal, failure.Message);
+        }
+        finally
+        {
+            await DeleteAssignmentsAsync(user.Id);
+            await CleanUpAsync(user.Id);
+            await DeleteRoleAsync(role.Id);
+        }
+    }
 
-            Assert.Equal("23P01", postgres.SqlState);
-            Assert.Equal(
-                "ex_user_role_global_no_overlap", postgres.ConstraintName);
+    /// <summary>
+    /// UR6, the scoped twin. No command writes a scoped assignment in v1, but
+    /// the constraint exists and the same question has the same answer, so it
+    /// is mapped too rather than surfacing as a 500 the day scopes arrive.
+    /// </summary>
+    [Fact]
+    public async Task An_overlapping_scoped_assignment_becomes_the_overlap_refusal()
+    {
+        await TestDatabase.EnsureProvisionedAsync();
+
+        await using var context = CreateContext();
+        var unitOfWork = new UnitOfWork(context);
+
+        var user = NewHuman();
+        var role = NewRole($"overlap-{Guid.NewGuid():N}"[..24]);
+        var scopeId = Guid.NewGuid();
+
+        try
+        {
+            context.Add(user);
+            context.Add(role);
+            context.Add(AssignmentFor(user, role, scopeId));
+            await context.SaveChangesAsync(CancellationToken.None);
+
+            var failure = await Assert.ThrowsAsync<BusinessRuleViolationException>(
+                () => unitOfWork.ExecuteInTransactionAsync(
+                    _ =>
+                    {
+                        context.Add(AssignmentFor(user, role, scopeId));
+
+                        return Task.FromResult(user.Id);
+                    },
+                    CancellationToken.None));
+
+            Assert.Equal(OverlapRefusal, failure.Message);
         }
         finally
         {
@@ -333,14 +372,17 @@ public sealed class ExceptionTranslationTests
             Now,
             User.SystemUserId);
 
-    private static UserRole AssignmentFor(User user, Role role)
+    private const string OverlapRefusal =
+        "The user already holds this role for this scope in an overlapping period.";
+
+    private static UserRole AssignmentFor(User user, Role role, Guid? scopeId = null)
         => UserRole.Create(
             UserRoleId.New(),
             user.Id,
             ActorType.Human,
             role.Id,
-            ScopeType.Global,
-            scopeId: null,
+            scopeId is null ? ScopeType.Global : ScopeType.Create("Product"),
+            scopeId: scopeId,
             effectiveFrom: Now,
             effectiveTo: null,
             assignedAt: Now,
