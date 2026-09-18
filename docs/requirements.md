@@ -1964,6 +1964,11 @@ The section says in one sentence what each action does. It lists no sessions, be
 
 - **An amendment note in `docs/frontend-architecture.md` §5**, beside W4 and the Administration shell amendment. It records that the footer carries a My account link for every caller, that `/account` is a signed-in, client-chosen path, and that the sidebar stays permission-driven areas only.
 
+### Corrected during implementation
+
+- **The shell's landmarks (owner decision, 2026-09-18).** UI-9's whole-page audit found that the shell's brand, the caller's display name and the footer controls sit outside every landmark. The brand and name predate this story; its My account link added a third. The existing shell tests had audited only the render container, so axe's *region* rule never ran. By owner decision both are fixed in this story: the brand is in the banner, and the footer is an **Account** navigation holding the caller's name, My account and Sign out. `app/accessibility.test.tsx` now audits the whole page. It is recorded in `docs/frontend-architecture.md` §5 and §15.
+- **Where a sign-out failure is shown.** It is shown inside the confirmation, which stays open beside the action that failed, as `ConfirmAction` does for every refusal. The caller is still on `/account` and still signed in (M9). A request that never reaches the server shows the API boundary's *"The server could not be reached."*.
+
 ### Not included
 
 - Attempt or rate limiting for CRD-C4 (M1).
