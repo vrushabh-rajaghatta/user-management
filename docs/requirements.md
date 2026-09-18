@@ -1644,7 +1644,7 @@ After a successful deactivation or reactivation, the client reads again:
 
 ## USR-C2 — Update User Profile, and USR-Q1 GetUser (narrow v1)
 
-**Status:** Contract, awaiting owner review. The decisions (G1–G10) were settled by the owner on 2026-09-18, with the G3 and G8 refinements. Two proposals are marked **[confirm]** below. This is story 1, the backend. The UI (G9) is story 2.
+**Status:** Contract frozen 2026-09-18 by owner decision (G1–G10, with the G3 and G8 refinements). The owner confirmed three further points: normalisation owned by the domain; USR-C1 not amended and no database name constraints; `POST` for the command. This is story 1, the backend. The UI (G9) is story 2.
 
 ### Requirement
 
@@ -1670,14 +1670,14 @@ This is a rule of the command, enforced explicitly in its handler, and not left 
 
 These apply to each of `FirstName`, `LastName` and `DisplayName`:
 
-1. **Normalised** by removing leading and trailing whitespace. Interior whitespace is kept as it is. **[confirm]** The domain owns this, so every client behaves the same way; the web form's `.trim()` becomes a convenience, not the rule.
+1. **Normalised** by removing leading and trailing whitespace. Interior whitespace is kept as it is. **Confirmed by the owner:** trim, then validate, then store the trimmed value. The domain owns this, so every client behaves the same way; the web form's `.trim()` becomes a convenience, not the rule.
 2. **Required and non-blank** after normalisation.
 3. **No control characters**, defined as .NET `char.IsControl`. That is the definition `EmailAddress` uses, whose ranges the email constraint was verified to agree with.
 4. **At most 100 characters**, counted in **Unicode code points** after normalisation. That is what PostgreSQL's `char_length` counts, so a later database check could state the same rule exactly.
 
 The rules live in the domain, in `User.UpdateProfile`, and the values stored are the normalised ones. A violation is refused with a message naming the field. Examples: *"First name is required."*, *"Display name must be at most 100 characters."*, *"Last name must not contain control characters."*
 
-**Not amended here:** USR-C1 (create) and the database. **[confirm]** `User.CreateHuman` still checks only that first and last names are non-blank. Adopting these rules at creation would change USR-C1's behaviour, so it is a separate decision (Known Gaps, *Name rules differ between USR-C1 and USR-C2*). There are no database CHECK constraints for the same reason: they would constrain creation too.
+**Not amended here, confirmed by the owner:** USR-C1 (create) and the database. `User.CreateHuman` still checks only that first and last names are non-blank. Adopting these rules at creation would change USR-C1's behaviour, so it is a separate decision (Known Gaps, *Name rules differ between USR-C1 and USR-C2*). **The temporary state is intentional:** a value may be valid at creation under USR-C1 and invalid for a later edit under USR-C2. That is a known inconsistency, not an accidental one. There are no database CHECK constraints for the same reason: they would constrain creation too.
 
 #### No change (G5)
 
@@ -1710,7 +1710,7 @@ USR-C2 does not take the D6 row lock. That lock orders commands that depend on l
 | `GET /api/users/{userId}` | — | `200` with exactly `{ userId, firstName, lastName, displayName }` | `400 { error }` for an unknown user, the System actor, or a missing `user.read`; `401` with no carrier |
 | `POST /api/users/{userId}/profile` | `{ "firstName", "lastName", "displayName" }` | `204`, no body, whether or not anything changed | `400 { error }` for a missing or invalid field, the System actor, an unknown user, or a missing `user.update`; `401` with no carrier |
 
-`POST`, like every existing command endpoint, is covered by the cross-site guard. A body missing a field is `400` before dispatch, as the existing endpoints treat missing inputs.
+**`POST`, confirmed by the owner:** this is a command, not a generic resource replacement, and every existing command endpoint uses `POST`. It is covered by the cross-site guard. A body missing a field is `400` before dispatch, as the existing endpoints treat missing inputs.
 
 ### Change control (G1)
 
