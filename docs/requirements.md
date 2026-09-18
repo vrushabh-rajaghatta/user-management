@@ -2064,6 +2064,12 @@ No workbook is edited. The following are outstanding against the frozen document
 - the `RevocationReason` vocabulary gains `PasswordChangeAttemptsExceeded` (*Session revocation — reason semantics*, item 4);
 - `MaxFailedLoginAttempts` gains its second meaning (L2).
 
+### Implementation notes
+
+- **"Active" under the lock is the pipeline's own definition.** The re-check uses `IUserSessionRepository.FindActiveAsync`, which applies the idle timeout widened by the same enforcement tolerance `CallerEstablisher` applies. A session the pipeline has just accepted is therefore not refused by the re-check.
+- **Nothing on the HTTP path tracks the session before the handler.** `CallerEstablisher` reads with `AsNoTracking`, and the activity write is a raw SQL `UPDATE`. So the handler's read under the lock comes from the database, not from a tracked copy (`docs/architecture.md`, *Lock first*).
+- **G4 classification.** `user_session.failed_password_change_attempts` is classified as mutable, not governed by G4, in the immutability drift test, which forces every new column to be classified. `A_mutable_column_is_still_writable` covers it.
+
 ### Not included
 
 - Behaviour 11: per-IP and per-address limiting for anonymous commands. CRD-C2's first-tenant blocker is untouched.
@@ -2542,9 +2548,11 @@ dependency and no other.
 
 **Deferred to:** its own story, before the first tenant.
 
-## CRD-C4 does not limit current-password attempts
+## CRD-C4 does not limit current-password attempts — RESOLVED
 
-**This is a known security gap, recorded by owner ruling.**
+**State:** resolved by *CRD-C4 — limiting current-password attempts per session* (L1–L8). After the effective `MaxFailedLoginAttempts` consecutive wrong or locked current-password attempts, the session making them is ended (`PasswordChangeAttemptsExceeded`). The credential is never locked and the account's other sessions are untouched. What follows is the gap as it was recorded.
+
+**This was a known security gap, recorded by owner ruling.**
 
 **Rule (CRD-C4, frozen):** *"Must not be usable to probe the current password —
 constant-time comparison, generic error."*
@@ -2570,7 +2578,7 @@ rate limited.
 
 > **Known limitation, restated for the My account page (M1, 2026-09-18).** CRD-C4 currently has no attempt limit for incorrect current-password submissions. The account page is not blocked on this limitation, because the endpoint already permits the operation to any authenticated session. Rate or attempt limiting is a separate security decision. **Building the UI does not approve unlimited attempts as a security design.**
 
-> **Decided (L1–L7, 2026-09-18), being closed.** The owner chose to end the session after N consecutive wrong current passwords, rather than lock the credential. See *CRD-C4 — limiting current-password attempts per session*. This entry is removed when that story merges.
+> **Decided (L1–L7, 2026-09-18), and closed by that story.** The owner chose to end the session after N consecutive wrong current passwords, rather than lock the credential.
 
 ## My account offers Change password to every caller (M10)
 
@@ -2648,8 +2656,8 @@ and in the handlers that predate it) until separately amended.
 4. **UM `RevocationReason` vocabulary.** Formally establish the controlled
    vocabulary. Codes in use: `Logout` (SES-C2), `PasswordChanged` (CRD-C4),
    `AdminRevoked` (SES-C3, administrator SES-C4), `SignOutEverywhere` (self
-   SES-C4), `UserDeactivated` (USR-C4, not yet implemented). The entity model's
-   list currently ends open ("…").
+   SES-C4), `UserDeactivated` (USR-C4), `PasswordChangeAttemptsExceeded` (CRD-C4's
+   attempt limit, L5). The entity model's list currently ends open ("…").
 5. **USR-C4 spelling — RESOLVED** by USR-C4/C5 D4: sessions use the code
    `UserDeactivated`, role assignments the reason `User deactivated`.
 6. **CRD-C4 departure.** CRD-C4 writes the code `PasswordChanged` into both the

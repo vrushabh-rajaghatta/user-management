@@ -436,7 +436,7 @@ Never present a pre-check as the integrity guarantee, and never remove a databas
 
 ### Serialising commands on one user
 
-**Commands whose correctness depends on a user's lifecycle status take that user's row lock before reading it.** `IUserRepository.FindForUpdateAsync` locks the `app_user` row (`SELECT … FOR UPDATE`) and then loads it, inside the unit of work's transaction. USR-C4, USR-C5 and AUT-C1 GrantRole all do this (docs/requirements.md, "USR-C4 / USR-C5", D6).
+**Commands whose correctness depends on a user's lifecycle status take that user's row lock before reading it.** `IUserRepository.FindForUpdateAsync` locks the `app_user` row (`SELECT … FOR UPDATE`) and then loads it, inside the unit of work's transaction. USR-C4, USR-C5 and AUT-C1 GrantRole all do this (docs/requirements.md, "USR-C4 / USR-C5", D6). So does CRD-C4 ChangePassword. Its per-session attempt limit is decided under the lock: the session is re-read under it, and two attempts on one session cannot both see the count below the threshold (docs/requirements.md, "CRD-C4 — limiting current-password attempts per session").
 
 Read Committed alone cannot stop a grant that read `Active` from committing after a deactivation. No constraint spans "this user is inactive" and "this assignment is live", so the ordering has to come from the lock. Whichever command locks first decides the order; the other waits, then re-reads. Do not solve a race like this with retries or after-the-fact cleanup.
 
