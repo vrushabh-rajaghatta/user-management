@@ -1788,7 +1788,7 @@ React Hook Form owns the form's lifecycle and its dirty state. Zod carries only 
 
 §12 says *"A schema never rejects input the server would accept."* The server's rules cannot be mirrored in the browser without breaking that:
 
-- **Trimming differs.** JavaScript's `trim()` removes U+FEFF, which .NET's `Trim()` keeps; .NET removes U+0085, which JavaScript keeps. A value of only `"﻿"` is blank to the browser and accepted by the server.
+- **Trimming differs.** JavaScript's `trim()` removes U+FEFF, which .NET's `Trim()` keeps; .NET removes U+0085, which JavaScript keeps. A value of only `"\uFEFF"` is blank to the browser and accepted by the server.
 - **HTML `maxLength` counts UTF-16 units.** `maxLength="100"` would block 100 astral characters (200 units), which the server accepts.
 
 So the client asks only that each field is present, as a non-empty string. Everything else is the server's, and its `400` is shown **word for word, at the form level**. The message names the field, but §7 forbids branching on message text, so it is not mapped to a field.
@@ -1830,7 +1830,7 @@ Edit profile is shown to holders of `user.update` on every row, active and inact
 
 - **UI-1** Edit profile appears for `user.update` on active and inactive rows, and never without it. The USR-C4/C5 matrix test is updated to the amended table.
 - **UI-2** Opening reads GetUser. The form shows the returned values; loading shows no form; a failed read shows the error and a **Try again** that reads again.
-- **UI-3** Presence only. An empty field sends nothing and is flagged. A whitespace-only value, `"﻿"`, a control character and 101 characters **are sent**, and the server's refusal is shown word for word. There is no `maxLength` attribute on the inputs.
+- **UI-3** Presence only. An empty field sends nothing and is flagged. A whitespace-only value, `"\uFEFF"`, a control character and 101 characters **are sent**, and the server's refusal is shown word for word. There is no `maxLength` attribute on the inputs.
 - **UI-4** Save sends exactly the typed values (untrimmed) to `POST /api/users/{userId}/profile`. On `204` it announces, refreshes the list and that user's GetUser query, and closes. It is busy while sending, and sends once.
 - **UI-5** Guard in the dialog: once dirty, Cancel, Escape and the close button each ask "Discard changes?". Keep editing keeps the values; Discard closes. When not dirty, they close without asking. After a successful save there is no prompt.
 - **UI-6** Guard on navigation: a dirty form blocks in-app navigation with the same prompt, and `beforeunload` is registered while dirty and removed when clean.
