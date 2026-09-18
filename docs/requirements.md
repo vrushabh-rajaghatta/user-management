@@ -1982,6 +1982,90 @@ The section says in one sentence what each action does. It lists no sessions, be
 
 ---
 
+## CRD-C4 — limiting current-password attempts per session
+
+**Status:** Draft, 2026-09-18. The owner has decided L1–L7. The mechanism (*How it is built*) and L8 await the owner's confirmation before this is frozen. It closes the Known Gap *CRD-C4 does not limit current-password attempts*, whose M1 restatement made it a separate security decision.
+
+### Requirement
+
+Someone holding an authenticated session, stolen or left unattended, must not be able to guess the account's current password through CRD-C4 without limit. The control is scoped to **the session showing the suspicious behaviour**. It never locks the credential, never touches the account's other sessions, and never changes sign-in's own lockout.
+
+This complements A5. A **successful** password change ends the other sessions. **Repeated failed** attempts end the session that is making them.
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **L1** | **End the session after N consecutive wrong current passwords.** Not a credential lockout: no `AccountLocked`, no change to `FailedAttemptCount` or `LockedUntil`, and no effect on other sessions or on sign-in. |
+| **L2** | **N is the effective `MaxFailedLoginAttempts`** (5 at baseline). *This setting governs both anonymous sign-in failures and the maximum consecutive failed current-password attempts permitted within one authenticated session.* The reuse is deliberate: a tenant that lowers it to 3 gets 3 for both. |
+| **L3** | **A successful password change resets the count to 0.** Revoking the session ends the count with the session, because a revoked session cannot be used again. There is no time-based decay. |
+| **L4** | **The Nth wrong attempt returns `401` and clears the carrier cookie.** Attempts 1 to N−1 return the existing uniform `400` (*"The password could not be changed."*). From the Nth on, the session cannot be used. |
+| **L5** | **The new controlled revocation code is `PasswordChangeAttemptsExceeded`**, recorded as change control. The revocation is audited as `SessionRevoked`, with the account holder as actor and the code in Before/After. The wrong attempts themselves stay unaudited, consistent with CRD-C4 and AUD-D42. |
+| **L6** | **The counter is `user_session.FailedPasswordChangeAttempts`**: an `INTEGER NOT NULL DEFAULT 0`, with `CHECK (>= 0)`. It belongs to the session, because the threat is a compromised session, not a compromised credential. It is purged with the session. |
+| **L7** | **No UI change.** A `401` already means local sign-out, then sign-in (My account, M9). There is no special explanation in this story. |
+| **L8** | *Proposed, awaiting the owner:* **a refusal because the credential is locked counts too.** Today a locked credential and a wrong password return the same message and pay the same hash cost, so time does not tell them apart. If only a wrong password wrote the counter, the extra write would make the two distinguishable by timing. Counting both keeps them alike. A locked credential cannot be changed in any case, so a session repeatedly trying is just as suspicious. |
+
+### What counts, what resets
+
+| CRD-C4 outcome | Counter | Response |
+| --- | --- | --- |
+| Wrong current password | **+1**, committed even though the command refuses | `400` below N; at N, **session revoked** and `401` |
+| Credential locked (L8) | **+1**, as above | as above |
+| Current password right, new password refused (policy or reuse) | unchanged | `400`, as today |
+| Success | **reset to 0** | `204`, as today |
+| The session is no longer active once the lock is held (see below) | unchanged | `401` |
+
+"Consecutive" means consecutive **within the session**. A refusal of the new password proves knowledge of the current one, but it is not a success, so it neither counts nor resets.
+
+### How it is built (for confirmation)
+
+1. **The refusal must commit.** CRD-C4 refuses today by throwing inside its transaction, which would roll the counter back with everything else. The wrong-password and locked branches instead **return an outcome**: `Refused` or `SessionEnded`. The transaction then commits the counter, and the revocation and its record with it. The endpoint maps `Refused` to the unchanged uniform `400`, and `SessionEnded` to `401` with the cookie cleared. The other refusals (no identity, not local, not active; the new password's policy and reuse checks) stay as they are.
+2. **Atomic: exactly one request crosses N.** The handler first takes the **`app_user` row lock**, using the established *Serialising commands on one user* pattern (`IUserRepository.FindForUpdateAsync`, `docs/architecture.md`). It reads the clock after the lock, then loads the session and **re-checks that it is still active**. Two requests on one session at N−1 are therefore serialised: the first crosses N and revokes the session, and the second finds it revoked and answers `401` without counting. The same lock orders a wrong attempt against a concurrent success, and against USR-C4's cascade.
+3. **The revocation** uses `UserSession.Revoke(now, caller, PasswordChangeAttemptsExceeded)` and the shared `SessionRevocations.Declare`. The actor is the account holder. The audit Reason is the explanation *"Too many incorrect current passwords while changing the password"*. The code reaches the trail through Before/After (R1).
+4. **Audit declarations.** `ChangePasswordCommand` already declares `SessionRevoked` (A5), so no catalogue seed changes and `AuditEventCatalogue.Version` is not bumped.
+5. **The migration** adds the column with its default and CHECK. Existing sessions start at 0.
+
+### Acceptance Criteria
+
+- **AC-1** Wrong current password below N: the uniform `400`, and the counter is **persisted** (read back in a fresh context) as 1, 2, … N−1. The credential's `FailedAttemptCount` and `LockedUntil` are unchanged. No audit record is written.
+- **AC-2** The Nth wrong attempt:
+  - `401`, and the response clears the carrier cookie;
+  - the session is revoked with code `PasswordChangeAttemptsExceeded`, `RevokedBy` = the account holder;
+  - exactly one `SessionRevoked` is written, with the explanation above and the code in After;
+  - any further request on that carrier is `401`.
+- **AC-3** The blast radius:
+  - the user's other sessions stay active;
+  - the credential is not locked, and no `AccountLocked` is written;
+  - sign-in with the right password still works.
+- **AC-4** Policy: with an effective `MaxFailedLoginAttempts` of 3, the session is revoked on the 3rd wrong attempt, not the 5th.
+- **AC-5** Reset: N−1 wrong attempts, then a success, sets the counter to 0. N−1 further wrong attempts do not revoke.
+- **AC-6** A correct current password with a refused new password (policy or reuse) leaves the counter unchanged.
+- **AC-7** (L8) A refusal because the credential is locked counts, and the Nth revokes.
+- **AC-8** Concurrency, against PostgreSQL:
+  - at N−1, two concurrent wrong attempts on one session produce **exactly one** revocation and **exactly one** `SessionRevoked`, and both answer `401`;
+  - at N−2, two concurrent wrong attempts both count, and exactly one crosses.
+- **AC-9** The database refuses a negative `FailedPasswordChangeAttempts` (CHECK).
+- **AC-10** The web client: My account's existing test already asserts that a `401` from change-password leads to sign-in. No UI change.
+- **AC-11** Browser, in the dev stack, with each state change approved by the owner: N wrong current passwords (typed by the owner) land on sign-in. The session row shows the code, and one `SessionRevoked` is in the trail.
+
+### Change control
+
+No workbook is edited. The following are outstanding against the frozen documents:
+
+- the UM entity model gains `user_session.FailedPasswordChangeAttempts`;
+- the `RevocationReason` vocabulary gains `PasswordChangeAttemptsExceeded` (*Session revocation — reason semantics*, item 4);
+- `MaxFailedLoginAttempts` gains its second meaning (L2).
+
+### Not included
+
+- Behaviour 11: per-IP and per-address limiting for anonymous commands. CRD-C2's first-tenant blocker is untouched.
+- Forwarded-headers handling.
+- Any change to sign-in's lockout.
+- A sign-in page explanation after the revocation (L7).
+- Other password-change abuse. This limits guessing through an authenticated session only, and sign-in's lockout remains a separate control.
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
@@ -2477,6 +2561,8 @@ rate limited.
 **Where recorded:** the class doc of `ChangePasswordCommandHandler`.
 
 > **Known limitation, restated for the My account page (M1, 2026-09-18).** CRD-C4 currently has no attempt limit for incorrect current-password submissions. The account page is not blocked on this limitation, because the endpoint already permits the operation to any authenticated session. Rate or attempt limiting is a separate security decision. **Building the UI does not approve unlimited attempts as a security design.**
+
+> **Decided (L1–L7, 2026-09-18), being closed.** The owner chose to end the session after N consecutive wrong current passwords, rather than lock the credential. See *CRD-C4 — limiting current-password attempts per session*. This entry is removed when that story merges.
 
 ## My account offers Change password to every caller (M10)
 
