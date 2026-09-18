@@ -46,6 +46,20 @@ services:
       - persistence-bin:/source/src/Platform/Ligature.Platform.Persistence/bin
       - sharedkernel-obj:/source/src/Shared/Ligature.SharedKernel/obj
       - sharedkernel-bin:/source/src/Shared/Ligature.SharedKernel/bin
+
+    environment:
+      # The DEVELOPMENT MAIL SINK (docs/architecture.md §8). Activation and
+      # reset messages are written to .secrets/mail in the working tree —
+      # visible here through the /source mount, git-ignored with the rest of
+      # .secrets/ — instead of being sent. up.sh creates the directory; the sink
+      # never does. Only this overlay sets it: compose.yaml keeps its production
+      # shape, and a Release build refuses the setting outright.
+      LIGATURE_MAIL_DEV_SINK_DIRECTORY: /source/.secrets/mail
+
+      # The origin the links are built from: the web client, where /activate
+      # and /reset-password are served.
+      LIGATURE_PUBLIC_BASE_URL: https://localhost:5173
+
     healthcheck:
       # LIVENESS, not readiness. It proves Kestrel is listening and the request
       # pipeline runs. It says nothing about the database, and it deliberately

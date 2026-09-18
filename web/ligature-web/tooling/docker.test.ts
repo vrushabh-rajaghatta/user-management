@@ -237,6 +237,18 @@ describe("the development overlay", () => {
     expect(host?.build?.target).toBe("host-dev");
   });
 
+  /**
+   * The development mail sink (docs/architecture.md §8) is switched on here
+   * and nowhere else: compose.yaml keeps its production shape, and a Release
+   * build refuses the setting anyway.
+   */
+  it("writes development mail to .secrets/mail through the working-tree mount, and only in the overlay", () => {
+    expect(host?.environment?.LIGATURE_MAIL_DEV_SINK_DIRECTORY).toBe("/source/.secrets/mail");
+    expect(host?.environment?.LIGATURE_PUBLIC_BASE_URL).toBe("https://localhost:5173");
+    expect(host?.volumes ?? []).toContain("./:/source");
+    expect(read(BASE).services?.host?.environment?.LIGATURE_MAIL_DEV_SINK_DIRECTORY).toBeUndefined();
+  });
+
   it.each(PROJECTS.flatMap((project) => [`${project}/obj`, `${project}/bin`]))(
     "keeps container build output for %s out of the bind-mounted tree",
     (directory) => {
