@@ -97,6 +97,42 @@ async function announced(text: string) {
   });
 }
 
+/**
+ * Whether "Discard changes?" appears at ANY point, not only at the end. A
+ * prompt that flashes up and is then unmounted by the sign-out would pass a
+ * check of the final state, so every change to the document is watched.
+ */
+function watchForDiscardPrompt() {
+  let seen = false;
+
+  // The ADDED nodes are inspected, not the document when the callback runs: a
+  // prompt mounted and unmounted within one batch is gone by then.
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      for (const node of Array.from(record.addedNodes)) {
+        if (node.textContent?.includes("Discard changes?") === true) {
+          seen = true;
+        }
+      }
+    }
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  return {
+    seen: () => {
+      for (const record of observer.takeRecords()) {
+        for (const node of Array.from(record.addedNodes)) {
+          if (node.textContent?.includes("Discard changes?") === true) {
+            seen = true;
+          }
+        }
+      }
+      observer.disconnect();
+      return seen;
+    },
+  };
+}
+
 const unloadCancelled = () => {
   const event = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(event);
@@ -425,10 +461,11 @@ describe("sign out everywhere", () => {
     await fill(user, { current: "old secret" });
     await user.click(within(sessions()).getByRole("button", { name: "Sign out everywhere" }));
     const dialog = await screen.findByRole("dialog", { name: "Sign out everywhere?" });
+    const prompt = watchForDiscardPrompt();
     await user.click(within(dialog).getByRole("button", { name: "Sign out everywhere" }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "Sign in" })).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull();
+    expect(prompt.seen()).toBe(false);
   });
 
   it("does not ask to discard a started password form when the Sign out button is used", async () => {
@@ -437,10 +474,11 @@ describe("sign out everywhere", () => {
     await page();
 
     await fill(user, { current: "old secret" });
+    const prompt = watchForDiscardPrompt();
     await user.click(screen.getByRole("button", { name: "Sign out" }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "Sign in" })).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull();
+    expect(prompt.seen()).toBe(false);
   });
 });
 

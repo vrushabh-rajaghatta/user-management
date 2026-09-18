@@ -22,8 +22,11 @@ import { SIGN_IN_PATH } from "../paths";
  * boundary reports it, and the application signs the caller out.
  *
  * Local sign-out comes BEFORE the navigation. Signing out unmounts the signed-in
- * page, and with it any unsaved-changes guard, so a password form left
- * half-typed does not ask "Discard changes?" about a session that has ended.
+ * page, and with it any unsaved-changes guard, so the navigation that follows is
+ * never held for a half-typed password form. (In the other order the guard
+ * would hold it, and only the sign-out's unmounting would abandon the hold. No
+ * prompt appears either way, because both updates land in one render, but that
+ * is batching, not design.)
  */
 export function useSignOutEverywhere() {
   const { signedOut } = useAuthSession();
