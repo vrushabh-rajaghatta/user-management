@@ -7,6 +7,7 @@ using Ligature.Platform.Application.Users.Commands.DeactivateUser;
 using Ligature.Platform.Application.Users.Commands.GrantRole;
 using Ligature.Platform.Application.Users.Commands.ReactivateUser;
 using Ligature.Platform.Application.Users.Commands.RevokeRole;
+using Ligature.Platform.Application.Users.Commands.UpdateUserProfile;
 using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
@@ -171,6 +172,16 @@ public sealed class AuditDeclarationsTests
         Assert.Equal(["RoleRevoked"], declaration.Codes);
     }
 
+    /// <summary>USR-C2: one record, and only when something changed.</summary>
+    [Fact]
+    public void USR_C2_declares_UserProfileChanged()
+    {
+        var declaration = AuditDeclarations.For(typeof(UpdateUserProfileCommand));
+
+        Assert.Equal("UserManagement", declaration!.OwningContext);
+        Assert.Equal(["UserProfileChanged"], declaration.Codes);
+    }
+
     /// <summary>
     /// USR-C4: the cascade's four events, and deliberately NOT TokenInvalidated.
     /// Its frozen definition requires a SupersededBy token and deactivation has
@@ -244,6 +255,7 @@ public sealed class AuditDeclarationsTests
                 typeof(ReissueActivationLinkCommand),
                 typeof(GrantRoleCommand), typeof(RevokeRoleCommand),
                 typeof(DeactivateUserCommand), typeof(ReactivateUserCommand),
+                typeof(UpdateUserProfileCommand),
                 typeof(UnlockAccountCommand),
                 typeof(RevokeSessionCommand), typeof(RevokeUserSessionsCommand),
                 typeof(SignOutEverywhereCommand),

@@ -111,16 +111,32 @@ public sealed class User : AggregateRoot<UserId>
         return true;
     }
 
-    public bool UpdateProfile(
-    string firstName,
-    string lastName,
-    string displayName)
-    {
-        if (string.IsNullOrWhiteSpace(firstName))
-            throw new DomainException("First name cannot be empty.");
+    /// <summary>The most a name may hold, in Unicode code points (USR-C2 G3).</summary>
+    public const int MaxNameLength = 100;
 
-        if (string.IsNullOrWhiteSpace(lastName))
-            throw new DomainException("Last name cannot be empty.");
+    /// <summary>
+    /// USR-C2 (docs/requirements.md, "USR-C2 — Update User Profile", G3 as
+    /// confirmed). Each name is TRIMMED, then VALIDATED, then STORED trimmed:
+    /// required and non-blank, no control characters (char.IsControl, the
+    /// definition EmailAddress uses), at most 100 Unicode CODE POINTS — what
+    /// PostgreSQL's char_length counts, not string.Length's UTF-16 units.
+    /// Interior whitespace is kept.
+    ///
+    /// Compared AFTER normalisation, so " Alice " against a stored "Alice" is
+    /// no change: nothing is mutated and false is returned.
+    ///
+    /// USR-C1's CreateHuman does not apply these rules; that difference is
+    /// known and deliberate until decided (Known Gaps).
+    /// </summary>
+    /// <returns>Whether anything changed.</returns>
+    public bool UpdateProfile(
+        string firstName,
+        string lastName,
+        string displayName)
+    {
+        firstName = NormalisedName("First name", firstName);
+        lastName = NormalisedName("Last name", lastName);
+        displayName = NormalisedName("Display name", displayName);
 
         var changed =
             FirstName != firstName ||
@@ -135,6 +151,22 @@ public sealed class User : AggregateRoot<UserId>
         DisplayName = displayName;
 
         return true;
+    }
+
+    private static string NormalisedName(string field, string? value)
+    {
+        var normalised = (value ?? string.Empty).Trim();
+
+        if (normalised.Length == 0)
+            throw new DomainException($"{field} is required.");
+
+        if (normalised.Any(char.IsControl))
+            throw new DomainException($"{field} must not contain control characters.");
+
+        if (normalised.EnumerateRunes().Count() > MaxNameLength)
+            throw new DomainException($"{field} must be at most {MaxNameLength} characters.");
+
+        return normalised;
     }
 
     public void Deactivate(DeactivationStamp deactivation)

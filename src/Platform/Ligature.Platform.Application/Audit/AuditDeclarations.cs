@@ -5,6 +5,7 @@ using Ligature.Platform.Application.Users.Commands.GrantRole;
 using Ligature.Platform.Application.Users.Commands.DeactivateUser;
 using Ligature.Platform.Application.Users.Commands.ReactivateUser;
 using Ligature.Platform.Application.Users.Commands.RevokeRole;
+using Ligature.Platform.Application.Users.Commands.UpdateUserProfile;
 using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
@@ -97,6 +98,9 @@ public static class AuditDeclarations
             // carrying the required reason. A refusal declares nothing.
             [typeof(GrantRoleCommand)] = new("UserManagement", ["RoleGranted"]),
             [typeof(RevokeRoleCommand)] = new("UserManagement", ["RoleRevoked"]),
+
+            // USR-C2 — one record, and only when a name actually changed.
+            [typeof(UpdateUserProfileCommand)] = new("UserManagement", ["UserProfileChanged"]),
 
             // USR-C4 — the cascade, one operation caused by UserDeactivated.
             // NOT TokenInvalidated: its frozen definition requires a
