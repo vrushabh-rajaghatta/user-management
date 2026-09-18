@@ -3,10 +3,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/shared/api/errors";
 import { ConfirmAction } from "@/shared/components/ConfirmAction";
 import { FormField } from "@/shared/forms/FormField";
-import { useResetUserPassword, useSignOutUserEverywhere } from "../hooks/useUserActions";
+import { useReissueActivationLink, useResetUserPassword, useSignOutUserEverywhere } from "../hooks/useUserActions";
 import { reasonSchema, type UserRow } from "../schemas/users";
 
-export type UserAction = "reset-password" | "sign-out-everywhere";
+export type UserAction = "resend-activation" | "reset-password" | "sign-out-everywhere";
 
 const UNKNOWN = "The action could not be completed. Try again.";
 
@@ -25,6 +25,14 @@ interface ActionCopy {
  * the caller, so sign-out says what happens if it is.
  */
 const COPY: Record<UserAction, ActionCopy> = {
+  "resend-activation": {
+    title: (name) => `Resend activation link to ${name}`,
+    description:
+      "They'll be emailed a new link to activate their account. Any earlier activation link stops working. You won't see the link.",
+    confirm: "Resend link",
+    busy: "Sending…",
+    done: (name) => `A new activation link has been issued for ${name}.`,
+  },
   "reset-password": {
     title: (name) => `Reset password for ${name}`,
     description:
@@ -57,7 +65,7 @@ interface UserActionDialogProps {
 }
 
 /**
- * The confirmation for one row action, with the reason both commands require.
+ * The confirmation for one row action, with the reason every one of them requires.
  *
  * Mounted per opening and kept mounted while it closes, so a reason or a
  * refusal from an earlier opening never carries over. A server 400 keeps the
@@ -68,9 +76,12 @@ export function UserActionDialog({ open, user, action, returnFocus, onClose, onC
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | undefined>(undefined);
 
-  const reset = useResetUserPassword();
-  const signOut = useSignOutUserEverywhere();
-  const mutation = action === "reset-password" ? reset : signOut;
+  const mutations = {
+    "resend-activation": useReissueActivationLink(),
+    "reset-password": useResetUserPassword(),
+    "sign-out-everywhere": useSignOutUserEverywhere(),
+  };
+  const mutation = mutations[action];
 
   const copy = COPY[action];
 

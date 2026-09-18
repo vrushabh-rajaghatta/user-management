@@ -331,7 +331,7 @@ The write path is the correction that matters: a `Transactional` record would be
 
 **Status:** Approved and frozen — the row projection, the endpoint and identifier semantics, pagination, sorting, filtering, and the implementation contract. All decided 2026-09-17 by owner decision. Implemented (#52).
 
-**Amendment 1 (2026-09-18):** adds one derived field, `activationPending`, to the row. See *Amendment 1 — `activationPending`* below. It changes P1, the excluded-fields table and *Lifecycle status*, each explicitly (*Rules*, 4). Nothing else in this contract changes. Not yet implemented.
+**Amendment 1 (2026-09-18):** adds one derived field, `activationPending`, to the row. See *Amendment 1 — `activationPending`* below. It changes P1, the excluded-fields table and *Lifecycle status*, each explicitly (*Rules*, 4). Nothing else in this contract changes. Implemented by `UserListReader`.
 
 ### Requirement
 
@@ -696,23 +696,36 @@ Both are presentation rules. The commands' own refusals are unchanged, and remai
 
 #### Query
 
-The row is still read in one statement per page, with no count. The derivation is a correlated existence test on the identities and credentials of the returned users only:
+The row is still read in one statement per page, with no count. **The page is chosen first**, and the derivation runs only over the rows it returns:
 
 ```sql
-SELECT u.id, u.display_name, u.email,
+SELECT p.id, p.display_name, p.email,
        EXISTS (SELECT 1 FROM user_identity i
-               WHERE i.user_id = u.id AND i.identity_type = 'Local')
+               WHERE i.user_id = p.id AND i.identity_type = 'Local')
        AND NOT EXISTS (SELECT 1 FROM user_identity i
-                       JOIN credential c ON c.user_identity_id = i.id
-                       WHERE i.user_id = u.id) AS activation_pending
-FROM app_user u
-WHERE u.actor_type = 'Human'
-ORDER BY u.display_name COLLATE "unicode", u.id
-OFFSET (page − 1) × pageSize
-LIMIT pageSize + 1
+                       WHERE i.user_id = p.id
+                         AND EXISTS (SELECT 1 FROM credential c
+                                     WHERE c.user_identity_id = i.id)) AS activation_pending
+FROM (SELECT id, display_name, email
+      FROM app_user
+      WHERE actor_type = 'Human'
+      ORDER BY display_name COLLATE "unicode", id
+      OFFSET (page − 1) × pageSize
+      LIMIT pageSize + 1) p
+ORDER BY p.display_name COLLATE "unicode", p.id
 ```
 
-The existing indexes serve both tests: `user_identity (user_id, actor_type)` and `credential (user_identity_id, identity_type)`. The implementation measures the plan against *Page-size values*' 100,000-user data and records it here. The derivation must not turn the top-N sort into a full join.
+The outer order is the contract order again: SQL does not carry a subquery's order out of it, and re-sorting at most 101 rows costs nothing measurable.
+
+**Measured**, on the deployment image (`postgres:18-alpine`), 100,000 human users, each with one local identity, about half with a credential, and the existing indexes `user_identity (user_id, actor_type)` and `credential (user_identity_id, identity_type)`:
+
+| Form | First page | Deep page (offset 89,900) |
+| --- | --- | --- |
+| Three fields, before the amendment | 15 ms | 103 ms |
+| Derived in the same `SELECT` as the page | 87 ms | 560 ms |
+| **Page first, then derived** (adopted) | **11 ms** | **88 ms** |
+
+Derived in the same `SELECT`, PostgreSQL hashed both existence tests over the whole of `user_identity` and `credential` on every request. Page first, each test is an index probe per returned row (26 and 101 probes). The top-N sort is unchanged, and no new index is needed.
 
 ### Adding a field later
 

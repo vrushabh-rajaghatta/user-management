@@ -18,14 +18,20 @@ public sealed record UsersResult(
     bool HasMore);
 
 /// <summary>
-/// A user-list row: exactly these three fields (P1). UserId is the only
-/// identifier; DisplayName and Email are presentation, and a client must not
-/// key, route, cache or match on either (P4).
+/// A user-list row: exactly these four fields (P1, as amended). UserId is the
+/// only identifier; DisplayName and Email are presentation, and a client must
+/// not key, route, cache or match on either (P4).
 /// </summary>
 /// <param name="Email">
 /// Nullable because the column is. Every creation path supplies an address,
 /// but nothing in the database requires one, and the row does not claim a
 /// guarantee the schema does not make.
+/// </param>
+/// <param name="ActivationPending">
+/// Amendment 1, presentation data: true when the user holds a local identity
+/// and no credential. False means only "not pending", never "activated" or
+/// "can sign in". It authorises nothing; CRD-C7 and CRD-C5 decide by their
+/// own rules.
 /// </param>
 public sealed record UserListRow(
     UserId UserId,

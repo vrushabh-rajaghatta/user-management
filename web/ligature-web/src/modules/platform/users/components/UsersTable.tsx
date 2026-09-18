@@ -47,6 +47,41 @@ function searchFor(page: number): string {
   return page === 1 ? "" : `?page=${String(page)}`;
 }
 
+interface Allowed {
+  readonly resend: boolean;
+  readonly reset: boolean;
+  readonly revoke: boolean;
+}
+
+const LABEL: Record<UserAction, string> = {
+  "resend-activation": "Resend activation link",
+  "reset-password": "Reset password",
+  "sign-out-everywhere": "Sign out everywhere",
+};
+
+/**
+ * What a row offers: the client's whole rule (USR-Q1 amendment 1), and nothing
+ * broader. activationPending decides between Resend and Reset and is never read
+ * as anything more; the commands keep their own eligibility checks.
+ */
+function actionsFor(user: UserRow, can: Allowed): UserAction[] {
+  const actions: UserAction[] = [];
+
+  if (user.activationPending && can.resend) {
+    actions.push("resend-activation");
+  }
+
+  if (!user.activationPending && can.reset) {
+    actions.push("reset-password");
+  }
+
+  if (can.revoke) {
+    actions.push("sign-out-everywhere");
+  }
+
+  return actions;
+}
+
 function actionsLabel(user: UserRow): string {
   return user.email === null ? `Actions for ${user.displayName}` : `Actions for ${user.displayName} (${user.email})`;
 }
@@ -78,8 +113,11 @@ export function UsersTable() {
 
   const requested = pageFrom(searchParams.get("page"));
 
-  const canReset = useCan(UserPermissions.resetPassword);
-  const canRevoke = useCan(UserPermissions.revokeSessions);
+  const can: Allowed = {
+    resend: useCan(UserPermissions.create),
+    reset: useCan(UserPermissions.resetPassword),
+    revoke: useCan(UserPermissions.revokeSessions),
+  };
 
   const [pending, setPending] = useState<Pending | undefined>(undefined);
   const [announcement, setAnnouncement] = useState("");
@@ -108,8 +146,7 @@ export function UsersTable() {
       <UsersRegion
         query={users}
         pathname={pathname}
-        canReset={canReset}
-        canRevoke={canRevoke}
+        can={can}
         triggers={triggers}
         onAction={open}
       />
@@ -145,8 +182,7 @@ export function UsersTable() {
 interface UsersRegionProps {
   readonly query: ReturnType<typeof useUsers>;
   readonly pathname: string;
-  readonly canReset: boolean;
-  readonly canRevoke: boolean;
+  readonly can: Allowed;
   readonly triggers: RefObject<Map<string, HTMLButtonElement>>;
   readonly onAction: (user: UserRow, action: UserAction) => void;
 }
@@ -157,7 +193,7 @@ interface UsersRegionProps {
  * empties — no users at all, or a page past the end, which is a valid answer
  * and not an error.
  */
-function UsersRegion({ query, pathname, canReset, canRevoke, triggers, onAction }: UsersRegionProps) {
+function UsersRegion({ query, pathname, can, triggers, onAction }: UsersRegionProps) {
   if (query.data === undefined) {
     if (query.isError) {
       return (
@@ -210,47 +246,49 @@ function UsersRegion({ query, pathname, canReset, canRevoke, triggers, onAction 
     },
   ];
 
-  // Offered per permission; with neither, there is no Actions column at all.
-  if (canReset || canRevoke) {
+  // Offered per permission and, for Resend and Reset, per row: hidden, never
+  // disabled. With no permission at all there is no Actions column, and a row
+  // with nothing to offer has no button rather than an empty menu.
+  if (can.resend || can.reset || can.revoke) {
     columns.push({
       header: "Actions",
       className: "w-12 text-right",
-      cell: (user) => (
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            ref={(element: HTMLButtonElement | null) => {
-              if (element === null) {
-                triggers.current.delete(user.userId);
-              } else {
-                triggers.current.set(user.userId, element);
-              }
-            }}
-            render={<Button variant="ghost" size="icon" aria-label={actionsLabel(user)} />}
-          >
-            <MoreHorizontalIcon aria-hidden="true" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {canReset ? (
-              <DropdownMenuItem
-                onClick={() => {
-                  onAction(user, "reset-password");
-                }}
-              >
-                Reset password
-              </DropdownMenuItem>
-            ) : null}
-            {canRevoke ? (
-              <DropdownMenuItem
-                onClick={() => {
-                  onAction(user, "sign-out-everywhere");
-                }}
-              >
-                Sign out everywhere
-              </DropdownMenuItem>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ),
+      cell: (user) => {
+        const actions = actionsFor(user, can);
+
+        if (actions.length === 0) {
+          return null;
+        }
+
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              ref={(element: HTMLButtonElement | null) => {
+                if (element === null) {
+                  triggers.current.delete(user.userId);
+                } else {
+                  triggers.current.set(user.userId, element);
+                }
+              }}
+              render={<Button variant="ghost" size="icon" aria-label={actionsLabel(user)} />}
+            >
+              <MoreHorizontalIcon aria-hidden="true" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {actions.map((action) => (
+                <DropdownMenuItem
+                  key={action}
+                  onClick={() => {
+                    onAction(user, action);
+                  }}
+                >
+                  {LABEL[action]}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      },
     });
   }
 

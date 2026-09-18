@@ -1,11 +1,15 @@
 import { z } from "zod";
 
 /**
- * USR-Q1's response (docs/requirements.md): exactly userId, displayName and
- * email per row, and page, pageSize and hasMore. No total.
+ * USR-Q1's response (docs/requirements.md): exactly userId, displayName, email
+ * and activationPending per row, and page, pageSize and hasMore. No total.
  *
  * email is nullable because the column is. userId is the only identifier; the
  * name and email are for people to read, never to key or match on (P4).
+ *
+ * activationPending (amendment 1) decides which actions a row offers and
+ * nothing else. False means only "not pending": never read it as "activated",
+ * "has a password" or "can sign in".
  */
 export const usersPageSchema = z.object({
   users: z.array(
@@ -13,6 +17,7 @@ export const usersPageSchema = z.object({
       userId: z.string().min(1),
       displayName: z.string(),
       email: z.string().nullable(),
+      activationPending: z.boolean(),
     }),
   ),
   page: z.number().int().positive(),
