@@ -84,6 +84,93 @@ Suggested structure:
 <Important constraints or decisions>
 -->
 
+## PRV-C1 — Provisioning
+
+**Status:** Partial entry. PRV-C1 predates this catalogue and is **not back-filled here**. Its definition is the frozen command catalogue's row *PRV-C1 ProvisionUserManagement*, whose inputs include the *"seeded role & permission catalog"*. This entry records only an amendment to that seed.
+
+The frozen UM specification defines the structure of roles and permissions, not their entries (spec §1.2: *"This document defines the structure and ownership, not the entries"*). The three seeded roles, and the permissions each confers, were an implementation decision recorded in `PlatformProvisioner`. So amending them does not reopen a frozen contract. Rule IDs `RP1`–`RP6` belong to the frozen specification, so this amendment takes none.
+
+### Amendment 1 — Security administrator role composition
+
+**Decided 2026-09-18 by owner decision.** It closes the role-composition gap AUT-Q2 left open.
+
+#### Decision
+
+> **`security-administrator` includes `user.read`.** This is the minimum user-directory visibility required to exercise its role-management responsibility through the Users UI. The Users table remains the standard Users view, and each action is still gated by its own permission.
+
+#### Requirement
+
+The system-seeded `security-administrator` role SHALL include `user.read` in addition to its existing permissions.
+
+The role's composition becomes, exactly:
+
+| Role | Permissions |
+| --- | --- |
+| `user-administrator` | *unchanged:* `user.create`, `user.read`, `user.update`, `user.deactivate`, `user.reactivate`, `user.resetpassword`, `user.unlock`, `identity.read`, `identity.manage`, `session.read`, `session.revoke` |
+| `security-administrator` | `role.read`, `role.manage`, `role.grant`, `role.revoke`, `securitypolicy.read`, `securitypolicy.change`, **`user.read`** |
+| `access-reviewer` | *unchanged:* `accessreview.read`, `user.read`, `role.read`, `identity.read`, `session.read`, `securitypolicy.read` |
+
+#### Why
+
+The role's own seeded description is *"Defines what roles mean and who holds them, and maintains the tenant's security policy."* Deciding who holds a role requires knowing who the users are. Without `user.read`, a user holding only this role holds `role.grant` and `role.revoke` but cannot reach the Users table, where *Manage roles* lives.
+
+This grants **visibility, not user-management capability**. The separation of the three roles stays clean:
+
+- `user-administrator` manages users.
+- `security-administrator` manages authorization and security policy, including who holds roles.
+- `access-reviewer` has read-only visibility across users, roles, identities, sessions and policy.
+
+The security administrator gains no `user.create`, `user.update`, `user.deactivate`, `user.reactivate`, `user.resetpassword`, `user.unlock`, `identity.*` or `session.*`.
+
+Alternatives rejected:
+
+- **A separate role-management entry point** gated by `role.read`. It still has to let the caller pick a user. A user picker that does not require `user.read` would be a second, weaker path into the user directory.
+- **Documenting that operators should grant both administrator roles.** A tenant that sets up a pure security administrator would get a role whose main job is unreachable. That is a defect, recorded instead of resolved.
+
+#### What does not change
+
+- **The permission catalogue.** It still has 19 permissions and 3 roles. This changes role composition, not the catalogue: the number of seeded grants goes from 23 to 24.
+- **No domain, migration, audit-catalogue or endpoint change.** `AuditEventCatalogue.Version` is not bumped.
+- **Agent assignability.** `user.read` is not `RequiresHumanActor`, and `security-administrator` already holds human-only permissions (`role.grant`, `role.manage`, `role.revoke`, `securitypolicy.change`). It was not agent-assignable before and is not now. RP6 is not engaged.
+- **PRV-C3.** The bootstrap administrator still holds both `user-administrator` and `security-administrator`.
+- **The Users view.** There is no special view for a security administrator. The Users page is gated by `user.read`, and each row action by its own permission. Page-level and action-level access are independent.
+
+#### One-way: accepted
+
+> Adding `user.read` to the system-seeded `security-administrator` role is a monotonic permission-catalogue change. Existing tenants receive the permission through catalogue synchronization. Removal is not supported until role-permission mutation is implemented in Slice 4.
+
+Concretely:
+
+- A tenant provisioned before this amendment receives the grant on its next deployment, through PRV-C2's permitted mutation M3 (*insert a role-permission grant*). The grant is attributed to the System actor and recorded in that run's `PermissionCatalogUpdated` record.
+- A later release that dropped the grant from the seed would be **refused** as `GrantMissingFromSeed` (PRV-C2, F5), and would commit nothing.
+- The only command that retracts a grant is AUT-C8 *RemovePermissionFromRole*, which is Slice 4 and not implemented. Even then, the frozen model's RO3 says tenant administrators cannot modify system roles. So retracting this grant is a release-level decision with its own change control, not a tenant action.
+
+The owner accepts this explicitly. It is a consequence of the provisioning model, not a reason to avoid the correction.
+
+#### Acceptance Criteria
+
+- **S1** The seed grants each of the three roles exactly the permissions in the table above. The test pins all three compositions, so a mutation to any one fails it. It asserts 19 permissions, 3 roles and 24 grants.
+- **S2** A freshly provisioned tenant stores the amended composition: `security-administrator` holds an active `user.read` grant, granted by the System actor.
+- **S3** In a tenant provisioned before this amendment (simulated by removing only that grant), catalogue synchronisation inserts exactly that one grant and nothing else, and converges. A second run inserts nothing.
+- **S4** One-way: an active database grant that the seed does not list is refused as `GrantMissingFromSeed`, naming it, and nothing is committed. This also closes a gap in PRV-C2's own tests, where F5 was untested.
+- **S5** Through the pipeline, a caller holding only `security-administrator` is authorised for USR-Q1, which requires `user.read`.
+- **S6** Over HTTP, a caller holding only `security-administrator` gets `200` from `GET /api/users`. The same caller is refused (`403`) by:
+  - `POST /api/users` (`user.create`);
+  - `POST /api/users/{id}/password-reset` (`user.resetpassword`);
+  - `POST /api/users/{id}/activation-link` (`user.create`);
+  - `POST /api/users/{id}/sign-out-everywhere` (`session.revoke`);
+  - `POST /api/identities/{id}/unlock` (`user.unlock`);
+  - `POST /api/sessions/{id}/revoke` (`session.revoke`).
+- **S7** In the web client, a visitor holding exactly the `security-administrator` permissions sees Administration and the Users page. They get no Create user control, and every row offers *Manage roles* and no other action.
+- **S8** Browser: a user holding only `security-administrator` in the dev environment sees the Users list, is offered only *Manage roles*, and can grant and revoke. Each state change needs owner approval.
+
+#### Notes
+
+- Existing databases converge through the existing tool, `dotnet run --project src/Tools/Ligature.CatalogueSync`, or the `catalogue-sync` Compose service. `CatalogueDriftTests` is the postcondition, and it fails against any database that has not yet been synchronised with this release.
+- No role-composition test existed before this amendment: the drift tests compare the database with the seed, so a deleted seed line would have gone unnoticed. S1 closes that.
+
+---
+
 ## PRV-C2 — Catalogue synchronisation
 
 **Status:** Approved and implemented. Contract frozen 2026-09-16 by owner decision; implementation completed 2026-09-17.
@@ -1153,7 +1240,7 @@ AUT-Q5 ListRoles, as catalogued, also returns permission and active-holder count
 
 ### Not decided here
 
-- **The role-composition gap.** `security-administrator` holds `role.*` but not `user.read`, and `user-administrator` holds no `role.*`: only someone holding both can reach Manage roles from the Users table. Whether the seeded roles should change is a separate decision.
+- ~~**The role-composition gap.**~~ `security-administrator` held `role.*` but not `user.read`, so only someone holding both administrator roles could reach Manage roles from the Users table. **Decided** by PRV-C1 Amendment 1: `security-administrator` includes `user.read`.
 - AUT-Q5 in full, AUT-Q3/Q4/Q6, and role definitions (AUT-C3–C8): Slice 4.
 
 ---
