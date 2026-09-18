@@ -14,6 +14,8 @@ using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
 using Ligature.Platform.Application.Users.Commands.DeactivateUser;
 using Ligature.Platform.Application.Users.Commands.ReactivateUser;
 using Ligature.Platform.Application.Users.Commands.RevokeRole;
+using Ligature.Platform.Application.Users.Commands.UpdateUserProfile;
+using Ligature.Platform.Application.Users.Queries.UserProfile;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
@@ -285,6 +287,11 @@ public static class DependencyInjection
             ICommandHandler<RevokeRoleCommand, RevokeRoleResult>,
             RevokeRoleCommandHandler>();
 
+        // USR-C2.
+        services.AddScoped<
+            ICommandHandler<UpdateUserProfileCommand, UpdateUserProfileResult>,
+            UpdateUserProfileCommandHandler>();
+
         // USR-C4 / USR-C5.
         services.AddScoped<
             ICommandHandler<DeactivateUserCommand, DeactivateUserResult>,
@@ -325,6 +332,9 @@ public static class DependencyInjection
 
         // AUT-Q2
         services.AddQuery<UserRoleAssignmentsQuery, UserRoleAssignmentsResult, UserRoleAssignmentsQueryHandler>();
+
+        // USR-Q1 GetUser, narrow v1.
+        services.AddQuery<UserProfileQuery, UserProfileResult, UserProfileQueryHandler>();
 
         // The grantable-role list: a Story 2 dependency of AUT-C1, not AUT-Q5.
         services.AddQuery<GrantableRolesQuery, GrantableRolesResult, GrantableRolesQueryHandler>();
