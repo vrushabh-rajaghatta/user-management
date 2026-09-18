@@ -11,7 +11,8 @@ namespace Ligature.Platform.Application.Users.Queries.Me;
 /// SignOutCommand takes it — a client cannot name someone else's session. It is
 /// the KEY FOR OBTAINING the session's timing, and not an invitation to decide
 /// again whether that session is valid: caller establishment is the
-/// authentication boundary and has already run (D4).
+/// authentication boundary (D4). A verified signature is not an established
+/// caller, so the handler reads the boundary's decision before using it.
 ///
 /// NotRequired, and deliberately so: /me answers about the caller and refuses
 /// nobody who has been established. It declares that rather than being silent

@@ -2,6 +2,7 @@ using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Users.Queries.Me;
 using Ligature.Platform.Domain.Users;
 using Ligature.SharedKernel.Abstractions;
+using Ligature.SharedKernel.Exceptions;
 
 namespace Ligature.Platform.Application.Tests.Users.Queries;
 
@@ -16,8 +17,9 @@ namespace Ligature.Platform.Application.Tests.Users.Queries;
 /// to it must not silently change an API contract.
 ///
 /// D4 — the handler is NOT a second session validator. Caller establishment is
-/// the authentication boundary, and it has already run by the time a query is
-/// dispatched.
+/// the authentication boundary. The handler READS its decision (was a caller
+/// established for this request?) and never makes one of its own (is this
+/// session valid?).
 /// </summary>
 public sealed class MeQueryHandlerTests
 {
@@ -76,6 +78,36 @@ public sealed class MeQueryHandlerTests
     }
 
     /// <summary>
+    /// The boundary's decision, read FIRST. A validly signed carrier for a
+    /// session the boundary refused (ended, revoked, missing, or whose user or
+    /// identity is inactive) still reaches the handler with its SessionId, but
+    /// with no established caller. That is the ordinary authentication refusal,
+    /// before the session, the permissions or the policy is read: nothing about
+    /// a session the boundary refused is looked up, let alone described.
+    /// </summary>
+    [Fact]
+    public async Task A_request_with_no_established_caller_is_refused_before_anything_is_read()
+    {
+        var reader = new FixedCallerReader(Caller());
+        var authorization = new FixedAuthorizationService([]);
+        var policy = new FixedPolicyResolver();
+
+        var handler = new MeQueryHandler(
+            new FixedExecutionContext(authenticated: false),
+            reader,
+            authorization,
+            policy,
+            new FixedClock());
+
+        await Assert.ThrowsAsync<AuthenticationFailedException>(
+            () => handler.Handle(new MeQuery(Session), CancellationToken.None));
+
+        Assert.Equal(0, reader.Calls);
+        Assert.Equal(0, authorization.Calls);
+        Assert.Equal(0, policy.Calls);
+    }
+
+    /// <summary>
     /// D4, and the reason it is a unit test: over HTTP the middleware records
     /// activity immediately after establishing the caller, so a stale session
     /// is refreshed before any handler could see it. Here the handler is handed
@@ -85,7 +117,8 @@ public sealed class MeQueryHandlerTests
     /// It must still answer. Caller establishment is the authentication
     /// boundary and has already accepted this request; a handler that refused
     /// here would be a second authentication authority, which is exactly what
-    /// that boundary exists to prevent.
+    /// that boundary exists to prevent. The refusal above is not that: it reads
+    /// the boundary's answer, and this test keeps it from growing into one.
     /// </summary>
     [Fact]
     public async Task The_handler_does_not_re_decide_whether_the_session_is_valid()
@@ -130,10 +163,15 @@ public sealed class MeQueryHandlerTests
 
         public FixedCallerReader(AuthenticatedCaller caller) => _caller = caller;
 
+        public int Calls { get; private set; }
+
         public Task<AuthenticatedCaller?> ReadAsync(
             UserSessionId sessionId,
             CancellationToken cancellationToken)
-            => Task.FromResult<AuthenticatedCaller?>(_caller);
+        {
+            Calls++;
+            return Task.FromResult<AuthenticatedCaller?>(_caller);
+        }
     }
 
     private sealed class FixedAuthorizationService : IAuthorizationService
@@ -143,41 +181,63 @@ public sealed class MeQueryHandlerTests
         public FixedAuthorizationService(IReadOnlyList<EffectivePermission> permissions)
             => _permissions = permissions;
 
+        public int Calls { get; private set; }
+
         public Task<AuthorizationResult> IsAllowedAsync(
             AuthorizationRequest request,
             CancellationToken cancellationToken)
-            => Task.FromResult(AuthorizationResult.Denied);
+        {
+            Calls++;
+            return Task.FromResult(AuthorizationResult.Denied);
+        }
 
         public Task<IReadOnlyList<EffectivePermission>> EnumerateAsync(
             EffectivePermissionsRequest request,
             CancellationToken cancellationToken)
-            => Task.FromResult(_permissions);
+        {
+            Calls++;
+            return Task.FromResult(_permissions);
+        }
     }
 
     private sealed class FixedPolicyResolver : ISecurityPolicyResolver
     {
+        public int Calls { get; private set; }
+
         public Task<SecurityPolicySettings> GetEffectiveSettingsAsync(
             DateTimeOffset at,
             CancellationToken cancellationToken)
-            => Task.FromResult(SecurityBaseline.Current);
+        {
+            Calls++;
+            return Task.FromResult(SecurityBaseline.Current);
+        }
     }
 
     /// <summary>
     /// Supplies the caller's UserId, which the handler needs to enumerate
     /// permissions. Identity is present because the interface requires it and
     /// deliberately unused by the handler (D5).
+    ///
+    /// Unauthenticated, it behaves as ScopedExecutionContext does: every
+    /// caller-dependent member throws, so a handler that skipped the check
+    /// could not pass by reading a placeholder.
     /// </summary>
-    private sealed class FixedExecutionContext : IExecutionContext
+    private sealed class FixedExecutionContext(bool authenticated = true) : IExecutionContext
     {
-        public UserId UserId { get; } = UserId.New();
+        private readonly UserId _userId = UserId.New();
 
-        public ActorType ActorType => ActorType.Human;
+        public UserId UserId => authenticated ? _userId : throw Unestablished();
 
-        public bool IsAuthenticated => true;
+        public ActorType ActorType => authenticated ? ActorType.Human : throw Unestablished();
 
-        public ActorIdentity Identity => TestActorIdentity.Human();
+        public bool IsAuthenticated => authenticated;
+
+        public ActorIdentity Identity => authenticated ? TestActorIdentity.Human() : throw Unestablished();
 
         public AuthorizingAssignment? Authority => null;
+
+        private static InvalidOperationException Unestablished()
+            => new("No authenticated caller has been established for this scope.");
     }
 
     private sealed class FixedClock : IClock
