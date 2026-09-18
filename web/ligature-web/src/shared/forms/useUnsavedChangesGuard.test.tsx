@@ -45,6 +45,46 @@ function Form() {
   );
 }
 
+/**
+ * A form whose link lives in something that closes when the link is followed,
+ * as the primary sidebar does on a phone: by the time the person chooses Keep
+ * editing, the element they were on no longer exists.
+ */
+function FormBesideSheet() {
+  const [value, setValue] = useState("");
+  const [sheetOpen, setSheetOpen] = useState(true);
+  const guard = useUnsavedChangesGuard(value !== "");
+
+  return (
+    <>
+      {sheetOpen ? (
+        <nav aria-label="Sheet">
+          <Link
+            to="/elsewhere"
+            onClick={() => {
+              setSheetOpen(false);
+            }}
+          >
+            Leave from the sheet
+          </Link>
+        </nav>
+      ) : null}
+      <main id="main" tabIndex={-1}>
+        <label>
+          Name
+          <input
+            value={value}
+            onChange={(event) => {
+              setValue(event.target.value);
+            }}
+          />
+        </label>
+        {guard.prompt}
+      </main>
+    </>
+  );
+}
+
 function routes(): RouteObject[] {
   return [
     { path: "/form", element: <Form /> },
@@ -120,6 +160,40 @@ describe("the unsaved-changes guard", () => {
     await user.click(await screen.findByRole("button", { name: "Discard" }));
 
     expect(await screen.findByRole("heading", { name: "Elsewhere" })).toBeInTheDocument();
+  });
+
+  /**
+   * Found in the My account browser check (UI-10), at phone width: the link
+   * followed was inside the sidebar sheet, which closed as it was followed, so
+   * Keep editing had nowhere to return focus and left it on the document body.
+   * With the element gone, focus goes to the main content, as the skip link
+   * sends it.
+   */
+  it("returns focus to the main content when the element the person was on has gone", async () => {
+    const { user, router } = renderWithApp(
+      [
+        { path: "/form", element: <FormBesideSheet /> },
+        { path: "/elsewhere", element: <h1>Elsewhere</h1> },
+      ],
+      { path: "/form" },
+    );
+
+    await user.type(await screen.findByLabelText("Name"), "Ada");
+    await user.click(screen.getByRole("link", { name: "Leave from the sheet" }));
+
+    const prompt = await screen.findByRole("dialog", { name: "Discard changes?" });
+    expect(screen.queryByRole("link", { name: "Leave from the sheet" })).toBeNull();
+
+    await user.click(within(prompt).getByRole("button", { name: "Keep editing" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    expect(router.state.location.pathname).toBe("/form");
+    expect(screen.getByLabelText("Name")).toHaveValue("Ada");
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("main"));
+    });
   });
 
   it("holds beforeunload only while dirty", async () => {
