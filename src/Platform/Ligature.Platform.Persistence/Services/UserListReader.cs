@@ -51,7 +51,9 @@ public sealed class UserListReader : IUserListReader
             .ToListAsync(cancellationToken);
 
         return rows
-            .Select(x => new UserListRow(x.Id, x.DisplayName, x.Email?.Value))
+            // RED STUB (USR-Q1 amendment 1): a constant, so the tests that pair a
+            // pending user with an activated one fail whichever constant it is.
+            .Select(x => new UserListRow(x.Id, x.DisplayName, x.Email?.Value, ActivationPending: false))
             .ToList();
     }
 }

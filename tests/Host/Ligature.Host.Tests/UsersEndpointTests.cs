@@ -78,9 +78,14 @@ public sealed class UsersEndpointTests
         });
     }
 
-    /// <summary>P1 and P3, on every row the caller can reach.</summary>
+    /// <summary>
+    /// P1 (as amended), P3, P16 and P18, on every row the caller can reach:
+    /// exactly four members, activationPending always a JSON boolean. An exact
+    /// member set is also what proves no credential or token detail rides
+    /// along under another name.
+    /// </summary>
     [Fact]
-    public async Task Every_row_has_exactly_user_id_display_name_and_email()
+    public async Task Every_row_has_exactly_user_id_display_name_email_and_activation_pending()
     {
         await RunAsync(async (client, callers) =>
         {
@@ -88,9 +93,72 @@ public sealed class UsersEndpointTests
 
             Assert.NotEmpty(rows);
 
-            Assert.All(rows, row => Assert.Equal(
-                ["displayName", "email", "userId"],
-                row.EnumerateObject().Select(x => x.Name).Order(StringComparer.Ordinal)));
+            Assert.All(rows, row =>
+            {
+                Assert.Equal(
+                    ["activationPending", "displayName", "email", "userId"],
+                    row.EnumerateObject().Select(x => x.Name).Order(StringComparer.Ordinal));
+
+                Assert.Contains(
+                    row.GetProperty("activationPending").ValueKind,
+                    new[] { JsonValueKind.True, JsonValueKind.False });
+            });
+        });
+    }
+
+    /// <summary>
+    /// P15 as served. A pending user (one local identity, no credential) and an
+    /// activated one (a credential) in the same read, so no constant passes.
+    /// </summary>
+    [Fact]
+    public async Task A_pending_user_is_listed_as_pending_and_an_activated_one_is_not()
+    {
+        await RunAsync(async (client, callers) =>
+        {
+            var marker = Guid.NewGuid().ToString("N")[..10];
+            var pending = await SeedPendingUserAsync($"Pending Row {marker}");
+            var activated = await SeedEligibleTargetAsync($"Activated Row {marker}");
+
+            try
+            {
+                var rows = (await ReadAllRowsAsync(client, callers.Administrator))
+                    .ToDictionary(x => x.GetProperty("userId").GetGuid());
+
+                Assert.True(rows[pending].GetProperty("activationPending").GetBoolean());
+                Assert.False(rows[activated].GetProperty("activationPending").GetBoolean());
+            }
+            finally
+            {
+                await DeleteUserAsync(pending);
+                await DeleteUserAsync(activated);
+            }
+        });
+    }
+
+    /// <summary>
+    /// D2: user.read is sufficient to see the field. The access reviewer holds
+    /// it, cannot act on it, and sees the same value the administrator does.
+    /// </summary>
+    [Fact]
+    public async Task The_access_reviewer_sees_activation_pending()
+    {
+        await RunAsync(async (client, callers) =>
+        {
+            var marker = Guid.NewGuid().ToString("N")[..10];
+            var pending = await SeedPendingUserAsync($"Reviewed Row {marker}");
+
+            try
+            {
+                var row = Assert.Single(
+                    await ReadAllRowsAsync(client, callers.Reviewer),
+                    x => x.GetProperty("userId").GetGuid() == pending);
+
+                Assert.True(row.GetProperty("activationPending").GetBoolean());
+            }
+            finally
+            {
+                await DeleteUserAsync(pending);
+            }
         });
     }
 
@@ -216,6 +284,9 @@ public sealed class UsersEndpointTests
     [InlineData("whatever=abc")]
     [InlineData("email=permanent")]
     [InlineData("search=Permanent&filter=status")]
+    [InlineData("activationPending=true")]
+    [InlineData("activationPending=false")]
+    [InlineData("sortBy=activationPending")]
     public async Task Unknown_parameters_are_ignored(string unknown)
     {
         await RunAsync(async (client, callers) =>
@@ -384,6 +455,12 @@ public sealed class UsersEndpointTests
             document.RootElement.GetProperty("paths").TryGetProperty("/api/users", out var path)
                 && path.TryGetProperty("get", out _),
             "The OpenAPI document does not describe GET /api/users.");
+
+        var description = document.RootElement.GetProperty("paths").GetProperty("/api/users")
+            .GetProperty("get").GetProperty("description").GetString() ?? "";
+
+        Assert.Contains("activationPending", description, StringComparison.Ordinal);
+        Assert.Contains("not authorization", description, StringComparison.OrdinalIgnoreCase);
     }
 
     // ------------------------------------------------------------ harness
@@ -557,6 +634,46 @@ public sealed class UsersEndpointTests
         command.Parameters.AddWithValue(
             "email",
             email is null ? DBNull.Value : $"usr-q1-{userId:N}@example.test");
+        command.Parameters.AddWithValue("system", User.SystemUserId.Value);
+
+        await command.ExecuteNonQueryAsync();
+
+        return userId;
+    }
+
+    /// <summary>
+    /// Pending activation (inv. 15): active human, one active local identity,
+    /// no credential.
+    /// </summary>
+    private static async Task<Guid> SeedPendingUserAsync(string displayName)
+    {
+        var userId = Guid.NewGuid();
+        var identityId = Guid.NewGuid();
+
+        await using var connection = await TestDatabase.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            INSERT INTO app_user
+                (id, actor_type, first_name, last_name, display_name, email, status,
+                 created_at, created_by, updated_at, updated_by)
+            VALUES
+                (@user, 'Human', 'Pending', 'Row', @display, @email, 'Active',
+                 now(), @system, now(), @system);
+
+            INSERT INTO user_identity
+                (id, user_id, actor_type, identity_type, identity_provider,
+                 subject_id, username, status, created_at, created_by)
+            VALUES
+                (@identity, @user, 'Human', 'Local', 'Application',
+                 @subject, @username, 'Active', now(), @system);
+            """, connection);
+
+        command.Parameters.AddWithValue("user", userId);
+        command.Parameters.AddWithValue("identity", identityId);
+        command.Parameters.AddWithValue("subject", identityId.ToString());
+        command.Parameters.AddWithValue("username", $"usr-q1-pending-{userId:N}");
+        command.Parameters.AddWithValue("display", displayName);
+        command.Parameters.AddWithValue("email", $"usr-q1-pending-{userId:N}@example.test");
         command.Parameters.AddWithValue("system", User.SystemUserId.Value);
 
         await command.ExecuteNonQueryAsync();

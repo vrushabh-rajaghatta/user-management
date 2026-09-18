@@ -30,4 +30,5 @@ public sealed record UsersResult(
 public sealed record UserListRow(
     UserId UserId,
     string DisplayName,
-    string? Email);
+    string? Email,
+    bool ActivationPending);
