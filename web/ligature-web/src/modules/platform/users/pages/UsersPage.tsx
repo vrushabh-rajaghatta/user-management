@@ -2,15 +2,15 @@ import { Link } from "react-router";
 import { buttonVariants } from "@/components/ui/button";
 import { Can } from "@/shared/auth/Can";
 import { Page } from "@/shared/components/Page";
+import { UsersTable } from "../components/UsersTable";
 import { UserPermissions } from "../permissions";
 
 /**
- * USR-Q1's page. Until its table is built it is the header and the one action
- * that already exists: New user (USR-C1), offered to holders of user.create.
- * It lists no one rather than pretending to.
+ * USR-Q1's page: the Users table, and New user (USR-C1) for holders of
+ * user.create.
  *
- * <Can> decides whether the action is SHOWN. The create user route guards
- * itself, and the server authorises POST /api/users either way (§9).
+ * <Can> decides what is SHOWN. Every route guards itself and the server
+ * authorises every operation either way (§9).
  */
 export function UsersPage() {
   return (
@@ -23,6 +23,8 @@ export function UsersPage() {
           </Link>
         </Can>
       }
-    />
+    >
+      <UsersTable />
+    </Page>
   );
 }

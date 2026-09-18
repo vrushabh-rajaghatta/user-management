@@ -1,7 +1,9 @@
 import { screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { http, HttpResponse } from "msw";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { definePermission, type PermissionCode } from "@/shared/auth/permissions";
 import { renderWithApp } from "@/test/renderWithApp";
+import { server } from "@/test/msw/server";
 import { TestSessionSource } from "@/test/sessions";
 import { appRoutes, composeRoutes } from "./router";
 
@@ -24,6 +26,16 @@ const holding = () =>
 /** Authenticated, holding exactly the permissions named. */
 const holdingOnly = (...codes: PermissionCode[]) =>
   new TestSessionSource({ status: "authenticated", principal: { permissions: codes.map((code) => ({ code })) } });
+
+/** The Users page reads the list; these tests are not about its contents. */
+const listUsersHandler = () =>
+  http.get(new URL("/api/users", window.location.origin).href, () =>
+    HttpResponse.json({ users: [], page: 1, pageSize: 25, hasMore: false }),
+  );
+
+beforeEach(() => {
+  server.use(listUsersHandler());
+});
 
 describe("the application routes", () => {
   it("load the placeholder home page lazily at /, for a signed-in visitor", async () => {
