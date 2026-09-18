@@ -672,6 +672,132 @@ A field joins the row only with the same evidence that admitted these three:
 
 ---
 
+## CRD-C7 — Reissue Activation Link
+
+**Requirement ID:** `CRD-C7`, assigned by the owner 2026-09-18. `CRD` because the command's whole effect is token lifecycle.
+
+**Status:** Approved and frozen, 2026-09-18 by owner decision. Not yet implemented.
+
+### Requirement
+
+An administrator can send a user who has never activated their account a new activation link. The new link replaces every earlier one: after a successful reissue, the identity has exactly one usable activation link.
+
+This is the recovery command the Known Gap *A failed activation mail has no recovery command* deferred. A user whose activation mail was never delivered, or whose link expired unused, can otherwise not be recovered: USR-C1 cannot be re-run for the same address or username.
+
+It **issues a token and nothing else**. It creates no user, identity or credential, changes no lifecycle status, and grants no access. The user still activates through the existing activation path, with the new link.
+
+### Authorization: `user.create`
+
+The command requires **`user.create`**. No new permission is introduced.
+
+`user.create` is described as *"Create a new human user account and issue its activation token."* Reissuing that token finishes the work creation started. It reaches no one a creator could not already reach, and it confers no access, so a separate permission would add catalogue and role-grant decisions without a distinct capability boundary.
+
+**This changes what the Known Gap said.** It deferred this to *"a command that reissues an activation token (its own permission, …)"*. The owner ruled that no separate permission is warranted, for the reason above. That is recorded here as a deliberate change (*Rules*, 4), not an oversight.
+
+The command is human-actor only, as USR-C1 and CRD-C5 are.
+
+### Eligibility — enforced by the server, always
+
+The target is eligible only when **every** one of these holds:
+
+1. the user exists;
+2. its actor type is `Human`;
+3. its status is `Active`;
+4. it has an email address — the only delivery channel;
+5. it holds **exactly one** local identity, and that identity is `Active`;
+6. that identity has **no credential**: the pending-activation state (inv. 15).
+
+Any other target is refused with **one** message, whichever rule failed. An administrator is authorised over users, so there is no anti-enumeration discipline (as for CRD-C5). But one message means the refusal never becomes a probe of which rule failed.
+
+Rule 6 is what keeps this from becoming a second password-reset path. A user who has activated holds a credential and is served by CRD-C5, never by a new activation link.
+
+> **Eligibility is the server's alone.** A client may one day know which users are pending, from a separate read contract (see *Not decided here*). That knowledge is a presentation optimisation. It is not authorization and not eligibility enforcement, and the command re-verifies every rule above whatever the client believed.
+
+More than one local identity is refused rather than resolved, for CRD-C5's reason: no command creates a second one, and choosing between them would be a guess about whose mailbox controls the account.
+
+### Effect — one transaction
+
+Every eligibility read runs before the first write. A refused target therefore leaves no token, no audit record and no notification.
+
+In one transaction, in this order:
+
+1. **Invalidate every prior unused activation token** for the identity, including expired ones (UT5). An expired but unused token still holds UT4's slot, so invalidation must precede the insert.
+2. **Issue one new `Activation` token.** Its lifetime is the effective `ActivationTokenLifetime`, as USR-C1's is. Its `CreatedBy` is the administrator. Only the hash is persisted (UT7).
+3. **Declare the audit records** (below).
+4. **Declare one `AccountActivation` notification** for the new token, addressed to the user's stored email.
+
+Either the whole transaction commits or none of it does. A failure at any step, including audit or notification emission, leaves the prior tokens open and nothing written.
+
+**Invariant.** After a successful reissue, the identity has exactly one open `Activation` token, and it is the one just issued. UT4's partial unique index guarantees there are never two, even under concurrent reissues. A concurrent request that loses fails without effect; its response surface is not specified here.
+
+### Audit — existing events only
+
+No new event type, and no audit catalogue change.
+
+| Record | Primary | References | Payload | Reason |
+| --- | --- | --- | --- | --- |
+| `TokenInvalidated` — one per superseded token | `Token` (the prior token) | `Identity`/`Target`, `Token`/`SupersededBy` (the new token) | `TokenType: Activation`, `Reason: Superseded` | — |
+| `TokenIssued` | `Token` (the new token) | `Identity`/`Target`, `User`/`Subject` | `tokenType: Activation`, `expiresAt` | **the administrator's reason** |
+
+The actor of every record is the administrator. A reissue is distinguishable from creation's first issuance by what surrounds it: creation's `TokenIssued` accompanies `UserCreated` and `IdentityCreated`, and a reissue's does not. It also carries a reason, and may follow `TokenInvalidated` records.
+
+`TokenIssued` does not *require* a reason (AR9 enforces only a required one), but it accepts one. A null reason is permitted by `ck_audit_record_ar9_reason` and a present one is recorded. **This command always supplies one.**
+
+Zero superseded tokens is valid. A pending user whose every prior token is already invalidated gets a `TokenIssued` and no `TokenInvalidated`.
+
+Neither the token nor its hash appears in any record.
+
+### Reason
+
+**Required.** A missing, empty or whitespace-only reason is refused before any database work, on the ordinary `400` surface. Otherwise it would surface only as a missing-reason emission defect, which is a `500` for what is the caller's mistake (CRD-C5's precedent). It is a human explanation from the administrator, never a code (AUD-7).
+
+### Endpoint
+
+**`POST /api/users/{userId}/activation-link`**, beside the existing per-user administrator commands and addressed by the same `UserId` that USR-Q1 rows and `POST /api/users` return.
+
+Request body:
+
+```json
+{ "reason": "…" }
+```
+
+| Outcome | Status | Body |
+| --- | --- | --- |
+| Link issued | `202` | none |
+| No established caller | `401` | the host's fixed message |
+| Caller lacks `user.create` | `400` | `{ "error": … }`. Distinguishing this from a validation failure remains the Known Gap *Authorization failures are not distinguishable from validation failures* |
+| Missing reason | `400` | `{ "error": … }` |
+| Ineligible or unknown user | `400` | `{ "error": … }`, one message |
+
+`202` with **no body**: the administrator never receives the token or the link. The mail to the user's own address is the only delivery, as for USR-C1 and CRD-C5.
+
+### Delivery
+
+The notification is the existing `AccountActivation` type and template, so the message is identical to creation's. Delivery is the Notification pipeline's, unchanged: with no mail configured the row records that no attempt was observed, and a development host with the mail sink writes the message to `.secrets/mail/`.
+
+**Accepted consequence.** A notification already queued for a superseded token may still be sent after the reissue. Its link is refused at activation, because the token it carries is invalidated. This matches CRD-C5 and is accepted, not engineered around.
+
+### Acceptance Criteria
+
+- **R1** An eligible user receives exactly one new `Activation` token, created by the administrator, with the effective activation lifetime; the response is `202` with no body.
+- **R2** Every prior unused activation token of the identity, expired or not, is invalidated. After success the identity has exactly one open `Activation` token, the new one.
+- **R3** A superseded link can no longer activate the account; the new link can.
+- **R4** One `TokenInvalidated` per superseded token, referencing the new token as `SupersededBy`, and one `TokenIssued` carrying the reason; the administrator is the actor of each. No other audit record.
+- **R5** One `AccountActivation` notification for the new token, to the user's stored email.
+- **R6** A user who holds a credential is refused.
+- **R7** A non-human user, a user who is not `Active`, a user with no email, a user with zero or several local identities, a user whose only local identity is not `Active`, and an unknown `UserId` are each refused with the same message.
+- **R8** A missing, empty or whitespace-only reason is refused.
+- **R9** A caller without `user.create` is refused, and no carrier is `401`.
+- **R10** Every refusal, and every failure after eligibility, leaves the prior tokens open and writes no token, audit record or notification.
+- **R11** No response and no audit record contains the token or its hash.
+
+### Not decided here
+
+- **Which users a client offers this command for.** USR-Q1's row stays exactly `UserId`, `DisplayName`, `Email`. A client that shows the action only to pending users needs a separate read contract, a USR-Q1 amendment for a derived `activationPending` flag with its own evidence (*Adding a field later*). The Users table is not changed until that contract exists. Offering the action on every row and relying on refusals was rejected.
+- **The Notification specification's wording.** Its walkthrough (§11.4, §11.5) names CRD-C5 as the remedy for a failed activation mail. §10.1 speaks of *"the three issuing commands"*; with CRD-C7 there are four. Both are corrected through that specification's own change control, not here.
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
@@ -1294,6 +1420,11 @@ command. USR-C1 cannot be re-run for the same address or username.
 `AccountActivation` notification) — with the Notification walkthrough's wording
 corrected through that specification's own change control.
 
+**Resolution:** CRD-C7 — *Reissue Activation Link*, approved 2026-09-18, not
+yet implemented. It reuses `user.create` rather than introducing its own
+permission, by owner decision recorded there. This entry is marked resolved
+when CRD-C7 lands.
+
 ## N14(b) — no architecture test proves NOT-P1 has no public entry point
 
 **Rule (Notification §10.1):** *"NOT-P1 has no public entry point: no type
@@ -1310,6 +1441,12 @@ AdminPasswordReset↔PasswordReset, with the unit test the specification require
 a public interface, and a fourth caller could inject it and declare a
 notification for a token it did not just issue; N14 would still hold for that
 call, but N2(b)'s and N14's "only the three commands" premise would not.
+
+**CRD-C7 is a legitimate fourth.** It declares an `AccountActivation`
+notification for the token it has just issued, so N14 holds for it. The
+premise's count is corrected through the Notification specification's own
+change control (CRD-C7, *Not decided here*), and whatever call-site assertion
+this story builds must admit four commands, not three.
 
 **Deferred to:** its own story, which must decide how "outside the pipeline
 assembly" is expressed and asserted (reflection over references, or an
