@@ -1042,6 +1042,122 @@ There is no effective-permission cache: permissions are resolved per request (UR
 
 ---
 
+## AUT-Q2 — User Role Assignments, and the role-assignment UI
+
+**Requirement ID:** `AUT-Q2` GetUserRoleAssignments, as the UM command catalogue defines it. The role list below has **no** requirement ID of its own (see *The grantable-role list is not AUT-Q5*).
+
+**Status:** Approved and frozen, 2026-09-18 by owner decision (D1–D8 and two clarifications). Not yet implemented. Story 2 of two: the read and the UI over AUT-C1 / AUT-C2.
+
+### Requirement
+
+An administrator can see which roles a user holds, has held and will hold, and grant and revoke them, from the Users table. An access reviewer can see the same assignments and is offered no action.
+
+### AUT-Q2 — the read
+
+**`GET /api/users/{userId}/role-assignments?includeInactive=`**, requiring **`role.read`**. Not audited: reads are not events (as USR-Q1).
+
+| Parameter | Rule |
+| --- | --- |
+| `includeInactive` | Optional; absent means `false`. Exactly `true` or `false`; any other value, or a repeated parameter, is refused as an invalid request. `false` returns `Active` and `Future` assignments; `true` adds `Ended` and `Revoked` |
+
+The handler establishes, in this order, as USR-Q1's does: authenticate (`401`), authorise `role.read` (`400`, the Known Gap on authorisation failures), then read. An unknown user is refused (`400`), as the commands addressed by `{userId}` refuse it.
+
+```json
+{
+  "assignments": [
+    {
+      "assignmentId": "…",
+      "roleId": "…",
+      "roleName": "…",
+      "effectiveFrom": "…",
+      "effectiveTo": "…",
+      "state": "Active",
+      "assignedAt": "…",
+      "assignedBy": { "userId": "…", "displayName": "…" },
+      "assignmentReason": "…",
+      "revokedAt": null,
+      "revokedBy": null,
+      "revocationReason": null
+    }
+  ]
+}
+```
+
+- `effectiveTo`, `revokedAt`, `revokedBy` and `revocationReason` may be `null`; the rest never are. Scope is not in the row: it is Global in every v1 assignment.
+- **Order:** `effectiveFrom` descending, then `assignmentId`, so the latest period comes first. No paging: one user's assignments are few.
+- **Exposure (D4).** The row shows which administrator granted or revoked an assignment, and their reason, to every `role.read` holder. That is the purpose of the read — an access review asks who granted what, when and why — and it is accepted as such.
+
+### `state` is derived at read time, never stored
+
+> **`state` is calculated by the server at read time from the assignment's effective period and revocation data. It is never stored as a column and must not be independently supplied or calculated by the client.**
+
+At the instant of the read (`now`), in this order — **revocation wins**:
+
+| `state` | When |
+| --- | --- |
+| `Revoked` | `RevokedAt` is set |
+| `Future` | not revoked, and `EffectiveFrom > now` |
+| `Ended` | not revoked, and `EffectiveTo <= now` |
+| `Active` | otherwise: `EffectiveFrom <= now` and (`EffectiveTo` empty or `> now`) |
+
+This follows the catalogue (*"State derived from dates — there is no Status column … do not invent a status field client-side"*) and spec §6.11.
+
+A cancelled future grant shows why the order matters:
+
+```text
+EffectiveFrom = 2026-10-01
+EffectiveTo   = 2026-10-01
+RevokedAt     = 2026-09-18
+```
+
+Read on 2026-10-02 its period has passed, but it is **`Revoked`**, not `Ended`: revocation wins. It never authorised anything, and the read must not suggest it lapsed naturally.
+
+### The grantable-role list is not AUT-Q5
+
+**`GET /api/roles`**, requiring **`role.read`**, returns the **active** roles, each `{ roleId, name, description }`, ordered by name under ICU `"unicode"`, then `roleId`.
+
+> **Story 2 dependency:** provide the minimum active-role projection required by AUT-C1. This is an implementation slice supporting role assignment and **does not constitute completion of AUT-Q5**.
+
+AUT-Q5 ListRoles, as catalogued, also returns permission and active-holder counts, takes `includeInactive` and `agentAssignableOnly`, and derives the agent-assignable flag. None of that is built here, and AUT-Q5 stays *Not started* in the tracker.
+
+### The UI (D1, D7, D8)
+
+- **Where:** a **Manage roles** action on each Users table row, opening a dialog for that user. No detail page (that needs the single-user read, which has no repo ID yet).
+- **Who sees what** — from the caller's **effective permissions** (`GET /api/me`), never from role names:
+
+  | Holds | Sees |
+  | --- | --- |
+  | `role.read` | **Manage roles**, and the user's assignments |
+  | `role.grant` (with `role.read`) | a **Grant role** form |
+  | `role.revoke` (with `role.read`) | **Revoke** on each `Active` or `Future` assignment, and on no other |
+
+  Hidden, never disabled. A row with no action at all has no Actions button (USR-Q1 amendment 1's rule).
+- **The list** shows each assignment's role, `state` exactly as the server sent it, period, and who granted it, when and why (and revoked, when revoked). Current and future by default; **Show history** asks the server again with `includeInactive=true`. The client derives nothing from the dates.
+- **Grant:** an active role from `GET /api/roles`; optional start and end, entered in the browser's local time and **sent as UTC**; a required reason. The server is authoritative: an overlap, a past start or an empty period is refused there, and its message is shown word for word. The client does not pre-check overlap.
+- **Revoke:** a confirmation with a required reason, as the existing row actions.
+- After a grant or a revocation the assignments are read again, so `state` stays the server's.
+
+### Acceptance Criteria
+
+- **Q1** `GET /api/users/{userId}/role-assignments` requires `role.read`; no carrier is `401`; a caller without it and an unknown user are refused.
+- **Q2** Each row has exactly the fields above.
+- **Q3** `state` is derived at read time with revocation winning. **One assignment read at three instants is `Future`, then `Active`, then `Ended`**; a future assignment revoked before it starts is `Revoked` at every instant, including after its period.
+- **Q4** Without `includeInactive`, only `Active` and `Future` assignments are returned; with `true`, all; any other value is refused.
+- **Q5** Rows are ordered by `effectiveFrom` descending, then `assignmentId`.
+- **L1** `GET /api/roles` requires `role.read` and returns exactly the active roles, each with exactly `roleId`, `name` and `description`.
+- **U1** Manage roles appears only for a `role.read` holder; Grant only with `role.grant`; Revoke only with `role.revoke`, and only on `Active` and `Future` assignments.
+- **U2** The UI shows `state` as sent and derives none; history is fetched with `includeInactive=true`.
+- **U3** A grant sends the chosen role, UTC instants for any dates entered, and the reason; a server refusal is shown word for word and the dialog stays open; success refreshes the assignments.
+- **U4** A revocation sends exactly the reason to the assignment's revoke endpoint and refreshes the assignments.
+- **U5** Browser: Ada grants and revokes on Vru Raj; Vr Ra (`access-reviewer`) sees assignments and no Grant or Revoke.
+
+### Not decided here
+
+- **The role-composition gap.** `security-administrator` holds `role.*` but not `user.read`, and `user-administrator` holds no `role.*`: only someone holding both can reach Manage roles from the Users table. Whether the seeded roles should change is a separate decision.
+- AUT-Q5 in full, AUT-Q3/Q4/Q6, and role definitions (AUT-C3–C8): Slice 4.
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
