@@ -153,6 +153,10 @@ public sealed class UserRole : Entity<UserRoleId>
             createdBy);
     }
 
+    /// <summary>Where this assignment stands at <paramref name="now"/> (AUT-Q2).</summary>
+    public RoleAssignmentState StateAt(DateTimeOffset now)
+        => RoleAssignmentStates.At(EffectiveFrom, EffectiveTo, RevokedAt, now);
+
     public void Revoke(
         DateTimeOffset revokedAt,
         UserId revokedBy,

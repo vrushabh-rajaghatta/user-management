@@ -18,6 +18,7 @@ import { ErrorState } from "@/shared/components/ErrorState";
 import { useUsers } from "../hooks/useUsers";
 import { UserPermissions } from "../permissions";
 import type { UserRow } from "../schemas/users";
+import { ManageRolesDialog } from "./ManageRolesDialog";
 import { UserActionDialog, type UserAction } from "./UserActionDialog";
 
 /** The largest page the server can accept: its page parameter is an int (USR-Q1). */
@@ -51,12 +52,19 @@ interface Allowed {
   readonly resend: boolean;
   readonly reset: boolean;
   readonly revoke: boolean;
+
+  /** role.read (AUT-Q2): whether the caller may see a user's role assignments. */
+  readonly manageRoles: boolean;
 }
 
-const LABEL: Record<UserAction, string> = {
+/** A row action: a confirmed command, or Manage roles, which opens its own dialog. */
+type RowAction = UserAction | "manage-roles";
+
+const LABEL: Record<RowAction, string> = {
   "resend-activation": "Resend activation link",
   "reset-password": "Reset password",
   "sign-out-everywhere": "Sign out everywhere",
+  "manage-roles": "Manage roles",
 };
 
 /**
@@ -64,8 +72,8 @@ const LABEL: Record<UserAction, string> = {
  * broader. activationPending decides between Resend and Reset and is never read
  * as anything more; the commands keep their own eligibility checks.
  */
-function actionsFor(user: UserRow, can: Allowed): UserAction[] {
-  const actions: UserAction[] = [];
+function actionsFor(user: UserRow, can: Allowed): RowAction[] {
+  const actions: RowAction[] = [];
 
   if (user.activationPending && can.resend) {
     actions.push("resend-activation");
@@ -77,6 +85,12 @@ function actionsFor(user: UserRow, can: Allowed): UserAction[] {
 
   if (can.revoke) {
     actions.push("sign-out-everywhere");
+  }
+
+  // Offered on every row to a role.read holder: which roles a user holds is
+  // not a question the row can answer without asking.
+  if (can.manageRoles) {
+    actions.push("manage-roles");
   }
 
   return actions;
@@ -117,9 +131,11 @@ export function UsersTable() {
     resend: useCan(UserPermissions.create),
     reset: useCan(UserPermissions.resetPassword),
     revoke: useCan(UserPermissions.revokeSessions),
+    manageRoles: useCan(UserPermissions.readRoles),
   };
 
   const [pending, setPending] = useState<Pending | undefined>(undefined);
+  const [managing, setManaging] = useState<{ user: UserRow; open: boolean } | undefined>(undefined);
   const [announcement, setAnnouncement] = useState("");
   const [queued, setQueued] = useState<string | undefined>(undefined);
   const triggers = useRef(new Map<string, HTMLButtonElement>());
@@ -131,10 +147,15 @@ export function UsersTable() {
     return <Navigate to={pathname} replace />;
   }
 
-  function open(user: UserRow, action: UserAction) {
+  function open(user: UserRow, action: RowAction) {
     setAnnouncement("");
     returnFocus.current = triggers.current.get(user.userId) ?? null;
-    setPending({ user, action, open: true });
+
+    if (action === "manage-roles") {
+      setManaging({ user, open: true });
+    } else {
+      setPending({ user, action, open: true });
+    }
   }
 
   return (
@@ -175,6 +196,21 @@ export function UsersTable() {
           }}
         />
       )}
+
+      {managing === undefined ? null : (
+        <ManageRolesDialog
+          key={managing.user.userId}
+          open={managing.open}
+          user={managing.user}
+          returnFocus={returnFocus}
+          onClose={() => {
+            setManaging({ ...managing, open: false });
+          }}
+          onClosed={() => {
+            setManaging(undefined);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -184,7 +220,7 @@ interface UsersRegionProps {
   readonly pathname: string;
   readonly can: Allowed;
   readonly triggers: RefObject<Map<string, HTMLButtonElement>>;
-  readonly onAction: (user: UserRow, action: UserAction) => void;
+  readonly onAction: (user: UserRow, action: RowAction) => void;
 }
 
 /**
@@ -249,7 +285,7 @@ function UsersRegion({ query, pathname, can, triggers, onAction }: UsersRegionPr
   // Offered per permission and, for Resend and Reset, per row: hidden, never
   // disabled. With no permission at all there is no Actions column, and a row
   // with nothing to offer has no button rather than an empty menu.
-  if (can.resend || can.reset || can.revoke) {
+  if (can.resend || can.reset || can.revoke || can.manageRoles) {
     columns.push({
       header: "Actions",
       className: "w-12 text-right",

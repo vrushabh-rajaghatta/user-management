@@ -20,6 +20,8 @@ using Ligature.Platform.Application.Users.Commands.RevokeUserSessions;
 using Ligature.Platform.Application.Users.Commands.SignOutEverywhere;
 using Ligature.Platform.Application.Users.Commands.UnlockAccount;
 using Ligature.Platform.Application.Users.Queries.Me;
+using Ligature.Platform.Application.Users.Queries.GrantableRoles;
+using Ligature.Platform.Application.Users.Queries.RoleAssignments;
 using Ligature.Platform.Application.Users.Queries.UserList;
 using Ligature.SharedKernel.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -309,5 +311,11 @@ public static class DependencyInjection
 
         // USR-Q1
         services.AddQuery<UsersQuery, UsersResult, UsersQueryHandler>();
+
+        // AUT-Q2
+        services.AddQuery<UserRoleAssignmentsQuery, UserRoleAssignmentsResult, UserRoleAssignmentsQueryHandler>();
+
+        // The grantable-role list: a Story 2 dependency of AUT-C1, not AUT-Q5.
+        services.AddQuery<GrantableRolesQuery, GrantableRolesResult, GrantableRolesQueryHandler>();
     }
 }
