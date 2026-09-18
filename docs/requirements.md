@@ -904,7 +904,7 @@ The notification is the existing `AccountActivation` type and template, so the m
 
 **Requirement IDs:** `AUT-C1` GrantRole and `AUT-C2` RevokeRole, as the UM command catalogue defines them. This entry records the v1 contract decided against the frozen specification (§6.11 `user_role`, invariants 7–9, 17a, 24) and the entity workbook (UR1–UR13).
 
-**Status:** Approved and frozen, 2026-09-18 by owner decision. Not yet implemented. Story 1 of two: the commands. Story 2 is the read (`AUT-Q2`), the list of grantable roles and the administration UI.
+**Status:** Approved and frozen, 2026-09-18 by owner decision. Implemented by `GrantRoleCommandHandler` and `RevokeRoleCommandHandler`, with migration `AlignUserRoleEffectivePeriodWithUR2`. Story 1 of two: the commands. Story 2 is the read (`AUT-Q2`), the list of grantable roles and the administration UI.
 
 ### Requirement
 
@@ -953,6 +953,8 @@ Revocation closes the effective period (invariant 9) and records who ended it, w
 Revoking only ever moves `EffectiveTo` earlier, never later, and never clears it. The database's G4 guard refuses anything else.
 
 There is no suspended state (UR13). Pausing access is a revocation now and a new grant later: two attributable events.
+
+**Periods are judged at the precision they are stored at.** PostgreSQL keeps microseconds and .NET keeps 100-nanosecond ticks, so a grant whose end is one tick after its start would pass a strict check made in .NET and then be stored as an empty period, which the database admits. The commands round supplied instants down to the microsecond before the domain judges them.
 
 ### Three rules about the effective period, deliberately different
 
@@ -1071,11 +1073,11 @@ the development database. The index build is the authority elsewhere.
 for one identity and now seed an extra identity instead —
 `ActivateAccountIntegrationTests` and `UserManagementImmutabilityTests`.
 
-## PostgresExceptionTranslator — role-overlap and live-grant constraints not mapped
+## PostgresExceptionTranslator — role-overlap and live-grant constraints not mapped — overlap RESOLVED
 
 **State:** the role-overlap exclusion constraints (raise `23P01`) and RP2's live-grant index are not in the translator's map because no command can reach them yet.
 **Deferred to:** AUT-C1 and AUT-C7, where their wording can be written against a real trigger.
-**Resolution (role overlap):** AUT-C1, approved 2026-09-18, maps both overlap constraints to *"The user already holds this role for this scope in an overlapping period."* Marked resolved for the overlap half when AUT-C1 lands; RP2's live-grant index stays with AUT-C7.
+**Resolution (role overlap):** resolved by AUT-C1. Both overlap constraints map to *"The user already holds this role for this scope in an overlapping period."* RP2's live-grant index is still unmapped and stays with AUT-C7.
 **Where recorded:** `PostgresExceptionTranslator.KnownViolations` doc.
 
 ## Provisioning entry point — RESOLVED
@@ -1802,7 +1804,7 @@ hand-written `ROW()` list fails a test rather than going unnoticed.
 
 **Deferred to:** unscheduled, both.
 
-## G4 constrains how an already-ended assignment may be revoked
+## G4 constrains how an already-ended assignment may be revoked — RESOLVED
 
 **Rule:** `user_role.effective_to` is Write-once (frozen workbook), while the
 same sheet's `revoked_at` note says "Revocation also sets EffectiveTo = now".
@@ -1828,7 +1830,7 @@ story that builds the revoke command, not for the story that added the trigger.
 
 **Deferred to:** the role-revocation command, whenever it is built.
 
-**Resolution:** AUT-C2, approved 2026-09-18. Revoking an already-ended assignment is **refused in the domain** as meaningless, so the trigger is never reached by it. A future assignment is revoked by setting `EffectiveTo = EffectiveFrom`, which only moves a NULL or later end earlier. Marked resolved when AUT-C2 lands.
+**Resolution:** resolved by AUT-C2. `UserRole.Revoke` refuses an already-ended assignment as meaningless, so the trigger is never reached by it. A future assignment is revoked by setting `EffectiveTo = EffectiveFrom`, which only moves a NULL or later end earlier.
 
 ## CR1 — no unique constraint on credential.user_identity_id — RESOLVED
 

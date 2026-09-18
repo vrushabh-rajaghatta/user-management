@@ -140,6 +140,24 @@ public sealed class RoleAssignmentIntegrationTests : IClassFixture<ActivationDat
             admin.UserId, target, role, from, from.AddDays(-1)));
     }
 
+    /// <summary>
+    /// PostgreSQL keeps microseconds; .NET keeps 100 ns ticks. An end one tick
+    /// after the start would pass a strict check made at .NET precision and be
+    /// stored as an EMPTY period, which the database admits. The period is
+    /// judged at the precision it is stored at, so this is refused.
+    /// </summary>
+    [Fact]
+    public async Task An_end_less_than_a_microsecond_after_the_start_is_refused()
+    {
+        var admin = await CallerAsync("security-administrator");
+        var target = await SeedTargetAsync();
+        var from = Hour(DateTimeOffset.UtcNow.AddDays(13));
+        var role = await RoleIdAsync(Granted);
+
+        await AssertRefusedAsync(target, () => GrantAsync(
+            admin.UserId, target, role, from, from.AddTicks(1)));
+    }
+
     /// <summary>G4 — the database serialises it; the refusal is the contract's.</summary>
     [Fact]
     public async Task An_overlapping_grant_is_refused_with_the_overlap_message()

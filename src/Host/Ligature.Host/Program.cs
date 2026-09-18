@@ -138,6 +138,7 @@ app.MapAccountEndpoints();
 app.MapUserEndpoints();
 app.MapIdentityEndpoints();
 app.MapSessionEndpoints();
+app.MapRoleAssignmentEndpoints();
 
 if (apiDocumentationEnabled)
 {

@@ -9,7 +9,9 @@ using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.GrantRole;
 using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
+using Ligature.Platform.Application.Users.Commands.RevokeRole;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.SignIn;
 using Ligature.Platform.Application.Users.Commands.SignOut;
@@ -268,6 +270,16 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<ReissueActivationLinkCommand, ReissueActivationLinkResult>,
             ReissueActivationLinkCommandHandler>();
+
+        // AUT-C1
+        services.AddScoped<
+            ICommandHandler<GrantRoleCommand, GrantRoleResult>,
+            GrantRoleCommandHandler>();
+
+        // AUT-C2
+        services.AddScoped<
+            ICommandHandler<RevokeRoleCommand, RevokeRoleResult>,
+            RevokeRoleCommandHandler>();
 
         // SES-C1
         services.AddScoped<

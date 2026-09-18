@@ -230,6 +230,8 @@ public sealed class CommandHandlerRegistrationTests
         services.AddScoped<ICredentialRepository, StubCredentialRepository>();
         services.AddScoped<IPasswordHistoryRepository, StubPasswordHistoryRepository>();
         services.AddScoped<IUserSessionRepository, StubUserSessionRepository>();
+        services.AddScoped<IRoleRepository, StubRoleRepository>();
+        services.AddScoped<IUserRoleRepository, StubUserRoleRepository>();
         services.AddScoped<IAuditEventCatalogue, StubAuditEventCatalogue>();
         services.AddScoped<IAuditRecordWriter, StubAuditRecordWriter>();
         services.AddScoped<IAutonomousAuditRecordWriter, StubAutonomousWriter>();
@@ -421,6 +423,21 @@ public sealed class CommandHandlerRegistrationTests
             Domain.Users.UserIdentityId userIdentityId, int depth,
             CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<Domain.Users.PasswordHistory>>([]);
+    }
+
+    private sealed class StubRoleRepository : IRoleRepository
+    {
+        public Task<Role?> FindAsync(RoleId roleId, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+    }
+
+    private sealed class StubUserRoleRepository : IUserRoleRepository
+    {
+        public Task AddAsync(UserRole assignment, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<UserRole?> FindAsync(UserRoleId assignmentId, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
     }
 
     private sealed class StubUserSessionRepository : IUserSessionRepository

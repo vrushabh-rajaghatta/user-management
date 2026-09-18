@@ -95,6 +95,11 @@ public static class DependencyInjection
         // SES-C1
         services.AddScoped<IUserSessionRepository, UserSessionRepository>();
 
+        // AUT-C1, AUT-C2
+        services.AddScoped<IRoleRepository, RoleRepository>();
+
+        services.AddScoped<IUserRoleRepository, UserRoleRepository>();
+
         // The audit writer: scoped, on the same DbContext as the command, so
         // it writes on the transaction behaviour 6 opened. Registered against
         // an internal interface — handlers have no public seam to it (IMPL-02).

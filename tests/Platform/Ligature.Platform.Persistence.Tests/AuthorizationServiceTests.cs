@@ -812,7 +812,11 @@ public sealed class AuthorizationServiceTests
             scopeId: null,
             effectiveFrom: effectiveFrom,
             effectiveTo: null,
-            assignedAt: Now,
+
+            // Decided no later than it takes effect: an assignment may start
+            // after it is granted, never before (UserRole.Create). Some cases
+            // here start a day before Now, so they were granted then.
+            assignedAt: effectiveFrom < Now ? effectiveFrom : Now,
             assignedBy: User.SystemUserId,
             assignmentReason: "Second assignment for selection tests.",
             createdAt: Now,
@@ -952,7 +956,11 @@ public sealed class AuthorizationServiceTests
             scopeId: null,
             effectiveFrom: effectiveFrom,
             effectiveTo: null,
-            assignedAt: Now,
+
+            // Decided no later than it takes effect: an assignment may start
+            // after it is granted, never before (UserRole.Create). Some cases
+            // here start a day before Now, so they were granted then.
+            assignedAt: effectiveFrom < Now ? effectiveFrom : Now,
             assignedBy: User.SystemUserId,
             assignmentReason: "Authorization service tests.",
             createdAt: Now,
