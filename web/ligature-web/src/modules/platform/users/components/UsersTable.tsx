@@ -53,6 +53,10 @@ interface Allowed {
   readonly reset: boolean;
   readonly revoke: boolean;
 
+  /** user.deactivate and user.reactivate (USR-C4, USR-C5). */
+  readonly deactivate: boolean;
+  readonly reactivate: boolean;
+
   /** role.read (AUT-Q2): whether the caller may see a user's role assignments. */
   readonly manageRoles: boolean;
 }
@@ -64,33 +68,56 @@ const LABEL: Record<RowAction, string> = {
   "resend-activation": "Resend activation link",
   "reset-password": "Reset password",
   "sign-out-everywhere": "Sign out everywhere",
+  deactivate: "Deactivate",
+  reactivate: "Reactivate",
   "manage-roles": "Manage roles",
 };
 
 /**
- * What a row offers: the client's whole rule (USR-Q1 amendment 1), and nothing
- * broader. activationPending decides between Resend and Reset and is never read
- * as anything more; the commands keep their own eligibility checks.
+ * What a row offers: the client's whole rule, and nothing broader (USR-Q1
+ * amendments 1 and 2; USR-C4/C5 UI, the action matrix).
+ *
+ * AN AFFORDANCE, NOT AUTHORIZATION. It is derived from the row's status and
+ * activationPending and the caller's permissions; the API decides what is
+ * accepted, and a row may be stale. activationPending decides between Resend
+ * and Reset and is never read as anything more.
+ *
+ * An inactive row offers only Reactivate and Manage roles: Resend and Reset
+ * would be refused, and Sign out everywhere would change nothing, since
+ * deactivation already revoked every session. Whether a row is the caller is
+ * not known here and not guessed (U4): Deactivate follows the matrix on every
+ * active row, and the server refuses the caller's own.
  */
 function actionsFor(user: UserRow, can: Allowed): RowAction[] {
   const actions: RowAction[] = [];
 
-  if (user.activationPending && can.resend) {
-    actions.push("resend-activation");
-  }
+  if (user.status === "Inactive") {
+    if (can.reactivate) {
+      actions.push("reactivate");
+    }
+  } else {
+    if (user.activationPending && can.resend) {
+      actions.push("resend-activation");
+    }
 
-  if (!user.activationPending && can.reset) {
-    actions.push("reset-password");
-  }
+    if (!user.activationPending && can.reset) {
+      actions.push("reset-password");
+    }
 
-  if (can.revoke) {
-    actions.push("sign-out-everywhere");
+    if (can.revoke) {
+      actions.push("sign-out-everywhere");
+    }
   }
 
   // Offered on every row to a role.read holder: which roles a user holds is
   // not a question the row can answer without asking.
   if (can.manageRoles) {
     actions.push("manage-roles");
+  }
+
+  // Last, apart from the everyday actions: it ends the person's access.
+  if (user.status === "Active" && can.deactivate) {
+    actions.push("deactivate");
   }
 
   return actions;
@@ -131,6 +158,8 @@ export function UsersTable() {
     resend: useCan(UserPermissions.create),
     reset: useCan(UserPermissions.resetPassword),
     revoke: useCan(UserPermissions.revokeSessions),
+    deactivate: useCan(UserPermissions.deactivate),
+    reactivate: useCan(UserPermissions.reactivate),
     manageRoles: useCan(UserPermissions.readRoles),
   };
 
@@ -275,7 +304,13 @@ function UsersRegion({ query, pathname, can, triggers, onAction }: UsersRegionPr
       className: "whitespace-normal",
       cell: (user) => (
         <div className="flex flex-col">
-          <span className="font-medium">{user.displayName}</span>
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{user.displayName}</span>
+            {/* U2: inactive rows only, in words — never colour alone. */}
+            {user.status === "Inactive" ? (
+              <span className="rounded-sm border px-1.5 py-0.5 text-xs text-muted-foreground">Inactive</span>
+            ) : null}
+          </span>
           <span className="text-sm text-muted-foreground">{user.email ?? "No email address"}</span>
         </div>
       ),
@@ -285,7 +320,7 @@ function UsersRegion({ query, pathname, can, triggers, onAction }: UsersRegionPr
   // Offered per permission and, for Resend and Reset, per row: hidden, never
   // disabled. With no permission at all there is no Actions column, and a row
   // with nothing to offer has no button rather than an empty menu.
-  if (can.resend || can.reset || can.revoke || can.manageRoles) {
+  if (can.resend || can.reset || can.revoke || can.deactivate || can.reactivate || can.manageRoles) {
     columns.push({
       header: "Actions",
       className: "w-12 text-right",

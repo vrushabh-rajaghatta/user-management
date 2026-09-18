@@ -3,10 +3,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/shared/api/errors";
 import { ConfirmAction } from "@/shared/components/ConfirmAction";
 import { FormField } from "@/shared/forms/FormField";
-import { useReissueActivationLink, useResetUserPassword, useSignOutUserEverywhere } from "../hooks/useUserActions";
+import {
+  useDeactivateUser,
+  useReactivateUser,
+  useReissueActivationLink,
+  useResetUserPassword,
+  useSignOutUserEverywhere,
+} from "../hooks/useUserActions";
 import { reasonSchema, type UserRow } from "../schemas/users";
 
-export type UserAction = "resend-activation" | "reset-password" | "sign-out-everywhere";
+export type UserAction = "resend-activation" | "reset-password" | "sign-out-everywhere" | "deactivate" | "reactivate";
 
 const UNKNOWN = "The action could not be completed. Try again.";
 
@@ -48,6 +54,27 @@ const COPY: Record<UserAction, ActionCopy> = {
     busy: "Signing out…",
     done: (name) => `All active sessions for ${name} have been signed out.`,
   },
+
+  // USR-C4 / USR-C5 (U6). Neither is a toggle: the copy states the cascade,
+  // and what reactivation does not bring back, before either is confirmed.
+  // The self case is not mentioned: the server refuses it, and the refusal is
+  // shown word for word (U4).
+  deactivate: {
+    title: (name) => `Deactivate ${name}`,
+    description:
+      "They'll be signed out everywhere and won't be able to sign in. All of their current and future roles are revoked, and reactivating them later will not restore any of them. Any activation or password-reset link they have stops working.",
+    confirm: "Deactivate",
+    busy: "Deactivating…",
+    done: (name) => `${name} has been deactivated.`,
+  },
+  reactivate: {
+    title: (name) => `Reactivate ${name}`,
+    description:
+      "They'll be able to sign in again, but they will have no roles: grant any access they need afresh. If they had activated their account, they sign in with their existing password. If they had not, send them a new activation link.",
+    confirm: "Reactivate",
+    busy: "Reactivating…",
+    done: (name) => `${name} has been reactivated.`,
+  },
 };
 
 interface UserActionDialogProps {
@@ -80,6 +107,8 @@ export function UserActionDialog({ open, user, action, returnFocus, onClose, onC
     "resend-activation": useReissueActivationLink(),
     "reset-password": useResetUserPassword(),
     "sign-out-everywhere": useSignOutUserEverywhere(),
+    deactivate: useDeactivateUser(),
+    reactivate: useReactivateUser(),
   };
   const mutation = mutations[action];
 

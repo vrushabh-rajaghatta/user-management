@@ -71,7 +71,7 @@ public static class UserEndpoints
             .WithSummary("List the tenant's human users, one page at a time.")
             .WithDescription(
                 "Requires a carrier and the 'user.read' permission. Each row is "
-                + "exactly userId, displayName, email and activationPending; "
+                + "exactly userId, displayName, email, activationPending and status; "
                 + "userId is the only identifier, and is what "
                 + "/api/users/{userId}/... accepts. email may be null.\n\n"
                 + "activationPending is true when the user holds a local "
@@ -79,6 +79,9 @@ public static class UserEndpoints
                 + "only 'not pending'. It is presentation data, not "
                 + "authorization: the commands a row can start decide "
                 + "eligibility themselves. Nothing filters or sorts by it.\n\n"
+                + "status is 'Active' or 'Inactive', the user's stored lifecycle "
+                + "status, independent of activationPending. It carries no "
+                + "deactivation details, and nothing filters or sorts by it.\n\n"
                 + "Optional 'page' (default 1) and 'pageSize' (default 25, "
                 + "maximum 100). A value that is not an integer, does not fit "
                 + "one, or is supplied twice is 400; so is an out-of-range value, "
@@ -218,6 +221,9 @@ public static class UserEndpoints
                     x.DisplayName,
                     x.Email,
                     x.ActivationPending,
+
+                    // USR-Q1 Amendment 2: "Active" or "Inactive", as stored.
+                    Status = x.Status.ToString(),
                 }),
                 result.Page,
                 result.PageSize,
