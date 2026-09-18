@@ -1300,7 +1300,9 @@ Everything below happens in the pipeline's single transaction, in this order. Ea
 | 8 | Audit | See below. |
 | 9 | Invalidate caches | **Nothing to do.** There is no effective-permission cache: permissions are resolved per request (UR12). |
 
-"Now" is one instant for the whole operation, truncated to stored precision (`RoleAssignmentTime.AtStoredPrecision`), so every row and record the cascade writes carries the same time.
+"Now" is one instant for the whole operation, truncated to stored precision (`RoleAssignmentTime.AtStoredPrecision`), so every row and record the cascade writes carries the same time. **It is read after the lock is taken, not before.** An assignment granted while C4 waited for the lock was assigned later than a clock read taken before the wait, and `UserRole.Revoke` refuses a revocation dated before the assignment. K1 inserts its racing assignment at the real insert time (`clock_timestamp()`) to hold this.
+
+The steps run in one transaction, so their order within it cannot be observed. The self rule (D9c) is evaluated first, by the domain's `User.Deactivate`, before anything is changed.
 
 **Partial execution is the failure this prevents.** A refusal or a fault at any step rolls back every step. No application-level retry and no after-the-fact cleanup are used.
 
@@ -1342,7 +1344,7 @@ All of it is written by the command's own transaction. The audit actor of every 
 
 1. The pipeline authorises.
 2. Lock the target's `app_user` row `FOR UPDATE` (D6), then evaluate the refusals.
-3. **Email check.** Refuse if another human who is not inactive holds the same email, compared with `lower()` in the database (AU3). The check exists to give a clear message. **The unique index `ux_app_user_active_human_email` remains the guarantee**, and a race past the check is refused by it, with the same message.
+3. **Email check.** Refuse if another human who is not inactive holds the same email, compared with `lower()` in the database (AU3). The check exists to give a clear message. **The unique index `ux_app_user_active_human_email` remains the guarantee**, and a race past the check is refused by it. *Corrected during implementation:* that refusal carries the translator's existing message for the index, *"A user with this email address already exists."*, not the pre-check's. The index is translated once, for every command, and the unit of work saves after the handler returns, so the handler cannot re-word it. The meaning is the same, and the reactivation is refused either way.
 4. Reactivate every identity whose deactivation stamp equals the user's (`DeactivatedAt` and `DeactivatedBy` both equal) (D5). An identity deactivated separately, by a future IDN-C3, stays inactive.
 5. Reactivate the user: `Status` = `Active`, and the deactivation stamp is cleared. This is lifecycle-controlled, per the frozen model.
 6. Audit: `UserReactivated`, with Before/After of `Status`, `DeactivatedAt` and `DeactivatedBy`, and the reason; plus one `IdentityReactivated` per identity, with `CausationId` = `UserReactivated`. All share one `OperationId`.
