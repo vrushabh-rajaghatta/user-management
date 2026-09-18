@@ -1575,6 +1575,8 @@ Rows are Active or Inactive; the caller's permissions come from `GET /api/me`. *
 
 Each cell names the permission that shows the action; — means never shown.
 
+> **Amended by *USR-C2 — the Edit profile UI* (U4).** Every row also offers **Edit profile** to holders of `user.update`, active and inactive alike. An inactive row therefore offers Reactivate, Manage roles and Edit profile. The table above is the original matrix; the amendment adds that column to every row.
+
 - **Resend, Reset and Sign out everywhere are withheld from inactive rows.** Resend and Reset would be refused. Sign out everywhere would succeed and change nothing, because deactivation already revoked every session.
 - **A pending user may be deactivated** (USR-C4 D9d).
 - **The caller's own row** follows the matrix like any other (U4).
@@ -1747,6 +1749,108 @@ The frozen catalogue's USR-C2 row is *"Admin or self"*, with permission *"user.u
 - **USR-C1 adopting the name rules**, and database CHECK constraints for them.
 - **GetUser's other catalogue fields**: status, actor type, identities and assignments.
 - **Optimistic concurrency.**
+
+---
+
+## USR-C2 — the Edit profile UI (story 2)
+
+**Status:** Contract frozen 2026-09-18 by owner decision (U1–U7). The owner also confirmed option (a) for Create user and a status note in the architecture document after the implementation lands. It builds on story 1 (#65): USR-C2 `POST /api/users/{userId}/profile` and USR-Q1 GetUser `GET /api/users/{userId}`.
+
+### Requirement
+
+An administrator edits a user's first, last and display name from the Users table. The form loads the current values, protects unsaved changes, and leaves every naming rule to the server. This is also where the web client's first **editing** form arrives, and with it the form library and the unsaved-changes guard that `docs/frontend-architecture.md` §12 set out for exactly this moment.
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **U1** | **Adopt React Hook Form now, with Zod.** This is the first form that edits data, exactly as W3 anticipated (*"the library arrives with that form, not ahead of it"*). `formState.isDirty` drives the unsaved-changes guard. **No W3 amendment:** the plan is being followed as written. |
+| **U2** | **Build `useUnsavedChangesGuard` as a shared hook**, use it in Edit profile, **and retrofit Create user** in this story, since the approved design required the guard there. The Grant role form is a follow-up. |
+| **U3** | **Client validation is presence only.** Each field must be a non-empty string. There is no trimming, no control-character check, no 100-character check, and no HTML `maxLength`. The server is authoritative. |
+| **U4** | **Edit profile** for holders of `user.update`, on **active and inactive** rows. This explicitly amends the frozen USR-C4/C5 UI matrix. |
+| **U5** | The dialog **opens by reading GetUser**. It shows a loading state, and a stated error with **Try again** if the read fails. The three fields are filled with the returned values. It submits exactly what was typed; the server normalises. |
+| **U6** | **Every `204` is a successful save.** It announces *"Profile saved for {new display name}."* and refreshes both the list and that user's GetUser query. The client does not try to tell a change from a no-op. |
+| **U7** | **Everything goes through the shared guard:** Cancel, Escape, the close button, in-app navigation, and reloading or closing the tab. It asks **"Discard changes?"** with **Keep editing** and **Discard**. It is off after a successful save. |
+
+### The form lifecycle (U1)
+
+```text
+GetUser  →  React Hook Form  →  reset(serverValues)  →  formState.isDirty
+        →  useUnsavedChangesGuard(isDirty && !saved)
+        →  Zod: presence only  →  POST /api/users/{userId}/profile
+```
+
+React Hook Form owns the form's lifecycle and its dirty state. Zod carries only the presence check that §12 allows. **Neither replaces the domain's rules**: the server still trims, then validates, then stores (USR-C2 G3). The form is populated with `reset(serverValues)`, so the loaded values are the form's defaults, and `isDirty` means "differs from what the server returned".
+
+**Dependencies.** `react-hook-form` and `@hookform/resolvers` (for `zodResolver`), pinned to exact versions as every dependency is. `@hookform/resolvers` must support Zod 4 (the app uses `zod` 4.6.5). The version is verified when the dependency is added.
+
+### Why presence only (U3)
+
+§12 says *"A schema never rejects input the server would accept."* The server's rules cannot be mirrored in the browser without breaking that:
+
+- **Trimming differs.** JavaScript's `trim()` removes U+FEFF, which .NET's `Trim()` keeps; .NET removes U+0085, which JavaScript keeps. A value of only `"\uFEFF"` is blank to the browser and accepted by the server.
+- **HTML `maxLength` counts UTF-16 units.** `maxLength="100"` would block 100 astral characters (200 units), which the server accepts.
+
+So the client asks only that each field is present, as a non-empty string. Everything else is the server's, and its `400` is shown **word for word, at the form level**. The message names the field, but §7 forbids branching on message text, so it is not mapped to a field.
+
+### The unsaved-changes guard (U2, U7)
+
+`useUnsavedChangesGuard(dirty: boolean)`, in `shared/forms`, is the shared hook §12 describes. It takes a boolean, so it is independent of how a form computes dirtiness.
+
+- **In-app navigation** while dirty is caught with React Router's `useBlocker` (the app uses a data router, `createBrowserRouter`). It opens `ConfirmAction`: **"Discard changes?"**, with **Keep editing** and **Discard**.
+- **Reloading or closing the tab** while dirty triggers `beforeunload`, and the browser shows its own prompt.
+- **Closing a dialog** while dirty, whether by Cancel, Escape or the close button, asks the same "Discard changes?" first. **Discard** closes; **Keep editing** returns to the form with the typed values intact.
+- It is **off after a successful save**, and while any navigation that follows is in progress.
+
+**Create user (retrofit), option (a), confirmed by the owner.** The same guard, on the Create user page. Create user stays a `useState` form: RHF is introduced for new editing forms, and this story is not a reason to refactor an existing one. Its dirty flag is computed explicitly as **"any editable field differs from its initial empty value"**, covering **every** editable field (first name, last name, display name, email, initial username), not only those the server requires. The guard answers *"has the user changed anything?"*, and must not inherit USR-C1's client/server validation differences.
+
+**The guard is independent of any form library:** it accepts a `boolean`, never a React Hook Form object. Until the existing forms are migrated, the coexistence is deliberate:
+
+```text
+Edit profile  → React Hook Form + Zod
+Create user   → useState + its existing Zod pattern
+Grant role    → useState + its existing pattern (no guard yet)
+```
+
+### The action matrix, amended (U4)
+
+> **Amends *USR-C4 / USR-C5 — the Users-table UI*, "The action matrix".** An inactive row gains **Edit profile**. The statement *"An inactive row offers only Reactivate and Manage roles"* becomes *"only Reactivate, Manage roles and Edit profile"*. The reasons still hold for the actions withheld: Resend, Reset and Sign out everywhere would be refused, or would change nothing.
+
+Edit profile is shown to holders of `user.update` on every row, active and inactive, pending or not (USR-C2 G7). The System actor is never a row. Hidden, never disabled.
+
+### The dialog (U5, U6)
+
+- **Title:** *Edit profile for {display name}*. The fields are **First name**, **Last name** and **Display name**, each built with `FormField`. The buttons are **Save** and **Cancel**.
+- **Opening** reads GetUser (a query key per user, under `userKeys`). While it loads, the form is not shown. If the read fails, the dialog states the error and offers **Try again**, the shared `ErrorState`'s retry, as every error state in the app does. That includes a `400` such as *"The user does not exist."* from a stale row, which is shown word for word.
+- **Saving** sends exactly the three typed values. The button is busy while the request is in flight, and a repeated press sends once. On `204` the dialog closes, the guard is cleared, the page announces *"Profile saved for {new display name}."*, and the client **refreshes** the list and that user's GetUser query. *Corrected during implementation:* the announcement names the display name **trimmed of surrounding whitespace**, as it will be stored (typing `"  Countess Lovelace "` announces *"Profile saved for Countess Lovelace."*). Only the announcement is trimmed. **The request still carries exactly what was typed**, and the refreshed list shows the stored form.
+- **A refusal** keeps the dialog open, with the typed values intact and the server's message shown word for word.
+- **Focus** returns to the row's Actions button when the dialog closes, as for the other row actions.
+
+### Acceptance Criteria
+
+- **UI-1** Edit profile appears for `user.update` on active and inactive rows, and never without it. The USR-C4/C5 matrix test is updated to the amended table.
+- **UI-2** Opening reads GetUser. The form shows the returned values; loading shows no form; a failed read shows the error and a **Try again** that reads again.
+- **UI-3** Presence only. An empty field sends nothing and is flagged. A whitespace-only value, `"\uFEFF"`, a control character and 101 characters **are sent**, and the server's refusal is shown word for word. There is no `maxLength` attribute on the inputs.
+- **UI-4** Save sends exactly the typed values (untrimmed) to `POST /api/users/{userId}/profile`. On `204` it announces, refreshes the list and that user's GetUser query, and closes. It is busy while sending, and sends once.
+- **UI-5** Guard in the dialog: once dirty, Cancel, Escape and the close button each ask "Discard changes?". Keep editing keeps the values; Discard closes. When not dirty, they close without asking. After a successful save there is no prompt.
+- **UI-6** Guard on navigation: a dirty form blocks in-app navigation with the same prompt, and `beforeunload` is registered while dirty and removed when clean.
+- **UI-7** Create user: the guard applies once **any** editable field differs from empty, each field on its own, including email and initial username. It is off again when every field is back to empty, and after a successful create.
+- **UI-8** No accessibility violations with the dialog open, and with the discard prompt open.
+- **UI-9** Browser, in the dev stack, with each state change approved by the owner:
+  - edit a profile, see the list refresh;
+  - try to leave with unsaved changes;
+  - see a server refusal shown word for word.
+
+### After it lands
+
+- **A status note in `docs/frontend-architecture.md` §12, beside W3** (confirmed by the owner). It says React Hook Form was introduced with USR-C2 as the first data-editing form, consistent with W3's deferred form-library decision. W3 itself is not rewritten: the history is kept and the current state recorded.
+
+### Not included
+
+- The Grant role guard.
+- Migrating the other existing forms to React Hook Form.
+- Copying the server's name rules into the client.
+- Changes to USR-C1, database name constraints, lifecycle changes, and optimistic concurrency.
 
 ---
 

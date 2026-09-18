@@ -531,6 +531,8 @@ A zod form schema plays the same role as a repository pre-check. It saves the us
 >
 > `FormField` is an accessibility presentation primitive and **knows nothing of zod, of any form library, or of API errors**. It receives an already-computed error string and does not care where it came from. Lint enforces this.
 
+> **Status (USR-C2 UI, 2026-09-18).** React Hook Form was introduced with USR-C2 as the first data-editing form (the Edit profile dialog), consistent with W3's deferred form-library decision above, together with `@hookform/resolvers` for Zod. W3 is kept as written: it records the decision as it stood. `useUnsavedChangesGuard(dirty: boolean)` now exists in `shared/forms` and is independent of any form library. The existing forms stay on `useState` until they are migrated: Create user computes its own dirty flag and uses the guard; the Grant role form has no guard yet.
+
 ### Unsaved changes
 
 This pattern is defined for the whole app and adopted by every form that edits data.

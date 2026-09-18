@@ -21,6 +21,9 @@ interface ConfirmActionProps {
   /** What is in progress: "Resetting…". */
   readonly busyLabel: string;
 
+  /** The dismissing button's label; "Cancel" unless a prompt needs its own ("Keep editing"). */
+  readonly cancelLabel?: string;
+
   /** While true, confirming and dismissing are both refused. */
   readonly busy?: boolean;
 
@@ -62,6 +65,7 @@ export function ConfirmAction({
   description,
   confirmLabel,
   busyLabel,
+  cancelLabel = "Cancel",
   busy = false,
   onConfirm,
   returnFocus,
@@ -103,7 +107,7 @@ export function ConfirmAction({
               onOpenChange(false);
             }}
           >
-            Cancel
+            {cancelLabel}
           </Button>
           <Button
             disabled={busy}

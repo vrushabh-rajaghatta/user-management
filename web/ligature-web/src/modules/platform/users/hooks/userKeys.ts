@@ -14,4 +14,7 @@ export const userKeys = {
     ["users", "role-assignments", userId, params] as const,
 
   grantableRoles: ["users", "grantable-roles"] as const,
+
+  /** USR-Q1 GetUser v1: one user's profile names. */
+  profile: (userId: string) => ["users", "profile", userId] as const,
 };

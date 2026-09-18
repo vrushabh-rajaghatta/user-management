@@ -31,6 +31,7 @@ const DEACTIVATE = definePermission("user.deactivate");
 const REACTIVATE = definePermission("user.reactivate");
 const ROLE_READ = definePermission("role.read");
 const ROLE_GRANT = definePermission("role.grant");
+const UPDATE = definePermission("user.update");
 
 type Status = "Active" | "Inactive";
 
@@ -175,8 +176,10 @@ async function menuOf(user: ReturnType<typeof renderWithApp>["user"], name: stri
 }
 
 /**
- * The contract's matrix, as data (USR-C4 / USR-C5 UI, "The action matrix").
- * The permission named in each cell shows the action; nothing else does.
+ * The contract's matrix, as data (USR-C4 / USR-C5 UI, "The action matrix",
+ * as amended by the USR-C2 UI, U4: Edit profile on every row, active and
+ * inactive, for user.update). The permission named in each cell shows the
+ * action; nothing else does.
  */
 function expectedMenu(row: Row, holds: ReadonlySet<PermissionCode>): string[] {
   const menu: string[] = [];
@@ -191,6 +194,7 @@ function expectedMenu(row: Row, holds: ReadonlySet<PermissionCode>): string[] {
   }
 
   if (holds.has(ROLE_READ)) menu.push("Manage roles");
+  if (holds.has(UPDATE)) menu.push("Edit profile");
 
   return menu.sort();
 }
@@ -204,8 +208,9 @@ const PERMISSION_SETS: { name: string; codes: PermissionCode[] }[] = [
   { name: "session.revoke", codes: [READ, REVOKE] },
   { name: "user.deactivate", codes: [READ, DEACTIVATE] },
   { name: "user.reactivate", codes: [READ, REACTIVATE] },
+  { name: "user.update", codes: [READ, UPDATE] },
   { name: "the read-only reviewer (user.read, role.read)", codes: [READ, ROLE_READ] },
-  { name: "everything", codes: [READ, CREATE, RESET, REVOKE, DEACTIVATE, REACTIVATE, ROLE_READ, ROLE_GRANT] },
+  { name: "everything", codes: [READ, CREATE, RESET, REVOKE, DEACTIVATE, REACTIVATE, ROLE_READ, ROLE_GRANT, UPDATE] },
 ];
 
 describe("the action matrix", () => {

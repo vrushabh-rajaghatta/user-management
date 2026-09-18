@@ -11,6 +11,9 @@ export const UserPermissions = {
   read: definePermission("user.read"),
   resetPassword: definePermission("user.resetpassword"),
 
+  // USR-C2.
+  update: definePermission("user.update"),
+
   // USR-C4 / USR-C5.
   deactivate: definePermission("user.deactivate"),
   reactivate: definePermission("user.reactivate"),
