@@ -264,6 +264,34 @@ describe("the assignments", () => {
     expect(within(row).getByText("Quarterly review; REQ-7.")).toBeInTheDocument();
   });
 
+  /** An empty answer is said, not shown as bare column headers. */
+  it("says a user has no current role assignments, and none at all with history", async () => {
+    const state = backend();
+    state.current = [];
+    state.history = [];
+
+    const rendered = await render(READ, ROLE_READ);
+
+    await rendered.user.click(await actions());
+    await rendered.user.click(await screen.findByRole("menuitem", { name: "Manage roles" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Roles for Vru Raj" });
+
+    expect(await within(dialog).findByText("No current role assignments.")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("table", { name: "Role assignments" })).toBeNull();
+
+    await rendered.user.click(within(dialog).getByRole("switch", { name: "Show history" }));
+
+    expect(await within(dialog).findByText("No role assignments.")).toBeInTheDocument();
+  });
+
+  it("does not say there are none when there are", async () => {
+    backend();
+    const { dialog } = await openManageRoles();
+
+    expect(within(dialog).queryByText("No current role assignments.")).toBeNull();
+  });
+
   /**
    * The state is the server's. An assignment whose dates have long passed but
    * which the server calls Active is shown as Active: the client derives

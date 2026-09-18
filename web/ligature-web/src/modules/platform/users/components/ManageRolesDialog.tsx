@@ -10,6 +10,7 @@ import { ApiError } from "@/shared/api/errors";
 import { useCan } from "@/shared/auth/useCan";
 import { ConfirmAction } from "@/shared/components/ConfirmAction";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
+import { EmptyState } from "@/shared/components/EmptyState";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { FormField } from "@/shared/forms/FormField";
 import { useGrantRole, useGrantableRoles, useRevokeRole, useRoleAssignments } from "../hooks/useRoleAssignments";
@@ -196,6 +197,9 @@ export function ManageRolesDialog({ open, user, returnFocus, onClose, onClosed }
               <Skeleton className="h-12 w-full" />
             </div>
           )
+        ) : assignments.data.assignments.length === 0 ? (
+          // An empty answer is said, not left as bare column headers (§11).
+          <EmptyState title={includeInactive ? "No role assignments." : "No current role assignments."} />
         ) : (
           <DataTable
             caption="Role assignments"
