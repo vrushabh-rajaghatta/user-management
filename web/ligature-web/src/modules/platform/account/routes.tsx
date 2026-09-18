@@ -1,4 +1,5 @@
 import type { RouteObject } from "react-router";
+import { MY_ACCOUNT_PATH } from "./paths";
 
 /**
  * Lazy, like every page (docs/frontend-architecture.md §5).
@@ -21,5 +22,17 @@ export const accountRoutes: RouteObject[] = [
   {
     path: "/reset-password",
     lazy: async () => ({ Component: (await import("./pages/ResetPasswordPage")).ResetPasswordPage }),
+  },
+];
+
+/**
+ * The signed-in half of the module, composed into the application shell behind
+ * RequireAuth rather than into the public shell above.
+ */
+export const myAccountRoutes: RouteObject[] = [
+  // CRD-C4 and SES-C4 (self). Chosen by the client.
+  {
+    path: MY_ACCOUNT_PATH,
+    lazy: async () => ({ Component: (await import("./pages/MyAccountPage")).MyAccountPage }),
   },
 ];
