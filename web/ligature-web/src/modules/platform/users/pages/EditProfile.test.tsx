@@ -7,7 +7,6 @@ import { expectNoAccessibilityViolations } from "@/test/axe";
 import { server } from "@/test/msw/server";
 import { renderWithApp } from "@/test/renderWithApp";
 import { TestSessionSource } from "@/test/sessions";
-import { userKeys } from "../hooks/userKeys";
 import { UsersPage } from "./UsersPage";
 
 /**
@@ -158,7 +157,7 @@ describe("opening the dialog", () => {
     expect(within(dialog).queryByLabelText("First name")).toBeNull();
   });
 
-  it("states a failed read word for word and reads again on Retry", async () => {
+  it("states a failed read word for word and reads again on Try again", async () => {
     const state = backend({ failRead: true });
     const { user } = await render(READ, UPDATE);
 
@@ -166,7 +165,8 @@ describe("opening the dialog", () => {
 
     expect(await within(dialog).findByText("The user does not exist.")).toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole("button", { name: "Retry" }));
+    // The shared ErrorState's retry, as every error state in the app.
+    await user.click(within(dialog).getByRole("button", { name: "Try again" }));
     await loaded(dialog);
 
     expect(state.profileReads()).toBe(2);
@@ -191,8 +191,8 @@ describe("presence only", () => {
 
   it.each([
     ["whitespace only", "   "],
-    ["a byte-order mark", "﻿"],
-    ["a control character", "AdaL."],
+    ["a byte-order mark", "\uFEFF"],
+    ["a control character", "Ada\u0007L."],
     ["101 characters", "x".repeat(101)],
   ])("sends %s, and shows the server's refusal word for word", async (_, value) => {
     const state = backend({ refuse: "Display name is required." });
@@ -228,7 +228,7 @@ describe("presence only", () => {
 describe("saving", () => {
   it("sends exactly what was typed, announces, refreshes, and closes", async () => {
     const state = backend();
-    const { user, queryClient } = await render(READ, UPDATE);
+    const { user } = await render(READ, UPDATE);
     const listReadsBefore = state.listReads();
 
     const dialog = await openEdit(user);
@@ -248,10 +248,13 @@ describe("saving", () => {
     ]);
     expect(screen.getByRole("status")).toHaveTextContent("Profile saved for Countess Lovelace.");
 
+    // Read again, both: the list, and this user's GetUser. The profile query is
+    // still mounted when the save succeeds, so its invalidation refetches at
+    // once — which is what proves the refresh, where the flag would not.
     await waitFor(() => {
       expect(state.listReads()).toBeGreaterThan(listReadsBefore);
     });
-    expect(queryClient.getQueryState(userKeys.profile(ADA.userId))?.isInvalidated).toBe(true);
+    expect(state.profileReads()).toBe(2);
   });
 
   it("treats a save with nothing changed as a save", async () => {

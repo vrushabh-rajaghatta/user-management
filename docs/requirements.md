@@ -1768,7 +1768,7 @@ An administrator edits a user's first, last and display name from the Users tabl
 | **U2** | **Build `useUnsavedChangesGuard` as a shared hook**, use it in Edit profile, **and retrofit Create user** in this story, since the approved design required the guard there. The Grant role form is a follow-up. |
 | **U3** | **Client validation is presence only.** Each field must be a non-empty string. There is no trimming, no control-character check, no 100-character check, and no HTML `maxLength`. The server is authoritative. |
 | **U4** | **Edit profile** for holders of `user.update`, on **active and inactive** rows. This explicitly amends the frozen USR-C4/C5 UI matrix. |
-| **U5** | The dialog **opens by reading GetUser**. It shows a loading state, and a stated error with retry if the read fails. The three fields are filled with the returned values. It submits exactly what was typed; the server normalises. |
+| **U5** | The dialog **opens by reading GetUser**. It shows a loading state, and a stated error with **Try again** if the read fails. The three fields are filled with the returned values. It submits exactly what was typed; the server normalises. |
 | **U6** | **Every `204` is a successful save.** It announces *"Profile saved for {new display name}."* and refreshes both the list and that user's GetUser query. The client does not try to tell a change from a no-op. |
 | **U7** | **Everything goes through the shared guard:** Cancel, Escape, the close button, in-app navigation, and reloading or closing the tab. It asks **"Discard changes?"** with **Keep editing** and **Discard**. It is off after a successful save. |
 
@@ -1821,7 +1821,7 @@ Edit profile is shown to holders of `user.update` on every row, active and inact
 ### The dialog (U5, U6)
 
 - **Title:** *Edit profile for {display name}*. The fields are **First name**, **Last name** and **Display name**, each built with `FormField`. The buttons are **Save** and **Cancel**.
-- **Opening** reads GetUser (a query key per user, under `userKeys`). While it loads, the form is not shown. If the read fails, the dialog states the error and offers **Retry**. That includes a `400` such as *"The user does not exist."* from a stale row, which is shown word for word.
+- **Opening** reads GetUser (a query key per user, under `userKeys`). While it loads, the form is not shown. If the read fails, the dialog states the error and offers **Try again**, the shared `ErrorState`'s retry, as every error state in the app does. That includes a `400` such as *"The user does not exist."* from a stale row, which is shown word for word.
 - **Saving** sends exactly the three typed values. The button is busy while the request is in flight, and a repeated press sends once. On `204` the dialog closes, the guard is cleared, the page announces *"Profile saved for {new display name}."*, and the client **refreshes** the list and that user's GetUser query. The new display name is the value as typed, since the refreshed list shows the stored form.
 - **A refusal** keeps the dialog open, with the typed values intact and the server's message shown word for word.
 - **Focus** returns to the row's Actions button when the dialog closes, as for the other row actions.
@@ -1829,7 +1829,7 @@ Edit profile is shown to holders of `user.update` on every row, active and inact
 ### Acceptance Criteria
 
 - **UI-1** Edit profile appears for `user.update` on active and inactive rows, and never without it. The USR-C4/C5 matrix test is updated to the amended table.
-- **UI-2** Opening reads GetUser. The form shows the returned values; loading shows no form; a failed read shows the error and a Retry that reads again.
+- **UI-2** Opening reads GetUser. The form shows the returned values; loading shows no form; a failed read shows the error and a **Try again** that reads again.
 - **UI-3** Presence only. An empty field sends nothing and is flagged. A whitespace-only value, `"﻿"`, a control character and 101 characters **are sent**, and the server's refusal is shown word for word. There is no `maxLength` attribute on the inputs.
 - **UI-4** Save sends exactly the typed values (untrimmed) to `POST /api/users/{userId}/profile`. On `204` it announces, refreshes the list and that user's GetUser query, and closes. It is busy while sending, and sends once.
 - **UI-5** Guard in the dialog: once dirty, Cancel, Escape and the close button each ask "Discard changes?". Keep editing keeps the values; Discard closes. When not dirty, they close without asking. After a successful save there is no prompt.
