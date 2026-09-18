@@ -2,13 +2,18 @@ using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Domain.Users;
-using Ligature.SharedKernel.Exceptions;
 
 namespace Ligature.Platform.Application.Tests.Users;
 
 /// <summary>
 /// CRD-C4, D3 — the half of "a locked credential is refused" that the
 /// database cannot show: that the refusal still pays a real derivation.
+///
+/// Since the attempt limit (docs/requirements.md, "CRD-C4 — limiting
+/// current-password attempts per session"), a wrong or locked attempt is a
+/// COUNTED refusal: it returns Refused, so the session's counter commits,
+/// instead of throwing. L8 keeps the two alike — the same cost, the same count,
+/// the same outcome.
 ///
 /// A locked refusal that skipped the hasher would return measurably faster
 /// than a wrong password, and that difference would tell a session holder the
@@ -25,8 +30,9 @@ public sealed class ChangePasswordDecoyTests
     {
         var hasher = new SpyPasswordHasher();
 
-        await Assert.ThrowsAsync<BusinessRuleViolationException>(
-            () => Handle(hasher, locked: true));
+        var result = await Handle(hasher, locked: true);
+
+        Assert.Equal(ChangePasswordOutcome.Refused, result.Outcome);
 
         Assert.True(
             hasher.DecoyCalls == 1,
@@ -45,16 +51,57 @@ public sealed class ChangePasswordDecoyTests
     {
         var hasher = new SpyPasswordHasher();
 
-        await Assert.ThrowsAsync<BusinessRuleViolationException>(
-            () => Handle(hasher, locked: false));
+        var result = await Handle(hasher, locked: false);
 
+        Assert.Equal(ChangePasswordOutcome.Refused, result.Outcome);
         Assert.Equal(1, hasher.VerifyCalls);
         Assert.Equal(0, hasher.DecoyCalls);
     }
 
-    private static Task<ChangePasswordResult> Handle(SpyPasswordHasher hasher, bool locked)
+    /// <summary>
+    /// L8, side-channel consistency: the two refusals mutate the session the
+    /// same way. If only a wrong password wrote the counter, the write would
+    /// be one more way to tell "locked" from "wrong".
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_wrong_or_locked_attempt_counts_once_against_this_session(bool locked)
     {
-        var userId = UserId.New();
+        var (result, session, _) = await HandleWithState(new SpyPasswordHasher(), locked);
+
+        Assert.Equal(ChangePasswordOutcome.Refused, result.Outcome);
+        Assert.Equal(1, session.FailedPasswordChangeAttempts);
+    }
+
+    /// <summary>
+    /// The serialisation point comes FIRST: the user's row lock is taken
+    /// before the session is read, so the decision is made on what the lock
+    /// protects. (That the database really holds it is the integration tests'
+    /// to prove.)
+    /// </summary>
+    [Fact]
+    public async Task The_users_row_lock_is_taken_before_the_session_is_read()
+    {
+        var (_, _, trace) = await HandleWithState(new SpyPasswordHasher(), locked: false);
+
+        Assert.Equal("lock", trace[0]);
+        Assert.Contains("session", trace);
+    }
+
+    private static async Task<ChangePasswordResult> Handle(SpyPasswordHasher hasher, bool locked)
+        => (await HandleWithState(hasher, locked)).Result;
+
+    private static async Task<(ChangePasswordResult Result, UserSession Session, List<string> Trace)> HandleWithState(
+        SpyPasswordHasher hasher, bool locked)
+    {
+        var trace = new List<string>();
+
+        var user = User.CreateHuman(
+            UserId.New(), "Decoy", "Person", "Decoy Person", "decoy.person@example.test",
+            Now.AddDays(-2), User.SystemUserId);
+
+        var userId = user.Id;
 
         var identity = UserIdentity.CreateLocal(
             UserIdentityId.New(), userId, ActorType.Human, "decoy.person", Now, User.SystemUserId);
@@ -74,7 +121,8 @@ public sealed class ChangePasswordDecoyTests
             new FixedClock(),
             new CallerContext(userId),
             new PassThroughUnitOfWork(),
-            new OneSessionRepository(session),
+            new LockingUserRepository(user, trace),
+            new OneSessionRepository(session, trace),
             new OneIdentityRepository(identity),
             new OneCredentialRepository(credential),
             new EmptyHistoryRepository(),
@@ -82,9 +130,11 @@ public sealed class ChangePasswordDecoyTests
             hasher,
             OpenCommand());
 
-        return handler.Handle(
+        var result = await handler.Handle(
             new ChangePasswordCommand(session.Id, "whatever-was-typed", "a-new-password-long-enough"),
             CancellationToken.None);
+
+        return (result, session, trace);
     }
 
     private static IAuditEvents OpenCommand()
@@ -138,19 +188,46 @@ public sealed class ChangePasswordDecoyTests
             => operation(cancellationToken);
     }
 
-    private sealed class OneSessionRepository(UserSession session) : IUserSessionRepository
+    /// <summary>Records when the user's row lock is asked for.</summary>
+    private sealed class LockingUserRepository(User user, List<string> trace) : IUserRepository
+    {
+        public Task<User?> FindForUpdateAsync(UserId userId, CancellationToken cancellationToken)
+        {
+            trace.Add("lock");
+            return Task.FromResult<User?>(userId == user.Id ? user : null);
+        }
+
+        public Task<bool> ExistsActiveHumanWithEmailAsync(
+            EmailAddress email, CancellationToken cancellationToken)
+            => Task.FromResult(false);
+
+        public Task AddAsync(User added, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public Task<User?> FindAsync(UserId userId, CancellationToken cancellationToken)
+            => Task.FromResult<User?>(userId == user.Id ? user : null);
+    }
+
+    private sealed class OneSessionRepository(UserSession session, List<string> trace) : IUserSessionRepository
     {
         public Task AddAsync(UserSession added, CancellationToken cancellationToken)
             => Task.CompletedTask;
 
         public Task<UserSession?> FindAsync(
             UserSessionId sessionId, CancellationToken cancellationToken)
-            => Task.FromResult<UserSession?>(sessionId == session.Id ? session : null);
+        {
+            trace.Add("session");
+            return Task.FromResult<UserSession?>(sessionId == session.Id ? session : null);
+        }
 
         public Task<UserSession?> FindActiveAsync(
             UserSessionId sessionId, DateTimeOffset now, TimeSpan idleTimeout,
             CancellationToken cancellationToken)
-            => Task.FromResult<UserSession?>(null);
+        {
+            trace.Add("session");
+            return Task.FromResult<UserSession?>(
+                sessionId == session.Id && session.IsActive(now, idleTimeout) ? session : null);
+        }
 
         public Task<IReadOnlyList<UserSession>> FindActiveForUserAsync(
             UserId userId, DateTimeOffset now, TimeSpan idleTimeout,

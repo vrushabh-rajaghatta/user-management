@@ -80,6 +80,9 @@ public sealed class UserSessionConfiguration
             .HasColumnName("ip_address")
             .HasColumnType("inet");
 
+        // COMPILE-ONLY STUB (red tests): unmapped until the migration exists.
+        builder.Ignore(x => x.FailedPasswordChangeAttempts);
+
         builder.Property(x => x.UserAgent)
             .HasColumnName("user_agent")
             .HasColumnType("text");

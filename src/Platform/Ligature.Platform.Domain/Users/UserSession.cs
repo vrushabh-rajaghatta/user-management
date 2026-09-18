@@ -47,6 +47,17 @@ public sealed class UserSession : Entity<UserSessionId>
 
     public string? UserAgent { get; }
 
+    /// <summary>COMPILE-ONLY STUB (red tests).</summary>
+    public int FailedPasswordChangeAttempts { get; private set; }
+
+    /// <summary>COMPILE-ONLY STUB (red tests).</summary>
+    public int RecordFailedPasswordChange()
+        => throw new NotImplementedException();
+
+    /// <summary>COMPILE-ONLY STUB (red tests).</summary>
+    public void ResetFailedPasswordChangeAttempts()
+        => throw new NotImplementedException();
+
     public static UserSession Create(
         UserSessionId id,
         UserIdentityId userIdentityId,

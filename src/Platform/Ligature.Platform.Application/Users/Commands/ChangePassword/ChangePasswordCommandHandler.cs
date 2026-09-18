@@ -43,13 +43,14 @@ public sealed class ChangePasswordCommandHandler
     /// session this command cannot act for. The wording is not a frozen
     /// contract; its uniformity is.
     /// </summary>
-    private const string NotChanged = "The password could not be changed.";
+    private const string NotChanged = ChangePasswordResult.NotChanged;
 
     private const string RevocationReason = "PasswordChanged";
 
     private readonly IClock _clock;
     private readonly IExecutionContext _executionContext;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IUserRepository _userRepository;
     private readonly IUserSessionRepository _userSessionRepository;
     private readonly IUserIdentityRepository _userIdentityRepository;
     private readonly ICredentialRepository _credentialRepository;
@@ -62,6 +63,7 @@ public sealed class ChangePasswordCommandHandler
         IClock clock,
         IExecutionContext executionContext,
         IUnitOfWork unitOfWork,
+        IUserRepository userRepository,
         IUserSessionRepository userSessionRepository,
         IUserIdentityRepository userIdentityRepository,
         ICredentialRepository credentialRepository,
@@ -73,6 +75,7 @@ public sealed class ChangePasswordCommandHandler
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentNullException.ThrowIfNull(executionContext);
         ArgumentNullException.ThrowIfNull(unitOfWork);
+        ArgumentNullException.ThrowIfNull(userRepository);
         ArgumentNullException.ThrowIfNull(userSessionRepository);
         ArgumentNullException.ThrowIfNull(userIdentityRepository);
         ArgumentNullException.ThrowIfNull(credentialRepository);
@@ -84,6 +87,7 @@ public sealed class ChangePasswordCommandHandler
         _clock = clock;
         _executionContext = executionContext;
         _unitOfWork = unitOfWork;
+        _userRepository = userRepository;
         _userSessionRepository = userSessionRepository;
         _userIdentityRepository = userIdentityRepository;
         _credentialRepository = credentialRepository;
