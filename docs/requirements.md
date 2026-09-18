@@ -676,13 +676,13 @@ A field joins the row only with the same evidence that admitted these three:
 
 **Requirement ID:** `CRD-C7`, assigned by the owner 2026-09-18. `CRD` because the command's whole effect is token lifecycle.
 
-**Status:** Approved and frozen, 2026-09-18 by owner decision. Not yet implemented.
+**Status:** Approved and frozen, 2026-09-18 by owner decision. Implemented by `ReissueActivationLinkCommandHandler` at `POST /api/users/{userId}/activation-link`.
 
 ### Requirement
 
 An administrator can send a user who has never activated their account a new activation link. The new link replaces every earlier one: after a successful reissue, the identity has exactly one usable activation link.
 
-This is the recovery command the Known Gap *A failed activation mail has no recovery command* deferred. A user whose activation mail was never delivered, or whose link expired unused, can otherwise not be recovered: USR-C1 cannot be re-run for the same address or username.
+This is the recovery command the Known Gap *A failed activation mail has no recovery command — RESOLVED* deferred. Without it, a user whose activation mail was never delivered, or whose link expired unused, could not be recovered: USR-C1 cannot be re-run for the same address or username.
 
 It **issues a token and nothing else**. It creates no user, identity or credential, changes no lifecycle status, and grants no access. The user still activates through the existing activation path, with the new link.
 
@@ -1397,7 +1397,10 @@ owner ruled explicitly that CRD-C5 establishes the state and does not change
 SES-C1.
 **Where recorded:** the class doc of `AdminResetPasswordCommandHandler`.
 
-## A failed activation mail has no recovery command
+## A failed activation mail has no recovery command — RESOLVED
+
+**State:** resolved by CRD-C7 — *Reissue Activation Link*. What follows is the gap as it was recorded.
+
 
 **The contradiction.** Notification's walkthrough (§11.4, §11.5) names CRD-C5
 as the administrator's remedy when an activation mail fails or is abandoned —
@@ -1422,10 +1425,11 @@ command. USR-C1 cannot be re-run for the same address or username.
 `AccountActivation` notification) — with the Notification walkthrough's wording
 corrected through that specification's own change control.
 
-**Resolution:** CRD-C7 — *Reissue Activation Link*, approved 2026-09-18, not
-yet implemented. It reuses `user.create` rather than introducing its own
-permission, by owner decision recorded there. This entry is marked resolved
-when CRD-C7 lands.
+**Resolution:** CRD-C7 — *Reissue Activation Link*, approved and implemented
+2026-09-18. It reuses `user.create` rather than introducing its own
+permission, by owner decision recorded there. The Notification walkthrough's
+wording (§11.4, §11.5) and §10.1's "three issuing commands" still await that
+specification's own change control.
 
 ## N14(b) — no architecture test proves NOT-P1 has no public entry point
 

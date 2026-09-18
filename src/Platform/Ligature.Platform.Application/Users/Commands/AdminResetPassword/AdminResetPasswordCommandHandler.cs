@@ -32,7 +32,7 @@ namespace Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 ///   - Serve a user who has no credential. That is the pending-activation state
 ///     (inv. 15), and issuing a reset token there would either produce a link
 ///     CRD-C3 refuses or turn this into a second activation path. A failed
-///     activation mail has no recovery command yet; see docs/requirements.md.
+///     activation mail is recovered by CRD-C7, ReissueActivationLink.
 ///   - Unlock the account. Issuing a reset is not completing one; CRD-C3's
 ///     password change clears the lockout, and CRD-C6 exists for unlocking.
 ///   - Revoke sessions. The catalogue's write set excludes user_session.

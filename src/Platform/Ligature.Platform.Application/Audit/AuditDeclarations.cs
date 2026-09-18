@@ -1,6 +1,7 @@
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
+using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
@@ -79,6 +80,14 @@ public static class AuditDeclarations
             [typeof(AdminResetPasswordCommand)] = new(
                 "UserManagement",
                 ["AdminPasswordResetIssued", "TokenIssued", "TokenInvalidated"]),
+
+            // CRD-C7 — existing events only, as the ADMINISTRATOR: the new
+            // token, carrying the required reason, and TokenInvalidated (n),
+            // one per superseded token (UT5). No reissue event: these two
+            // describe it. A refused target declares nothing.
+            [typeof(ReissueActivationLinkCommand)] = new(
+                "UserManagement",
+                ["TokenIssued", "TokenInvalidated"]),
 
             // SES-C3 and both SES-C4 commands — SessionRevoked (n), one per
             // session actually ended, each with the caller's explanation as its
