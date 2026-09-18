@@ -154,6 +154,86 @@ public sealed class CatalogueSynchronisationTests
     }
 
     /// <summary>
+    /// PRV-C1 Amendment 1, S3 — how a tenant provisioned before the amendment
+    /// receives it. The database is the one that release would have seeded:
+    /// everything today's seed has except security-administrator's user.read.
+    /// Exactly that grant arrives, attributed to the System actor, and a second
+    /// deployment finds nothing to do.
+    /// </summary>
+    [Fact]
+    public async Task A_tenant_provisioned_before_the_amendment_gains_security_administrator_user_read()
+    {
+        await using var database = await ProvisionedAsync();
+
+        await ExecuteAsync(database, """
+            DELETE FROM role_permission
+             WHERE role_id = (SELECT id FROM role WHERE code = 'security-administrator')
+               AND permission_id = (SELECT id FROM permission WHERE code = 'user.read');
+            """);
+
+        var first = await SynchroniseAsync(database);
+
+        Assert.Equal(CatalogueSyncOutcome.Succeeded, first.Outcome);
+        Assert.Equal(1, first.Counts.GrantsInserted);
+        Assert.Equal(1, first.Counts.Total);
+
+        Assert.Equal(1, await CountAsync(database, $"""
+            SELECT count(*)
+              FROM role_permission rp
+              JOIN role r       ON r.id = rp.role_id
+              JOIN permission p ON p.id = rp.permission_id
+             WHERE r.code = 'security-administrator'
+               AND p.code = 'user.read'
+               AND rp.revoked_at IS NULL
+               AND rp.granted_by = '{Ligature.Platform.Domain.Users.User.SystemUserId.Value}'
+            """));
+
+        await AssertConvergedAsync(database);
+
+        var second = await SynchroniseAsync(database);
+
+        Assert.Equal(CatalogueSyncOutcome.Succeeded, second.Outcome);
+        Assert.Equal(0, second.Counts.Total);
+    }
+
+    /// <summary>
+    /// F5, and PRV-C1 Amendment 1's S4: why that amendment is one-way. A grant
+    /// the database holds and the release does not list is what a release
+    /// dropping security-administrator's user.read would present, and it is
+    /// refused, naming the grant, with nothing committed. Revoking it would
+    /// contract authorization for every holder of the role at deploy time.
+    /// </summary>
+    [Fact]
+    public async Task A_grant_the_catalogue_does_not_list_is_refused_not_revoked()
+    {
+        await using var database = await ProvisionedAsync();
+
+        // A grant no seed has ever listed, inserted the way only a privileged
+        // hand could; the release under test lists everything else.
+        await ExecuteAsync(database, $"""
+            INSERT INTO role_permission (id, role_id, permission_id, granted_at, granted_by)
+            SELECT gen_random_uuid(), r.id, p.id, now(), '{Ligature.Platform.Domain.Users.User.SystemUserId.Value}'
+              FROM role r, permission p
+             WHERE r.code = 'access-reviewer'
+               AND p.code = 'user.update';
+            """);
+
+        var result = await SynchroniseAsync(database);
+
+        AssertRefused(result, CatalogueRefusalReason.GrantMissingFromSeed, "access-reviewer/user.update");
+
+        Assert.Equal(1, await CountAsync(database, """
+            SELECT count(*)
+              FROM role_permission rp
+              JOIN role r       ON r.id = rp.role_id
+              JOIN permission p ON p.id = rp.permission_id
+             WHERE r.code = 'access-reviewer'
+               AND p.code = 'user.update'
+               AND rp.revoked_at IS NULL
+            """));
+    }
+
+    /// <summary>
     /// A18, and the one that matters most for a real release: several additive
     /// changes at once, converged in ONE run. A release rarely adds exactly one
     /// thing, and a synchroniser that handled each kind only in isolation would
