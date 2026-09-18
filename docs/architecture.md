@@ -177,6 +177,23 @@ Business modules express intent ("notify the reviewer that a submission requires
 
 *Target state — not yet implemented.*
 
+> **Amended (development mail sink). A second transport, for development only.**
+>
+> Delivery goes through `INotificationTransport`, whose only production implementation is `GmailTransport`. A developer without a Google Workspace service account had no way to receive an activation or reset link: with mail unconfigured every notification ages to `Abandoned`, and the link — held only in memory by the command that issued it — is gone.
+>
+> `DevelopmentMailSink` is a second implementation that writes each rendered message to a file instead of sending it. Rendering, the eligibility gate and the sender are unchanged; only the final hand-off differs.
+>
+> **It cannot reach production, by two independent locks:**
+>
+> 1. **It exists only in Debug builds.** The type and its registration are compiled under `#if DEBUG`. The production image is published in Release, so its assemblies do not contain the sink at all. The development container runs `dotnet watch run`, a Debug build.
+> 2. **It needs an explicit setting**, `LIGATURE_MAIL_DEV_SINK_DIRECTORY`. `ASPNETCORE_ENVIRONMENT` is deliberately not the gate, for the reason §18 gives: it is ambient and settable from outside the deployment.
+>
+> **Misconfiguration refuses start-up**, naming the setting and never a value: the sink combined with any Gmail setting (two transports), the sink without `LIGATURE_PUBLIC_BASE_URL` (the link is built from it), and **the sink setting in a Release build** — so a production deployment that somehow carried it stops rather than silently ignoring it.
+>
+> **What it writes.** One file per message — recipient, subject and the full body, activation link included — created owner-read/write only, in a directory that must already exist. The row is recorded as `Sent` with `transport_message_id = dev-sink:<file name>`, so the record states where the message went. One Information log line names the file, never its contents.
+>
+> **Accepted exposure.** Live links sit in plain files on the developer's machine, as they already sit in the Gmail sending account's Sent folder (`GmailTransport`). Both are bounded by the token lifetime, and the sink directory (`.secrets/mail`) is git-ignored. This is acceptable for development and is the reason the sink cannot exist in a Release build.
+
 ---
 
 # 9. Database Ownership
