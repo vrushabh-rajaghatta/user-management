@@ -188,7 +188,18 @@ public static class DependencyInjection
 
         services.AddSingleton(new NotificationTemplates(publicBaseUrl));
 
-        services.AddSingleton<NotificationSender>();
+        // By factory, not by type. NotificationSender and its constructor are
+        // internal on purpose, and the container can only call a public
+        // constructor: registered by type, it could not be built, and every host
+        // with mail configured failed to start. No test built it until
+        // MailDeliveryStartupTests, because every other host runs with mail
+        // unconfigured, which registers no sender at all.
+        services.AddSingleton(sp => new NotificationSender(
+            sp.GetRequiredService<TimeProvider>(),
+            sp.GetRequiredService<INotificationGate>(),
+            sp.GetRequiredService<NotificationTemplates>(),
+            sp.GetRequiredService<INotificationTransport>(),
+            sp.GetRequiredService<INotificationTerminalWriter>()));
 
         return services;
     }

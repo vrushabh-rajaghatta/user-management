@@ -44,15 +44,15 @@ public sealed class MailConfigurationTests
     [Fact]
     public void A_complete_configuration_loads()
     {
-        var loaded = MailConfiguration.Load(Build(Complete()), Timeout);
+        var loaded = Assert.IsType<GmailDelivery>(MailConfiguration.Load(Build(Complete()), Timeout));
 
         Assert.NotNull(loaded);
-        Assert.Equal("rdtech@example.com", loaded!.Value.Settings.SenderAddress);
-        Assert.Equal(Timeout, loaded.Value.Settings.TransportTimeout);
-        Assert.Equal("https://app.example.com/", loaded.Value.PublicBaseUrl.AbsoluteUri);
+        Assert.Equal("rdtech@example.com", loaded.Settings.SenderAddress);
+        Assert.Equal(Timeout, loaded.Settings.TransportTimeout);
+        Assert.Equal("https://app.example.com/", loaded.PublicBaseUrl.AbsoluteUri);
         Assert.Contains(
             "PRIVATE KEY",
-            loaded.Value.Settings.ServiceAccountPrivateKeyPem,
+            loaded.Settings.ServiceAccountPrivateKeyPem,
             StringComparison.Ordinal);
     }
 
@@ -111,6 +111,102 @@ public sealed class MailConfigurationTests
 
         Assert.Throws<InvalidOperationException>(
             () => MailConfiguration.Load(Build(settings), Timeout));
+    }
+
+    // ------------------------------------------------ development mail sink
+
+    /// <summary>
+    /// docs/architecture.md §8, "development mail sink". The sink and the base
+    /// URL its links are built from, and nothing of Gmail's.
+    /// </summary>
+    [Fact]
+    public void The_sink_with_a_base_url_loads_as_the_development_sink()
+    {
+        using var directory = new TemporaryDirectory();
+
+        var loaded = Assert.IsType<DevelopmentSinkDelivery>(
+            MailConfiguration.Load(Build(Sink(directory.Path)), Timeout));
+
+        Assert.Equal(directory.Path, loaded.Directory);
+        Assert.Equal("https://localhost:5173/", loaded.PublicBaseUrl.AbsoluteUri);
+    }
+
+    [Fact]
+    public void The_sink_without_a_base_url_is_refused_by_name()
+    {
+        using var directory = new TemporaryDirectory();
+
+        var settings = Sink(directory.Path);
+        settings.Remove(HostConfiguration.PublicBaseUrlSetting);
+
+        var failure = Assert.Throws<InvalidOperationException>(
+            () => MailConfiguration.Load(Build(settings), Timeout));
+
+        Assert.Contains(HostConfiguration.PublicBaseUrlSetting, failure.Message, StringComparison.Ordinal);
+
+        // And WHY it is needed here: the sink is on. The URL parser would refuse
+        // a missing value too, but would not say what asked for it.
+        Assert.Contains(HostConfiguration.MailDevSinkDirectorySetting, failure.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>Two transports at once is a mistake, whichever Gmail setting it is.</summary>
+    [Theory]
+    [InlineData(HostConfiguration.MailSenderAddressSetting)]
+    [InlineData(HostConfiguration.MailSenderNameSetting)]
+    [InlineData(HostConfiguration.MailServiceAccountSetting)]
+    [InlineData(HostConfiguration.MailServiceAccountKeySetting)]
+    public void The_sink_beside_any_gmail_setting_is_refused_by_name(string gmailSetting)
+    {
+        using var directory = new TemporaryDirectory();
+
+        var settings = Sink(directory.Path);
+        settings[gmailSetting] = Complete()[gmailSetting];
+
+        var failure = Assert.Throws<InvalidOperationException>(
+            () => MailConfiguration.Load(Build(settings), Timeout));
+
+        Assert.Contains(HostConfiguration.MailDevSinkDirectorySetting, failure.Message, StringComparison.Ordinal);
+        Assert.Contains(gmailSetting, failure.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The sink never creates its directory, and a missing one is caught here,
+    /// at start-up, rather than as a TransportFailed row on the first send.
+    /// </summary>
+    [Fact]
+    public void The_sink_naming_a_directory_that_does_not_exist_is_refused_by_name()
+    {
+        using var directory = new TemporaryDirectory();
+
+        var failure = Assert.Throws<InvalidOperationException>(
+            () => MailConfiguration.Load(Build(Sink(System.IO.Path.Combine(directory.Path, "missing"))), Timeout));
+
+        Assert.Contains(HostConfiguration.MailDevSinkDirectorySetting, failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_sink_is_held_to_the_same_base_url_rules_as_gmail()
+    {
+        using var directory = new TemporaryDirectory();
+
+        var settings = Sink(directory.Path);
+        settings[HostConfiguration.PublicBaseUrlSetting] = "http://localhost:5173";
+
+        Assert.Throws<InvalidOperationException>(() => MailConfiguration.Load(Build(settings), Timeout));
+    }
+
+    private static Dictionary<string, string?> Sink(string directory)
+        => new()
+        {
+            [HostConfiguration.PublicBaseUrlSetting] = "https://localhost:5173",
+            [HostConfiguration.MailDevSinkDirectorySetting] = directory,
+        };
+
+    private sealed class TemporaryDirectory : IDisposable
+    {
+        public string Path { get; } = Directory.CreateTempSubdirectory("ligature-sink-config-").FullName;
+
+        public void Dispose() => Directory.Delete(Path, recursive: true);
     }
 
     private static Dictionary<string, string?> Complete()

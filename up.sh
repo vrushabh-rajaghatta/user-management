@@ -242,6 +242,11 @@ for secret in "${SECRETS[@]}"; do
     fi
 done
 
+# The development mail sink's directory (docs/architecture.md §8). The sink
+# never creates it, and the host refuses to start if it is missing.
+mkdir -p .secrets/mail
+chmod 700 .secrets/mail
+
 echo "==> Building and starting: database, roles, migrations, audit schema, API, web client."
 
 "${COMPOSE[@]}" up --build --detach
@@ -283,6 +288,9 @@ echo "    Editing src/ or web/ligature-web/src/ reloads automatically."
 echo
 echo "    npm run test:host needs port 5173 to itself. Stop the web container"
 echo "    first:  docker compose -f compose.yaml -f compose.dev.yaml stop web"
+echo
+echo "    Mail is not sent in development. Activation and reset links are"
+echo "    written to .secrets/mail/ instead, one .eml file per message."
 echo
 echo "    The system has schema but no users yet. To create the bootstrap"
 echo "    administrator and receive its one-time activation token:"

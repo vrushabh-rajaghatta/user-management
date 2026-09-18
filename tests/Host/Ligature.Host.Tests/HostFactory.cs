@@ -21,6 +21,8 @@ internal sealed class HostFactory : WebApplicationFactory<Program>
 
     private readonly Action<IServiceCollection>? _services;
 
+    private readonly IReadOnlyDictionary<string, string>? _settings;
+
     /// <summary>
     /// The default leaves LIGATURE_API_DOCUMENTATION UNSET, which is what makes
     /// the rest of the suite evidence that the documentation surface is absent
@@ -33,12 +35,18 @@ internal sealed class HostFactory : WebApplicationFactory<Program>
     /// that must prove what Program.cs does with a registration it did not
     /// make itself — a refused start-up in particular.
     /// </param>
+    /// <param name="settings">
+    /// Further settings, supplied exactly as a deployment would supply them —
+    /// the mail configuration a test exercises, for instance.
+    /// </param>
     internal HostFactory(
         string? apiDocumentation = null,
-        Action<IServiceCollection>? services = null)
+        Action<IServiceCollection>? services = null,
+        IReadOnlyDictionary<string, string>? settings = null)
     {
         _apiDocumentation = apiDocumentation;
         _services = services;
+        _settings = settings;
 
         // No ambient cookie state. The default client authenticates with a
         // bearer carrier and nothing else; were it to keep the cookie sign-in
@@ -112,6 +120,9 @@ internal sealed class HostFactory : WebApplicationFactory<Program>
             builder.UseSetting(
                 HostConfiguration.ApiDocumentationSetting, _apiDocumentation);
         }
+
+        foreach (var (name, value) in _settings ?? new Dictionary<string, string>())
+            builder.UseSetting(name, value);
 
         if (_services is not null)
             builder.ConfigureTestServices(_services);

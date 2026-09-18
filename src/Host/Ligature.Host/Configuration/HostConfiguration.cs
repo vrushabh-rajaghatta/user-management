@@ -45,4 +45,12 @@ public static class HostConfiguration
     /// repository carries key material.
     /// </summary>
     public const string MailServiceAccountKeySetting = "LIGATURE_MAIL_SERVICE_ACCOUNT_KEY";
+
+    /// <summary>
+    /// Development only (docs/architecture.md §8): the directory the development
+    /// mail sink writes each message to, instead of sending it. Needs
+    /// <see cref="PublicBaseUrlSetting"/> and no Gmail setting, and is refused
+    /// outright by a Release build, which does not contain the sink.
+    /// </summary>
+    public const string MailDevSinkDirectorySetting = "LIGATURE_MAIL_DEV_SINK_DIRECTORY";
 }
