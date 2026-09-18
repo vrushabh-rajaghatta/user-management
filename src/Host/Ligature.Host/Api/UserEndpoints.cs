@@ -2,12 +2,14 @@ using System.Globalization;
 using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
+using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.DeactivateUser;
 using Ligature.Platform.Application.Users.Commands.ReactivateUser;
-using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
 using Ligature.Platform.Application.Users.Commands.RevokeUserSessions;
+using Ligature.Platform.Application.Users.Commands.UpdateUserProfile;
 using Ligature.Platform.Application.Users.Queries.UserList;
+using Ligature.Platform.Application.Users.Queries.UserProfile;
 using Ligature.Platform.Domain.Users;
 
 namespace Ligature.Host.Api;
@@ -126,6 +128,38 @@ public static class UserEndpoints
                 + "or the link, and the mail is the only delivery. A refusal, "
                 + "including a missing permission or an ineligible user, is 400.")
             .Produces(StatusCodes.Status202Accepted)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+
+        // USR-Q1 GetUser, narrow v1: the four profile fields an edit needs.
+        routes.MapGet("/api/users/{userId:guid}", GetAsync)
+            .WithTags("Users")
+            .WithSummary("A user's profile names (for editing them).")
+            .WithDescription(
+                "Requires a carrier and the 'user.read' permission. Returns "
+                + "exactly userId, firstName, lastName and displayName, and "
+                + "nothing else about the user. Human users only: an unknown user, "
+                + "the System actor and a missing permission are 400. Not audited.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+
+        // USR-C2, the administrator command. Names only; no reason.
+        routes.MapPost("/api/users/{userId:guid}/profile", UpdateProfileAsync)
+            .WithTags("Users")
+            .WithSummary("Change a user's first, last and display name (administrator).")
+            .WithDescription(
+                "Requires a carrier and the 'user.update' permission. Body: "
+                + "firstName, lastName and displayName, all required. Each is "
+                + "trimmed, then must be non-blank, free of control characters and "
+                + "at most 100 characters (Unicode code points); the trimmed value "
+                + "is stored. Email and status are not touched. Success is 204 with "
+                + "no body, whether or not anything changed; a change is audited. "
+                + "A missing or invalid name, an unknown user, the System actor and "
+                + "a missing permission are 400.")
+            .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
             .WithMetadata(new RequiresCarrier());
@@ -382,6 +416,47 @@ public static class UserEndpoints
     }
 
     private sealed record UserLifecycleRequest(string? Reason);
+
+    private static async Task<IResult> GetAsync(
+        Guid userId,
+        IQueryDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var profile = await dispatcher.SendAsync<UserProfileQuery, UserProfileResult>(
+            new UserProfileQuery(new UserId(userId)),
+            cancellationToken);
+
+        return Results.Ok(new
+        {
+            UserId = profile.UserId.Value,
+            profile.FirstName,
+            profile.LastName,
+            profile.DisplayName,
+        });
+    }
+
+    private static async Task<IResult> UpdateProfileAsync(
+        Guid userId,
+        UpdateProfileRequest? request,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        // Missing names are refused before dispatch, as the other endpoints
+        // treat missing inputs; everything else about a name is the domain's.
+        if (request?.FirstName is null || request.LastName is null || request.DisplayName is null)
+        {
+            return Results.BadRequest(
+                new { Error = "firstName, lastName and displayName are required." });
+        }
+
+        await dispatcher.SendAsync<UpdateUserProfileCommand, UpdateUserProfileResult>(
+            new UpdateUserProfileCommand(new UserId(userId), request.FirstName, request.LastName, request.DisplayName),
+            cancellationToken);
+
+        return Results.NoContent();
+    }
+
+    private sealed record UpdateProfileRequest(string? FirstName, string? LastName, string? DisplayName);
 
     private static async Task<IResult> CreateAsync(
         CreateUserRequest? request,
