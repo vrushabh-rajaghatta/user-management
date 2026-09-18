@@ -82,7 +82,7 @@ public static class DependencyInjection
         services.AddScoped<
             IAuthenticatedCallerReader, AuthenticatedCallerReader>();
 
-        // USR-Q1 — the user list read.
+        // USR-Q2 — the user list read.
         services.AddScoped<IUserListReader, UserListReader>();
 
         // AUT-Q2 — a user's role assignments.

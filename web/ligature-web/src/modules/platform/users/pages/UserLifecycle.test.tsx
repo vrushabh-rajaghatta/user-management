@@ -12,7 +12,7 @@ import { UsersPage } from "./UsersPage";
 
 /**
  * USR-C4 / USR-C5 in the Users table (docs/requirements.md, "USR-C4 / USR-C5 —
- * the Users-table UI", and USR-Q1 Amendment 2).
+ * the Users-table UI", and USR-Q2 Amendment 2).
  *
  * THESE TESTS ARE ABOUT AFFORDANCES, NOT AUTHORIZATION. What a row offers is
  * derived from its status, its activationPending and the caller's permissions;

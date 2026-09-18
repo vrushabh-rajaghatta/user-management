@@ -156,7 +156,7 @@ public sealed class ReissueActivationLinkEndpointTests
     }
 
     /// <summary>
-    /// The userId a USR-Q1 row carries is accepted, unchanged, and addresses
+    /// The userId a USR-Q2 row carries is accepted, unchanged, and addresses
     /// the user the row describes.
     /// </summary>
     [Fact]

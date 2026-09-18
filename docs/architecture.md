@@ -359,7 +359,7 @@ The caller is established by middleware **before** any pipeline runs, so a query
 >
 > Permission codes remain plain strings, as `IAuthorizableCommand.RequiredPermission` and `AuthorizationRequest.PermissionCode` already are. A strongly typed permission code is a separate and larger change, and the command side is where it would have to start.
 
-> **Decided. The user-list read (USR-Q1) is not audited.**
+> **Decided. The user-list read (USR-Q2) is not audited.**
 >
 > The `Audit — not audited by default` row required a read that is audited to say so in its own story. The first permission-gated read, listing a tenant's users under `user.read`, was examined against that row and **does not** introduce read auditing. The default is confirmed for it deliberately, not inherited by omission.
 >

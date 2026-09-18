@@ -8,7 +8,7 @@ using Npgsql;
 namespace Ligature.Platform.Persistence.Tests;
 
 /// <summary>
-/// USR-Q1 — the read, against real PostgreSQL. What only the database can
+/// USR-Q2 — the read, against real PostgreSQL. What only the database can
 /// prove: which rows are users of the list, the exact order, and that offset
 /// and limit select a window of that order.
 ///
@@ -406,7 +406,7 @@ public sealed class UserListReaderTests
         ExternalOnly,
         TwoLocalOneActivated,
 
-        // USR-Q1 Amendment 2: deactivated as USR-C4 leaves them — user and
+        // USR-Q2 Amendment 2: deactivated as USR-C4 leaves them — user and
         // identity Inactive with a stamp — never activated, and activated.
         InactivePending,
         InactiveActivated,

@@ -14,7 +14,7 @@ namespace Ligature.Host.Api;
 
 /// <summary>
 /// USR-C1 over HTTP, and the user-scoped administrator routes beside it;
-/// USR-Q1, the user list, shares the prefix.
+/// USR-Q2, the user list, shares the prefix.
 ///
 /// The first AUTHORIZED endpoint. Sign-out proved that a caller can be
 /// established and that an unestablished one is refused; this proves the next
@@ -63,7 +63,7 @@ public static class UserEndpoints
             // caller without 'user.create'; this marker refuses nothing.
             .WithMetadata(new RequiresCarrier());
 
-        // USR-Q1. Same prefix as the user commands, not the same authorization:
+        // USR-Q2. Same prefix as the user commands, not the same authorization:
         // this requires user.read and nothing else, and every action a row can
         // start authorizes itself.
         routes.MapGet("/api/users", ListAsync)
@@ -182,7 +182,7 @@ public static class UserEndpoints
     }
 
     /// <summary>
-    /// USR-Q1 over HTTP.
+    /// USR-Q2 over HTTP.
     ///
     /// THE PARAMETERS ARE READ AS TEXT AND PARSED HERE, not bound as int?.
     /// Framework binding refuses page=abc itself, with an EMPTY-bodied 400 that
@@ -222,7 +222,7 @@ public static class UserEndpoints
                     x.Email,
                     x.ActivationPending,
 
-                    // USR-Q1 Amendment 2: "Active" or "Inactive", as stored.
+                    // USR-Q2 Amendment 2: "Active" or "Inactive", as stored.
                     Status = x.Status.ToString(),
                 }),
                 result.Page,

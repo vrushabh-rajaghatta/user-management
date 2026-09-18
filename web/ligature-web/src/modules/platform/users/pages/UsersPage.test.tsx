@@ -10,11 +10,11 @@ import { TestSessionSource } from "@/test/sessions";
 import { UsersPage } from "./UsersPage";
 
 /**
- * USR-Q1's page: the Users table, its paging, and the two row actions that
+ * USR-Q2's page: the Users table, its paging, and the two row actions that
  * already exist — CRD-C5 (reset password) and SES-C4's administrator form
  * (sign out everywhere).
  *
- * The backend contract is fixed (docs/requirements.md, USR-Q1): rows of
+ * The backend contract is fixed (docs/requirements.md, USR-Q2): rows of
  * userId, displayName, email, (amendment 1) activationPending and (amendment 2)
  * status; page, pageSize
  * and hasMore; a fixed order; no total, filtering or client sorting. These tests are about how that contract
@@ -43,7 +43,7 @@ const GRACE = {
   status: "Active" as const,
 };
 
-/** Never activated: a local identity and no credential (USR-Q1 amendment 1). */
+/** Never activated: a local identity and no credential (USR-Q2 amendment 1). */
 const KATHERINE = {
   userId: "c0000000-0000-4000-8000-0000000a11ce",
   displayName: "Katherine Johnson",
@@ -708,7 +708,7 @@ describe("signing a user out everywhere", () => {
 // ---------------------------------------------------------------- pending activation
 
 /**
- * USR-Q1 amendment 1 and CRD-C7. The client's whole rule, and nothing broader:
+ * USR-Q2 amendment 1 and CRD-C7. The client's whole rule, and nothing broader:
  *
  *   activationPending and user.create          → Resend activation link
  *   not activationPending and user.resetpassword → Reset password

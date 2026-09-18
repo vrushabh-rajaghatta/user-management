@@ -21,7 +21,7 @@ import type { UserRow } from "../schemas/users";
 import { ManageRolesDialog } from "./ManageRolesDialog";
 import { UserActionDialog, type UserAction } from "./UserActionDialog";
 
-/** The largest page the server can accept: its page parameter is an int (USR-Q1). */
+/** The largest page the server can accept: its page parameter is an int (USR-Q2). */
 const MAX_PAGE = 2_147_483_647;
 
 /**
@@ -74,7 +74,7 @@ const LABEL: Record<RowAction, string> = {
 };
 
 /**
- * What a row offers: the client's whole rule, and nothing broader (USR-Q1
+ * What a row offers: the client's whole rule, and nothing broader (USR-Q2
  * amendments 1 and 2; USR-C4/C5 UI, the action matrix).
  *
  * AN AFFORDANCE, NOT AUTHORIZATION. It is derived from the row's status and
@@ -136,7 +136,7 @@ interface Pending {
 }
 
 /**
- * USR-Q1's table (docs/requirements.md; docs/frontend-architecture.md §11).
+ * USR-Q2's table (docs/requirements.md; docs/frontend-architecture.md §11).
  *
  * THE URL IS THE STATE. The page lives in the query string, so a page can be
  * bookmarked and Back returns to the one before. A page the server would refuse

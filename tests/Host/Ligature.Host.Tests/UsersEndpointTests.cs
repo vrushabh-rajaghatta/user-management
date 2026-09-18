@@ -11,7 +11,7 @@ using Npgsql;
 namespace Ligature.Host.Tests;
 
 /// <summary>
-/// USR-Q1 over HTTP — GET /api/users.
+/// USR-Q2 over HTTP — GET /api/users.
 ///
 /// What the endpoint owns: the wire contract (exactly four response members,
 /// exactly three row members), parameter binding (malformed values refused
@@ -474,11 +474,11 @@ public sealed class UsersEndpointTests
 
                 var reset = await PostAsync(
                     client, callers.Administrator, $"/api/users/{userId}/password-reset",
-                    new { Reason = "USR-Q1 P6." });
+                    new { Reason = "USR-Q2 P6." });
 
                 var signOut = await PostAsync(
                     client, callers.Administrator, $"/api/users/{userId}/sign-out-everywhere",
-                    new { Reason = "USR-Q1 P6." });
+                    new { Reason = "USR-Q2 P6." });
 
                 Assert.Equal(HttpStatusCode.Accepted, reset.StatusCode);
                 Assert.Equal(HttpStatusCode.NoContent, signOut.StatusCode);
@@ -651,7 +651,7 @@ public sealed class UsersEndpointTests
                         ScopeType.Global, scopeId: null,
                         effectiveFrom: now, effectiveTo: null,
                         assignedAt: now, assignedBy: User.SystemUserId,
-                        assignmentReason: "USR-Q1 user list endpoint tests",
+                        assignmentReason: "USR-Q2 user list endpoint tests",
                         createdAt: now, createdBy: User.SystemUserId));
             }
 

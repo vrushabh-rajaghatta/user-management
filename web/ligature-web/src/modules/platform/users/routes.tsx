@@ -15,7 +15,7 @@ import { UserPermissions } from "./permissions";
  * operation whatever both of them did.
  */
 export const userRoutes: RouteObject[] = [
-  // USR-Q1.
+  // USR-Q2.
   {
     path: "users",
     lazy: async () => {

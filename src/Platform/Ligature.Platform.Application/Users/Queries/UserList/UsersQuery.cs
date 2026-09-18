@@ -4,8 +4,8 @@ using Ligature.SharedKernel.Abstractions;
 namespace Ligature.Platform.Application.Users.Queries.UserList;
 
 /// <summary>
-/// USR-Q1 — the tenant's human users, one page at a time
-/// (docs/requirements.md, "USR-Q1 — User List Query").
+/// USR-Q2 — the tenant's human users, one page at a time
+/// (docs/requirements.md, "USR-Q2 — User List Query").
 ///
 /// Both parameters are optional and arrive as the caller sent them: null means
 /// omitted, and the handler applies the defaults. Range is not checked here —

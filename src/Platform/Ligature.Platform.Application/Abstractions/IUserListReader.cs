@@ -3,7 +3,7 @@ using Ligature.Platform.Application.Users.Queries.UserList;
 namespace Ligature.Platform.Application.Abstractions;
 
 /// <summary>
-/// USR-Q1 — one window of the user list, in the contract order: human users
+/// USR-Q2 — one window of the user list, in the contract order: human users
 /// only, DisplayName ascending under ICU "unicode" collation, then UserId.
 ///
 /// It knows nothing about pages, defaults or limits. Those are the handler's

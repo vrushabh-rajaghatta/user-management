@@ -7,13 +7,13 @@ using Microsoft.EntityFrameworkCore;
 namespace Ligature.Platform.Persistence.Services;
 
 /// <summary>
-/// USR-Q1 — the list read, as one statement: no count, no second query.
+/// USR-Q2 — the list read, as one statement: no count, no second query.
 ///
 /// THE COLLATION IS EXPLICIT, and must stay so. The database's default is
 /// libc en_US.utf8 everywhere, and it still orders differently by platform:
 /// musl (the deployment image) compares bytes, glibc (the test database)
 /// collates linguistically. ICU "unicode" orders identically on both
-/// (docs/requirements.md, USR-Q1 "Sorting"). UserId needs none — uuid compares
+/// (docs/requirements.md, USR-Q2 "Sorting"). UserId needs none — uuid compares
 /// by value.
 ///
 /// No index supports this order, deliberately; the measured plans are in the
@@ -66,12 +66,12 @@ public sealed class UserListReader : IUserListReader
                 x.DisplayName,
                 x.Email,
 
-                // USR-Q1 Amendment 2: the stored status, exactly. On the row
+                // USR-Q2 Amendment 2: the stored status, exactly. On the row
                 // already read, so it costs nothing and takes no part in
                 // which rows or in what order.
                 x.Status,
 
-                // USR-Q1 amendment 1 (D1), exactly and nothing broader: at
+                // USR-Q2 amendment 1 (D1), exactly and nothing broader: at
                 // least one local identity, and no credential on any identity
                 // of the user. It takes no part in which rows or in what order.
                 ActivationPending =

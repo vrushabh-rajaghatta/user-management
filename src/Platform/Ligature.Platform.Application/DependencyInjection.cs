@@ -320,7 +320,7 @@ public static class DependencyInjection
         // B6
         services.AddQuery<MeQuery, MeResult, MeQueryHandler>();
 
-        // USR-Q1
+        // USR-Q2
         services.AddQuery<UsersQuery, UsersResult, UsersQueryHandler>();
 
         // AUT-Q2
