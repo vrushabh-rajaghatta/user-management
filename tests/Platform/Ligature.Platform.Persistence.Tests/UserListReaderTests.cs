@@ -234,6 +234,59 @@ public sealed class UserListReaderTests
             names: ["Amber", "Basil", "Cedar", "Dahlia"]);
     }
 
+    /// <summary>
+    /// Amendment 1's measured requirement: the page is chosen FIRST, and the
+    /// derivation runs over its rows only. Derived in the same SELECT as the
+    /// page, PostgreSQL hashed both existence tests over the whole of
+    /// user_identity and credential (first page 15 -> 87 ms, deep 103 -> 560 ms at
+    /// 100,000 users). A small test database plans both forms the same way, so
+    /// the requirement is held on the statement's shape: the LIMIT sits in a
+    /// subquery, and the existence tests are outside it.
+    /// </summary>
+    [Fact]
+    public async Task The_page_is_chosen_before_activation_pending_is_derived()
+    {
+        await TestDatabase.EnsureProvisionedAsync();
+
+        var capture = new CommandCapture();
+
+        var options = new DbContextOptionsBuilder<LigatureDbContext>()
+            .UseNpgsql(TestDatabase.ConnectionString)
+            .AddInterceptors(capture)
+            .Options;
+
+        await using (var context = new LigatureDbContext(options))
+            await new UserListReader(context).ReadAsync(0, 26, CancellationToken.None);
+
+        var sql = Assert.Single(capture.Commands);
+
+        var page = sql.IndexOf("FROM (", StringComparison.Ordinal);
+        var limit = sql.IndexOf("LIMIT", StringComparison.Ordinal);
+        var derived = sql.IndexOf(") AS ", limit, StringComparison.Ordinal);
+
+        Assert.True(page >= 0 && limit > page && derived > limit, $"The page is not a subquery:\n{sql}");
+
+        // Every existence test is in the outer SELECT, before the subquery.
+        Assert.DoesNotContain("EXISTS", sql[page..derived], StringComparison.Ordinal);
+        Assert.Contains("EXISTS", sql[..page], StringComparison.Ordinal);
+    }
+
+    private sealed class CommandCapture : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        public List<string> Commands { get; } = [];
+
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader>> ReaderExecutingAsync(
+            System.Data.Common.DbCommand command,
+            Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Commands.Add(command.CommandText);
+
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
     // ----------------------------------------------------------- harness
 
     private sealed record Seeded(Guid Id, string Name, string DisplayName, string Email);
