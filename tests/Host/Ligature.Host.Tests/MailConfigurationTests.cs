@@ -143,6 +143,10 @@ public sealed class MailConfigurationTests
             () => MailConfiguration.Load(Build(settings), Timeout));
 
         Assert.Contains(HostConfiguration.PublicBaseUrlSetting, failure.Message, StringComparison.Ordinal);
+
+        // And WHY it is needed here: the sink is on. The URL parser would refuse
+        // a missing value too, but would not say what asked for it.
+        Assert.Contains(HostConfiguration.MailDevSinkDirectorySetting, failure.Message, StringComparison.Ordinal);
     }
 
     /// <summary>Two transports at once is a mistake, whichever Gmail setting it is.</summary>
