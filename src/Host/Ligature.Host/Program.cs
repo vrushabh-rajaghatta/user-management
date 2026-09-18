@@ -51,10 +51,10 @@ builder.Services.AddSingleton<AccessCarrier>();
 var mail = MailConfiguration.Load(
     builder.Configuration, TransportTimeout);
 
-if (mail is not null)
+if (mail is GmailDelivery gmail)
 {
-    builder.Services.AddNotificationDelivery(mail.Value.PublicBaseUrl);
-    builder.Services.AddNotificationTransport(mail.Value.Settings);
+    builder.Services.AddNotificationDelivery(gmail.PublicBaseUrl);
+    builder.Services.AddNotificationTransport(gmail.Settings);
 }
 
 // Registered either way: abandonment is not a delivery concern.

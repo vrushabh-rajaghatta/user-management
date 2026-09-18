@@ -38,14 +38,16 @@ public static class MailConfiguration
     ];
 
     /// <returns>
-    /// The settings and the public base URL, or null when mail is entirely
-    /// unconfigured.
+    /// How mail is delivered, or null when mail is entirely unconfigured.
     /// </returns>
-    public static (MailSettings Settings, Uri PublicBaseUrl)? Load(
+    public static MailDelivery? Load(
         IConfiguration configuration,
         TimeSpan transportTimeout)
     {
         ArgumentNullException.ThrowIfNull(configuration);
+
+        if (!string.IsNullOrWhiteSpace(configuration[HostConfiguration.MailDevSinkDirectorySetting]))
+            throw new NotImplementedException("RED STUB: the development mail sink is not implemented.");
 
         var present = Settings
             .Where(name => !string.IsNullOrWhiteSpace(configuration[name]))
@@ -68,7 +70,7 @@ public static class MailConfiguration
 
         var baseUrl = ReadBaseUrl(configuration);
 
-        return (
+        return new GmailDelivery(
             new MailSettings(
                 SenderAddress: configuration[HostConfiguration.MailSenderAddressSetting]!,
                 SenderName: configuration[HostConfiguration.MailSenderNameSetting]!,
