@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { Link, type RouteObject } from "react-router";
 import { describe, expect, it } from "vitest";
@@ -166,8 +166,8 @@ describe("the unsaved-changes guard", () => {
    * Found in the My account browser check (UI-10), at phone width: the link
    * followed was inside the sidebar sheet, which closed as it was followed, so
    * Keep editing had nowhere to return focus and left it on the document body.
-   * With the element gone, focus goes to the main content, as the skip link
-   * sends it.
+   * With the element gone, focus goes back into the main content, where the
+   * skip link sends it.
    */
   it("returns focus to the main content when the element the person was on has gone", async () => {
     const { user, router } = renderWithApp(
@@ -178,8 +178,15 @@ describe("the unsaved-changes guard", () => {
       { path: "/form" },
     );
 
-    await user.type(await screen.findByLabelText("Name"), "Ada");
-    await user.click(screen.getByRole("link", { name: "Leave from the sheet" }));
+    // Filled without ever holding focus, so nothing but the link could have
+    // been where the person was — as in the browser, where focus was in the
+    // sheet.
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Ada" } });
+
+    // By keyboard, as the person this protects would: focus is ON the link
+    // when it is followed, and the link then leaves the document.
+    screen.getByRole("link", { name: "Leave from the sheet" }).focus();
+    await user.keyboard("{Enter}");
 
     const prompt = await screen.findByRole("dialog", { name: "Discard changes?" });
     expect(screen.queryByRole("link", { name: "Leave from the sheet" })).toBeNull();
@@ -191,8 +198,12 @@ describe("the unsaved-changes guard", () => {
 
     expect(router.state.location.pathname).toBe("/form");
     expect(screen.getByLabelText("Name")).toHaveValue("Ada");
+    // Into the main content, not onto the body. The dialog library, handed a
+    // container that is not itself tabbable, moves on to the first tabbable
+    // element inside it, which puts the person back in the form.
     await waitFor(() => {
-      expect(document.activeElement).toBe(screen.getByRole("main"));
+      expect(document.activeElement).not.toBe(document.body);
+      expect(screen.getByRole("main").contains(document.activeElement)).toBe(true);
     });
   });
 
