@@ -320,9 +320,14 @@ describe("unsaved changes in the dialog", () => {
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull();
     });
-    expect(within(screen.getByRole("dialog", { name: "Edit profile for Ada L." })).getByLabelText("First name")).toHaveValue(
-      "Augusta",
-    );
+    const editor = screen.getByRole("dialog", { name: "Edit profile for Ada L." });
+    expect(within(editor).getByLabelText("First name")).toHaveValue("Augusta");
+
+    // Found in the browser (UI-9): Keep editing returns focus inside the edit
+    // dialog, not to the document body, so a keyboard user can go on.
+    await waitFor(() => {
+      expect(editor.contains(document.activeElement)).toBe(true);
+    });
 
     await user.click(within(screen.getByRole("dialog", { name: "Edit profile for Ada L." })).getByRole("button", { name: "Cancel" }));
     await user.click(await screen.findByRole("button", { name: "Discard" }));

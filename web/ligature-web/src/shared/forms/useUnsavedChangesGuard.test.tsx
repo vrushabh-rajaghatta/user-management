@@ -86,6 +86,12 @@ describe("the unsaved-changes guard", () => {
     expect(screen.getByLabelText("Name")).toHaveValue("Ada");
     expect(screen.queryByText("Closed")).toBeNull();
 
+    // Found in the browser (UI-9): focus returns to what the person was on
+    // when the prompt opened, not to the document body.
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
+    });
+
     await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(await screen.findByRole("button", { name: "Discard" }));
 
@@ -106,6 +112,9 @@ describe("the unsaved-changes guard", () => {
       expect(screen.queryByRole("dialog")).toBeNull();
     });
     expect(router.state.location.pathname).toBe("/form");
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("link", { name: "Leave" }));
+    });
 
     await user.click(screen.getByRole("link", { name: "Leave" }));
     await user.click(await screen.findByRole("button", { name: "Discard" }));

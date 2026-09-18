@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useBlocker } from "react-router";
 import { ConfirmAction } from "@/shared/components/ConfirmAction";
 
@@ -18,6 +18,11 @@ import { ConfirmAction } from "@/shared/components/ConfirmAction";
  *     first instead of proceeding.
  * Each asks "Discard changes?": Keep editing stays, Discard goes on. Clean,
  * everything proceeds at once and nothing is registered.
+ *
+ * FOCUS. Keep editing returns focus to whatever had it when the prompt opened
+ * — the Cancel button, a field, the link that was followed — so a keyboard
+ * user is back where they were. Without it the prompt left focus on the
+ * document body (found in the USR-C2 browser check, UI-9).
  */
 export interface UnsavedChangesGuard {
   /** Runs `proceed` now when clean; asks "Discard changes?" first when dirty. */
@@ -30,6 +35,17 @@ export interface UnsavedChangesGuard {
 export function useUnsavedChangesGuard(dirty: boolean): UnsavedChangesGuard {
   const blocker = useBlocker(dirty);
   const [pending, setPending] = useState<(() => void) | undefined>(undefined);
+
+  // What had focus when the prompt opened; where Keep editing returns it.
+  const returnFocus = useRef<HTMLElement | null>(null);
+
+  const blocked = blocker.state === "blocked";
+
+  useEffect(() => {
+    if (blocked) {
+      returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
+  }, [blocked]);
 
   useEffect(() => {
     if (!dirty) {
@@ -46,8 +62,6 @@ export function useUnsavedChangesGuard(dirty: boolean): UnsavedChangesGuard {
       window.removeEventListener("beforeunload", hold);
     };
   }, [dirty]);
-
-  const blocked = blocker.state === "blocked";
 
   function keepEditing() {
     if (blocked) {
@@ -71,6 +85,7 @@ export function useUnsavedChangesGuard(dirty: boolean): UnsavedChangesGuard {
   return {
     confirm: (proceed) => {
       if (dirty) {
+        returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         setPending(() => proceed);
       } else {
         proceed();
@@ -89,6 +104,7 @@ export function useUnsavedChangesGuard(dirty: boolean): UnsavedChangesGuard {
         confirmLabel="Discard"
         busyLabel="Discarding…"
         cancelLabel="Keep editing"
+        returnFocus={returnFocus}
         onConfirm={discard}
       />
     ),
