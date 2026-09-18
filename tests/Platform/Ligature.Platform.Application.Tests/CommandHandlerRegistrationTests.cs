@@ -7,6 +7,7 @@ using Ligature.Platform.Application.Execution;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
 using Ligature.Platform.Application.Users.Commands.RevokeSession;
 using Ligature.Platform.Application.Users.Commands.RevokeUserSessions;
 using Ligature.Platform.Application.Users.Commands.SignOutEverywhere;
@@ -130,6 +131,23 @@ public sealed class CommandHandlerRegistrationTests
             .GetRequiredService<ICommandHandler<AdminResetPasswordCommand, AdminResetPasswordResult>>();
 
         Assert.IsType<AdminResetPasswordCommandHandler>(handler);
+    }
+
+    /// <summary>
+    /// CRD-C7. Resolved, for CRD-C5's reason: a dependency the handler takes
+    /// but nothing registers fails here, not on the first administrator's
+    /// request.
+    /// </summary>
+    [Fact]
+    public void The_dispatcher_can_resolve_the_ReissueActivationLink_handler()
+    {
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        var handler = scope.ServiceProvider
+            .GetRequiredService<ICommandHandler<ReissueActivationLinkCommand, ReissueActivationLinkResult>>();
+
+        Assert.IsType<ReissueActivationLinkCommandHandler>(handler);
     }
 
     /// <summary>

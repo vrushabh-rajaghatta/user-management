@@ -3,6 +3,7 @@ using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
+using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
 using Ligature.Platform.Application.Users.Commands.SignIn;
@@ -133,6 +134,20 @@ public sealed class AuditDeclarationsTests
     }
 
     /// <summary>
+    /// CRD-C7 — existing events only, and no reissue event: the token, and
+    /// the supersession of any prior one. The reason travels on TokenIssued.
+    /// </summary>
+    [Fact]
+    public void CRD_C7_declares_the_token_and_the_supersession_and_nothing_else()
+    {
+        var declaration = AuditDeclarations.For(typeof(ReissueActivationLinkCommand));
+
+        Assert.Equal("UserManagement", declaration!.OwningContext);
+
+        Assert.Equal(["TokenIssued", "TokenInvalidated"], declaration.Codes);
+    }
+
+    /// <summary>
     /// SES-C1 is the command that needs both write paths and both actors.
     /// </summary>
     [Fact]
@@ -173,6 +188,7 @@ public sealed class AuditDeclarationsTests
                 typeof(ActivateAccountCommand), typeof(SignInCommand),
                 typeof(RequestPasswordResetCommand), typeof(ResetPasswordCommand),
                 typeof(AdminResetPasswordCommand), typeof(ChangePasswordCommand),
+                typeof(ReissueActivationLinkCommand),
                 typeof(UnlockAccountCommand),
                 typeof(RevokeSessionCommand), typeof(RevokeUserSessionsCommand),
                 typeof(SignOutEverywhereCommand),

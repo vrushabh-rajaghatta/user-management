@@ -3,6 +3,7 @@ using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
 using Ligature.Platform.Application.Users.Commands.RevokeUserSessions;
 using Ligature.Platform.Application.Users.Queries.UserList;
 using Ligature.Platform.Domain.Users;
@@ -96,6 +97,24 @@ public static class UserEndpoints
                 + "receives the token or the password, and the mail is the only "
                 + "delivery. A refusal, including a missing permission or an "
                 + "ineligible user, is 400.")
+            .Produces(StatusCodes.Status202Accepted)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+
+        // CRD-C7. user.create, not a permission of its own: reissuing the
+        // activation token finishes what creation started.
+        routes.MapPost("/api/users/{userId:guid}/activation-link", ReissueActivationLinkAsync)
+            .WithTags("Users")
+            .WithSummary("Send a user who has not activated a new activation link (administrator).")
+            .WithDescription(
+                "Requires a carrier, the 'user.create' permission and a reason. "
+                + "Only a user who has never activated is eligible. Issues a new "
+                + "activation token and mails the link to the user's own address; "
+                + "every earlier activation link stops working. The response is "
+                + "202 with NO body: the administrator never receives the token "
+                + "or the link, and the mail is the only delivery. A refusal, "
+                + "including a missing permission or an ineligible user, is 400.")
             .Produces(StatusCodes.Status202Accepted)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
@@ -252,6 +271,30 @@ public static class UserEndpoints
     }
 
     private sealed record AdminResetPasswordRequest(string? Reason);
+
+    private static async Task<IResult> ReissueActivationLinkAsync(
+        Guid userId,
+        ReissueActivationLinkRequest? request,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        if (request?.Reason is null)
+        {
+            return Results.BadRequest(
+                new { Error = "A reason is required." });
+        }
+
+        await dispatcher.SendAsync<ReissueActivationLinkCommand, ReissueActivationLinkResult>(
+            new ReissueActivationLinkCommand(new UserId(userId), request.Reason),
+            cancellationToken);
+
+        // 202 for CRD-C5's reason: the mail is sent after the command commits
+        // and its outcome is not known here. No body, and in particular no
+        // token or link.
+        return Results.Accepted();
+    }
+
+    private sealed record ReissueActivationLinkRequest(string? Reason);
 
     private static async Task<IResult> CreateAsync(
         CreateUserRequest? request,
