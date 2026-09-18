@@ -23,9 +23,13 @@ public sealed class UserRoleConfiguration
                     "(\"scope_type\" = 'Global' AND \"scope_id\" IS NULL) OR " +
                     "(\"scope_type\" <> 'Global' AND \"scope_id\" IS NOT NULL)");
 
+                // UR2 as frozen: >=, not >. The empty period [t, t) is how
+                // RevokeRole closes a future assignment before it opens
+                // (docs/requirements.md, "Role Assignment"). It does NOT make
+                // equal dates valid for a grant: UserRole.Create refuses them.
                 table.HasCheckConstraint(
                     "ck_user_role_effective_period",
-                    "\"effective_to\" IS NULL OR \"effective_to\" > \"effective_from\"");
+                    "\"effective_to\" IS NULL OR \"effective_to\" >= \"effective_from\"");
 
                 table.HasCheckConstraint(
                     "ck_user_role_revocation_pair",

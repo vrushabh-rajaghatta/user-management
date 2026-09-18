@@ -24,11 +24,13 @@ namespace Ligature.Platform.Persistence.Database;
 /// </summary>
 internal static class PostgresExceptionTranslator
 {
+    private const string OverlapRefusal =
+        "The user already holds this role for this scope in an overlapping period.";
+
     /// <summary>
-    /// Only constraints a command can actually reach today. The role-overlap
-    /// exclusion constraints and RP2's live-grant index are deliberately
-    /// absent: no command triggers them yet, so their wording would be written
-    /// blind and untested. They belong to AUT-C1 and AUT-C7.
+    /// Only constraints a command can actually reach today. RP2's live-grant
+    /// index is deliberately absent: no command triggers it yet, so its
+    /// wording would be written blind and untested. It belongs to AUT-C7.
     /// </summary>
     private static readonly Dictionary<string, string> KnownViolations =
         new(StringComparer.Ordinal)
@@ -40,6 +42,12 @@ internal static class PostgresExceptionTranslator
             // UI7
             ["ux_user_identity_local_username"] =
                 "A user identity with this username already exists.",
+
+            // UR5 / UR6 (AUT-C1). One question, one answer, for both scopes:
+            // the scoped twin is mapped now so it cannot surface as a 500 the
+            // day scoped assignments exist.
+            ["ex_user_role_global_no_overlap"] = OverlapRefusal,
+            ["ex_user_role_scoped_no_overlap"] = OverlapRefusal,
         };
 
     /// <summary>
@@ -57,8 +65,8 @@ internal static class PostgresExceptionTranslator
         // An earlier version also required 23505. That was redundant — our
         // constraint names are globally distinctive, so the name already
         // identifies the rule — and worse, it was a trap for the next entries
-        // this map is expected to gain. The role-overlap constraints AUT-C1
-        // will add raise 23P01, not 23505, so a hard-coded unique-violation
+        // this map was expected to gain. The role-overlap constraints AUT-C1
+        // maps raise 23P01, not 23505, so a hard-coded unique-violation
         // check would have made those mappings silently never fire.
         //
         // Errors that carry no constraint name, such as a NOT NULL violation,

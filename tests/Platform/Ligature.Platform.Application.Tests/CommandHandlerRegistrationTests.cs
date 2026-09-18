@@ -7,7 +7,9 @@ using Ligature.Platform.Application.Execution;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.GrantRole;
 using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
+using Ligature.Platform.Application.Users.Commands.RevokeRole;
 using Ligature.Platform.Application.Users.Commands.RevokeSession;
 using Ligature.Platform.Application.Users.Commands.RevokeUserSessions;
 using Ligature.Platform.Application.Users.Commands.SignOutEverywhere;
@@ -150,6 +152,32 @@ public sealed class CommandHandlerRegistrationTests
         Assert.IsType<ReissueActivationLinkCommandHandler>(handler);
     }
 
+    /// <summary>AUT-C1, resolved for CRD-C5's reason.</summary>
+    [Fact]
+    public void The_dispatcher_can_resolve_the_GrantRole_handler()
+    {
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        var handler = scope.ServiceProvider
+            .GetRequiredService<ICommandHandler<GrantRoleCommand, GrantRoleResult>>();
+
+        Assert.IsType<GrantRoleCommandHandler>(handler);
+    }
+
+    /// <summary>AUT-C2, resolved for CRD-C5's reason.</summary>
+    [Fact]
+    public void The_dispatcher_can_resolve_the_RevokeRole_handler()
+    {
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        var handler = scope.ServiceProvider
+            .GetRequiredService<ICommandHandler<RevokeRoleCommand, RevokeRoleResult>>();
+
+        Assert.IsType<RevokeRoleCommandHandler>(handler);
+    }
+
     /// <summary>
     /// Adding handler registration must not have displaced what was already
     /// there — the pipeline, the dispatcher, all three behaviours, and both
@@ -202,6 +230,8 @@ public sealed class CommandHandlerRegistrationTests
         services.AddScoped<ICredentialRepository, StubCredentialRepository>();
         services.AddScoped<IPasswordHistoryRepository, StubPasswordHistoryRepository>();
         services.AddScoped<IUserSessionRepository, StubUserSessionRepository>();
+        services.AddScoped<IRoleRepository, StubRoleRepository>();
+        services.AddScoped<IUserRoleRepository, StubUserRoleRepository>();
         services.AddScoped<IAuditEventCatalogue, StubAuditEventCatalogue>();
         services.AddScoped<IAuditRecordWriter, StubAuditRecordWriter>();
         services.AddScoped<IAutonomousAuditRecordWriter, StubAutonomousWriter>();
@@ -393,6 +423,21 @@ public sealed class CommandHandlerRegistrationTests
             Domain.Users.UserIdentityId userIdentityId, int depth,
             CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<Domain.Users.PasswordHistory>>([]);
+    }
+
+    private sealed class StubRoleRepository : IRoleRepository
+    {
+        public Task<Role?> FindAsync(RoleId roleId, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+    }
+
+    private sealed class StubUserRoleRepository : IUserRoleRepository
+    {
+        public Task AddAsync(UserRole assignment, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<UserRole?> FindAsync(UserRoleId assignmentId, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
     }
 
     private sealed class StubUserSessionRepository : IUserSessionRepository

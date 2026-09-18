@@ -3,6 +3,8 @@ using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
+using Ligature.Platform.Application.Users.Commands.GrantRole;
+using Ligature.Platform.Application.Users.Commands.RevokeRole;
 using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
@@ -147,6 +149,26 @@ public sealed class AuditDeclarationsTests
         Assert.Equal(["TokenIssued", "TokenInvalidated"], declaration.Codes);
     }
 
+    /// <summary>AUT-C1 — one record per grant, carrying the reason.</summary>
+    [Fact]
+    public void AUT_C1_declares_RoleGranted()
+    {
+        var declaration = AuditDeclarations.For(typeof(GrantRoleCommand));
+
+        Assert.Equal("UserManagement", declaration!.OwningContext);
+        Assert.Equal(["RoleGranted"], declaration.Codes);
+    }
+
+    /// <summary>AUT-C2 — one record per revocation, carrying the reason.</summary>
+    [Fact]
+    public void AUT_C2_declares_RoleRevoked()
+    {
+        var declaration = AuditDeclarations.For(typeof(RevokeRoleCommand));
+
+        Assert.Equal("UserManagement", declaration!.OwningContext);
+        Assert.Equal(["RoleRevoked"], declaration.Codes);
+    }
+
     /// <summary>
     /// SES-C1 is the command that needs both write paths and both actors.
     /// </summary>
@@ -189,6 +211,7 @@ public sealed class AuditDeclarationsTests
                 typeof(RequestPasswordResetCommand), typeof(ResetPasswordCommand),
                 typeof(AdminResetPasswordCommand), typeof(ChangePasswordCommand),
                 typeof(ReissueActivationLinkCommand),
+                typeof(GrantRoleCommand), typeof(RevokeRoleCommand),
                 typeof(UnlockAccountCommand),
                 typeof(RevokeSessionCommand), typeof(RevokeUserSessionsCommand),
                 typeof(SignOutEverywhereCommand),

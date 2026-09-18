@@ -105,11 +105,22 @@ public sealed class UserRole : Entity<UserRoleId>
             throw new DomainException(
                 "Non-global scope requires a scope ID.");
 
+        // A grant may take effect later than it was made, never earlier: the
+        // decision (AssignedAt) and its effect (EffectiveFrom) are recorded
+        // separately (spec §6.11), and a backdated start would record access
+        // as valid before anyone had granted it.
+        if (effectiveFrom < assignedAt)
+            throw new DomainException(
+                "A role assignment cannot take effect before it is granted.");
+
+        // STRICTLY after. The database admits EffectiveTo = EffectiveFrom
+        // (frozen UR2) because revoking a future assignment produces that
+        // empty period; a GRANT must create a period that can authorise.
         if (effectiveTo is not null &&
-            effectiveTo < effectiveFrom)
+            effectiveTo <= effectiveFrom)
         {
             throw new DomainException(
-                "Effective end cannot be before effective start.");
+                "A role assignment must end after it starts.");
         }
 
         if (actorType == ActorType.Agent &&
@@ -161,9 +172,27 @@ public sealed class UserRole : Entity<UserRoleId>
             throw new DomainException(
                 "Revocation cannot occur before assignment.");
 
+        // Nothing left to close. Refused here rather than moving the end
+        // LATER, which the database would also refuse (G4: an assignment
+        // window never widens). The period is half-open, so an assignment has
+        // ended at its EffectiveTo.
+        if (EffectiveTo is not null && EffectiveTo <= revokedAt)
+            throw new DomainException(
+                "Role assignment has already ended.");
+
         RevokedAt = revokedAt;
         RevokedBy = revokedBy;
         RevocationReason = revocationReason;
-        EffectiveTo = revokedAt;
+
+        // Two distinct cases (invariant 9: revocation closes the period), and
+        // deliberately NOT one formula. Both only ever move the end earlier.
+        EffectiveTo = EffectiveFrom > revokedAt
+            // A FUTURE assignment is closed before it opens: the empty period
+            // [EffectiveFrom, EffectiveFrom), which never authorises and
+            // overlaps nothing. Ending it at revokedAt would put its end
+            // before its start.
+            ? EffectiveFrom
+            // An ACTIVE assignment stops authorising now.
+            : revokedAt;
     }
 }

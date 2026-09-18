@@ -1,6 +1,8 @@
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
+using Ligature.Platform.Application.Users.Commands.GrantRole;
+using Ligature.Platform.Application.Users.Commands.RevokeRole;
 using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
@@ -88,6 +90,11 @@ public static class AuditDeclarations
             [typeof(ReissueActivationLinkCommand)] = new(
                 "UserManagement",
                 ["TokenIssued", "TokenInvalidated"]),
+
+            // AUT-C1 / AUT-C2 — one record each, as the ADMINISTRATOR, each
+            // carrying the required reason. A refusal declares nothing.
+            [typeof(GrantRoleCommand)] = new("UserManagement", ["RoleGranted"]),
+            [typeof(RevokeRoleCommand)] = new("UserManagement", ["RoleRevoked"]),
 
             // SES-C3 and both SES-C4 commands — SessionRevoked (n), one per
             // session actually ended, each with the caller's explanation as its
