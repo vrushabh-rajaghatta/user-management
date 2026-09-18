@@ -238,7 +238,7 @@ public sealed class UsersQueryHandlerTests
 
     private static IReadOnlyList<UserListRow> Rows(int count)
         => Enumerable.Range(0, count)
-            .Select(i => new UserListRow(UserId.New(), $"User {i}", $"user{i}@example.test"))
+            .Select(i => new UserListRow(UserId.New(), $"User {i}", $"user{i}@example.test", ActivationPending: i % 2 == 0))
             .ToList();
 
     private sealed class Harness

@@ -15,8 +15,8 @@ import { UsersPage } from "./UsersPage";
  * (sign out everywhere).
  *
  * The backend contract is fixed (docs/requirements.md, USR-Q1): rows of
- * userId, displayName and email; page, pageSize and hasMore; a fixed order; no
- * total, filtering or client sorting. These tests are about how that contract
+ * userId, displayName, email and (amendment 1) activationPending; page, pageSize
+ * and hasMore; a fixed order; no total, filtering or client sorting. These tests are about how that contract
  * is presented and driven, never about reopening it.
  */
 
@@ -27,10 +27,28 @@ const READ = definePermission("user.read");
 const RESET = definePermission("user.resetpassword");
 const REVOKE = definePermission("session.revoke");
 
-const ADA = { userId: "a0000000-0000-4000-8000-00000000ada1", displayName: "Ada Lovelace", email: "ada@example.test" };
-const GRACE = { userId: "b0000000-0000-4000-8000-00000000c0de", displayName: "Grace Hopper", email: null };
+const ADA = {
+  userId: "a0000000-0000-4000-8000-00000000ada1",
+  displayName: "Ada Lovelace",
+  email: "ada@example.test",
+  activationPending: false,
+};
+const GRACE = {
+  userId: "b0000000-0000-4000-8000-00000000c0de",
+  displayName: "Grace Hopper",
+  email: null,
+  activationPending: false,
+};
 
-type Row = { userId: string; displayName: string; email: string | null };
+/** Never activated: a local identity and no credential (USR-Q1 amendment 1). */
+const KATHERINE = {
+  userId: "c0000000-0000-4000-8000-0000000a11ce",
+  displayName: "Katherine Johnson",
+  email: "katherine@example.test",
+  activationPending: true,
+};
+
+type Row = { userId: string; displayName: string; email: string | null; activationPending: boolean };
 
 interface Listing {
   readonly users: readonly Row[];
@@ -677,6 +695,242 @@ describe("signing a user out everywhere", () => {
   });
 });
 
+// ---------------------------------------------------------------- pending activation
+
+/**
+ * USR-Q1 amendment 1 and CRD-C7. The client's whole rule, and nothing broader:
+ *
+ *   activationPending and user.create          → Resend activation link
+ *   not activationPending and user.resetpassword → Reset password
+ *   session.revoke                              → Sign out everywhere
+ *
+ * Hidden, never disabled. The server stays the authority: these rules only
+ * decide what is offered.
+ */
+describe("a row's actions by activation state", () => {
+  it("offers Resend activation link, and not Reset password, on a pending row", async () => {
+    list({ 1: { users: [KATHERINE], hasMore: false } });
+
+    const { user } = await render("/admin/users", READ, CREATE, RESET, REVOKE);
+
+    await user.click(await actionsFor("Katherine Johnson"));
+
+    const menu = await screen.findByRole("menu");
+
+    expect(within(menu).getByRole("menuitem", { name: "Resend activation link" })).toBeInTheDocument();
+    expect(within(menu).queryByRole("menuitem", { name: "Reset password" })).toBeNull();
+    expect(within(menu).getByRole("menuitem", { name: "Sign out everywhere" })).toBeInTheDocument();
+  });
+
+  it("offers Reset password, and not Resend activation link, on a row that is not pending", async () => {
+    list({ 1: { users: [ADA], hasMore: false } });
+
+    const { user } = await render("/admin/users", READ, CREATE, RESET, REVOKE);
+
+    await user.click(await actionsFor("Ada Lovelace"));
+
+    const menu = await screen.findByRole("menu");
+
+    expect(within(menu).getByRole("menuitem", { name: "Reset password" })).toBeInTheDocument();
+    expect(within(menu).queryByRole("menuitem", { name: "Resend activation link" })).toBeNull();
+  });
+
+  it("does not offer Resend activation link on a pending row to a caller without user.create", async () => {
+    list({ 1: { users: [KATHERINE], hasMore: false } });
+
+    const { user } = await render("/admin/users", READ, RESET, REVOKE);
+
+    await user.click(await actionsFor("Katherine Johnson"));
+
+    const menu = await screen.findByRole("menu");
+
+    expect(within(menu).queryByRole("menuitem", { name: "Resend activation link" })).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: "Reset password" })).toBeNull();
+    expect(within(menu).getByRole("menuitem", { name: "Sign out everywhere" })).toBeInTheDocument();
+  });
+
+  it("offers user.create alone its one action, on pending rows only", async () => {
+    list({ 1: { users: [ADA, KATHERINE], hasMore: false } });
+
+    const { user } = await render("/admin/users", READ, CREATE);
+
+    await user.click(await actionsFor("Katherine Johnson"));
+
+    expect(
+      within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Resend activation link" }),
+    ).toBeInTheDocument();
+
+    // Nothing to offer on Ada's row, so no empty menu behind a button.
+    expect(screen.queryByRole("button", { name: /^Actions for Ada Lovelace/ })).toBeNull();
+  });
+
+  it("offers no actions button on a pending row when its only possible action would be Reset password", async () => {
+    list({ 1: { users: [ADA, KATHERINE], hasMore: false } });
+
+    await render("/admin/users", READ, RESET);
+
+    expect(await actionsFor("Ada Lovelace")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Actions for Katherine Johnson/ })).toBeNull();
+  });
+
+  /** D2: the reviewer sees the list, pending rows included, and is offered nothing. */
+  it("offers the access reviewer nothing on a pending row", async () => {
+    list({ 1: { users: [KATHERINE], hasMore: false } });
+
+    await render("/admin/users", READ);
+
+    await screen.findByText("Katherine Johnson");
+
+    expect(screen.queryByRole("button", { name: /^Actions for/ })).toBeNull();
+  });
+
+  /** The field is always a boolean (P16); a response that breaks that is not trusted. */
+  it("states an error rather than guessing when a row's activationPending is not a boolean", async () => {
+    server.use(
+      http.get(at("/api/users"), () =>
+        HttpResponse.json({
+          users: [{ ...KATHERINE, activationPending: null }],
+          page: 1,
+          pageSize: 25,
+          hasMore: false,
+        }),
+      ),
+    );
+
+    await render("/admin/users", READ, CREATE);
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+});
+
+describe("resending an activation link", () => {
+  async function openResend() {
+    list({ 1: { users: [KATHERINE], hasMore: false } });
+
+    const rendered = await render("/admin/users", READ, CREATE);
+
+    await rendered.user.click(await actionsFor("Katherine Johnson"));
+    await rendered.user.click(await screen.findByRole("menuitem", { name: "Resend activation link" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Resend activation link to Katherine Johnson" });
+
+    return { ...rendered, dialog };
+  }
+
+  it("explains what happens, and what the administrator never sees", async () => {
+    const { dialog } = await openResend();
+
+    expect(dialog).toHaveTextContent("They'll be emailed a new link to activate their account.");
+    expect(dialog).toHaveTextContent("Any earlier activation link stops working.");
+    expect(dialog).toHaveTextContent("You won't see the link.");
+  });
+
+  it("requires a reason before sending anything", async () => {
+    let calls = 0;
+    server.use(
+      http.post(at(`/api/users/${KATHERINE.userId}/activation-link`), () => {
+        calls += 1;
+        return new HttpResponse(null, { status: 202 });
+      }),
+    );
+
+    const { user, dialog } = await openResend();
+
+    await user.type(within(dialog).getByLabelText("Reason"), "   ");
+    await user.click(within(dialog).getByRole("button", { name: "Resend link" }));
+
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("A reason is required.");
+    expect(calls).toBe(0);
+  });
+
+  it("sends exactly the reason to the row's own userId, then confirms and returns focus to the row", async () => {
+    let path: string | undefined;
+    let body: unknown;
+
+    server.use(
+      http.post(at("/api/users/:userId/activation-link"), async ({ request }) => {
+        path = new URL(request.url).pathname;
+        body = await request.json();
+        return new HttpResponse(null, { status: 202 });
+      }),
+    );
+
+    const { user, dialog } = await openResend();
+
+    await user.type(within(dialog).getByLabelText("Reason"), "The first mail never arrived.");
+    await user.click(within(dialog).getByRole("button", { name: "Resend link" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    expect(path).toBe(`/api/users/${KATHERINE.userId}/activation-link`);
+    expect(body).toEqual({ reason: "The first mail never arrived." });
+    expect(screen.getByRole("status")).toHaveTextContent("A new activation link has been issued for Katherine Johnson.");
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Actions for Katherine Johnson/ }));
+    });
+  });
+
+  /** The row said pending; the server decides. Its refusal is shown as it is. */
+  it("keeps the dialog open and shows the server's refusal word for word", async () => {
+    server.use(
+      http.post(at(`/api/users/${KATHERINE.userId}/activation-link`), () =>
+        HttpResponse.json({ error: "An activation link cannot be sent to this user." }, { status: 400 }),
+      ),
+    );
+
+    const { user, dialog } = await openResend();
+
+    await user.type(within(dialog).getByLabelText("Reason"), "The first mail never arrived.");
+    await user.click(within(dialog).getByRole("button", { name: "Resend link" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "An activation link cannot be sent to this user.",
+    );
+    expect(screen.getByRole("dialog", { name: "Resend activation link to Katherine Johnson" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { hidden: true })).toBeEmptyDOMElement();
+  });
+
+  it("is busy while sending, and sends once however often confirm is pressed", async () => {
+    let calls = 0;
+    let release: (() => void) | undefined;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    server.use(
+      http.post(at(`/api/users/${KATHERINE.userId}/activation-link`), async () => {
+        calls += 1;
+        await hold;
+        return new HttpResponse(null, { status: 202 });
+      }),
+    );
+
+    const { user, dialog } = await openResend();
+
+    await user.type(within(dialog).getByLabelText("Reason"), "The first mail never arrived.");
+    await user.click(within(dialog).getByRole("button", { name: "Resend link" }));
+
+    const busy = await within(dialog).findByRole("button", { name: "Sending…" });
+
+    expect(busy).toBeDisabled();
+
+    await user.click(busy);
+    await delay(20);
+
+    expect(calls).toBe(1);
+
+    release?.();
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+  });
+});
+
 // ---------------------------------------------------------------- accessibility
 
 describe("the Users page's accessibility", () => {
@@ -687,6 +941,18 @@ describe("the Users page's accessibility", () => {
 
     await table();
     await expectNoAccessibilityViolations(container);
+  });
+
+  it("has no violations with a pending row and its resend confirmation open", async () => {
+    list({ 1: { users: [ADA, KATHERINE], hasMore: false } });
+
+    const { user } = await render("/admin/users", READ, CREATE, RESET, REVOKE);
+
+    await user.click(await actionsFor("Katherine Johnson"));
+    await user.click(await screen.findByRole("menuitem", { name: "Resend activation link" }));
+    await screen.findByRole("dialog");
+
+    await expectNoAccessibilityViolations(document.body);
   });
 
   it("has no violations with a confirmation open", async () => {

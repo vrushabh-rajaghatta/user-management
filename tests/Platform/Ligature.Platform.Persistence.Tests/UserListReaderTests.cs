@@ -150,6 +150,143 @@ public sealed class UserListReaderTests
         });
     }
 
+    // ----------------------------------------------- amendment 1: activationPending
+
+    /// <summary>
+    /// P15. Every test here pairs a user who must read as pending with one who
+    /// must not, so no constant can pass.
+    /// </summary>
+    [Fact]
+    public async Task A_user_without_a_credential_is_pending_and_one_with_a_credential_is_not()
+    {
+        await WithStatesAsync([State.Pending, State.Activated], async seeded =>
+        {
+            var rows = await RowsForAsync(seeded);
+
+            Assert.True(rows[seeded[0].Id].ActivationPending);
+            Assert.False(rows[seeded[1].Id].ActivationPending);
+        });
+    }
+
+    /// <summary>
+    /// D1: "at least one local identity". A user who could never activate
+    /// (no identity at all, or only an external one) is not pending.
+    /// </summary>
+    [Fact]
+    public async Task A_user_with_no_local_identity_is_not_pending()
+    {
+        await WithStatesAsync([State.Pending, State.NoIdentity, State.ExternalOnly], async seeded =>
+        {
+            var rows = await RowsForAsync(seeded);
+
+            Assert.True(rows[seeded[0].Id].ActivationPending);
+            Assert.False(rows[seeded[1].Id].ActivationPending);
+            Assert.False(rows[seeded[2].Id].ActivationPending);
+        });
+    }
+
+    /// <summary>
+    /// "No credential on ANY identity": a user with two local identities, one
+    /// of which holds a credential, is not pending.
+    /// </summary>
+    [Fact]
+    public async Task A_credential_on_any_local_identity_means_not_pending()
+    {
+        await WithStatesAsync([State.Pending, State.TwoLocalOneActivated], async seeded =>
+        {
+            var rows = await RowsForAsync(seeded);
+
+            Assert.True(rows[seeded[0].Id].ActivationPending);
+            Assert.False(rows[seeded[1].Id].ActivationPending);
+        });
+    }
+
+    /// <summary>
+    /// P17. Mixed states interleaved by name read in the contract order, and
+    /// windows of any size neither repeat nor omit a row, with each row's
+    /// value intact.
+    /// </summary>
+    [Fact]
+    public async Task Activation_state_changes_neither_the_order_nor_the_windows()
+    {
+        await WithStatesAsync(
+            [State.Pending, State.Activated, State.Pending, State.Activated],
+            async seeded =>
+            {
+                var ids = seeded.Select(x => x.Id).ToHashSet();
+
+                var order = (await ReadAllAsync(pageSize: 100))
+                    .Where(x => ids.Contains(x.UserId.Value))
+                    .ToList();
+
+                Assert.Equal(seeded.Select(x => x.Id), order.Select(x => x.UserId.Value));
+                Assert.Equal([true, false, true, false], order.Select(x => x.ActivationPending));
+
+                foreach (var size in new[] { 1, 2, 3 })
+                {
+                    var windowed = (await ReadAllAsync(pageSize: size))
+                        .Where(x => ids.Contains(x.UserId.Value))
+                        .ToList();
+
+                    Assert.Equal(order, windowed);
+                }
+            },
+            names: ["Amber", "Basil", "Cedar", "Dahlia"]);
+    }
+
+    /// <summary>
+    /// Amendment 1's measured requirement: the page is chosen FIRST, and the
+    /// derivation runs over its rows only. Derived in the same SELECT as the
+    /// page, PostgreSQL hashed both existence tests over the whole of
+    /// user_identity and credential (first page 15 -> 87 ms, deep 103 -> 560 ms at
+    /// 100,000 users). A small test database plans both forms the same way, so
+    /// the requirement is held on the statement's shape: the LIMIT sits in a
+    /// subquery, and the existence tests are outside it.
+    /// </summary>
+    [Fact]
+    public async Task The_page_is_chosen_before_activation_pending_is_derived()
+    {
+        await TestDatabase.EnsureProvisionedAsync();
+
+        var capture = new CommandCapture();
+
+        var options = new DbContextOptionsBuilder<LigatureDbContext>()
+            .UseNpgsql(TestDatabase.ConnectionString)
+            .AddInterceptors(capture)
+            .Options;
+
+        await using (var context = new LigatureDbContext(options))
+            await new UserListReader(context).ReadAsync(0, 26, CancellationToken.None);
+
+        var sql = Assert.Single(capture.Commands);
+
+        var page = sql.IndexOf("FROM (", StringComparison.Ordinal);
+        var limit = sql.IndexOf("LIMIT", StringComparison.Ordinal);
+        var derived = sql.IndexOf(") AS ", limit, StringComparison.Ordinal);
+
+        Assert.True(page >= 0 && limit > page && derived > limit, $"The page is not a subquery:\n{sql}");
+
+        // Every existence test is in the outer SELECT, before the subquery.
+        Assert.DoesNotContain("EXISTS", sql[page..derived], StringComparison.Ordinal);
+        Assert.Contains("EXISTS", sql[..page], StringComparison.Ordinal);
+    }
+
+    private sealed class CommandCapture : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        public List<string> Commands { get; } = [];
+
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader>> ReaderExecutingAsync(
+            System.Data.Common.DbCommand command,
+            Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Commands.Add(command.CommandText);
+
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
     // ----------------------------------------------------------- harness
 
     private sealed record Seeded(Guid Id, string Name, string DisplayName, string Email);
@@ -214,6 +351,168 @@ public sealed class UserListReaderTests
 
             await command.ExecuteNonQueryAsync();
         }
+    }
+
+    private enum State
+    {
+        Pending,
+        Activated,
+        NoIdentity,
+        ExternalOnly,
+        TwoLocalOneActivated,
+    }
+
+    private sealed record StateSeeded(Guid Id, State State);
+
+    private static async Task<Dictionary<Guid, UserListRow>> RowsForAsync(IReadOnlyList<StateSeeded> seeded)
+    {
+        var ids = seeded.Select(x => x.Id).ToHashSet();
+
+        return (await ReadAllAsync(pageSize: 100))
+            .Where(x => ids.Contains(x.UserId.Value))
+            .ToDictionary(x => x.UserId.Value);
+    }
+
+    /// <summary>
+    /// Seeds one human user per state, with the identities and credentials the
+    /// state needs, named so that they sort in the order given.
+    /// </summary>
+    private static async Task WithStatesAsync(
+        State[] states,
+        Func<IReadOnlyList<StateSeeded>, Task> body,
+        string[]? names = null)
+    {
+        await TestDatabase.EnsureProvisionedAsync();
+
+        var marker = Guid.NewGuid().ToString("N")[..10];
+        var system = User.SystemUserId.Value;
+        var hashed = new PasswordHasher().Hash("the-listed-password-1");
+
+        var seeded = states.Select(x => new StateSeeded(Guid.NewGuid(), x)).ToList();
+
+        await using (var connection = await TestDatabase.OpenAsync())
+        {
+            for (var i = 0; i < seeded.Count; i++)
+            {
+                var (id, state) = (seeded[i].Id, seeded[i].State);
+
+                await ExecuteAsync(connection,
+                    """
+                    INSERT INTO app_user
+                        (id, actor_type, first_name, last_name, display_name, email, status,
+                         created_at, created_by, updated_at, updated_by)
+                    VALUES
+                        (@id, 'Human', 'Pending', 'State', @display, @email, 'Active',
+                         now(), @system, now(), @system)
+                    """,
+                    ("id", id),
+                    ("display", $"{names?[i] ?? $"State {i}"} {marker}"),
+                    ("email", $"usr-q1-a1-{marker}-{i}@example.test"),
+                    ("system", system));
+
+                var locals = state switch
+                {
+                    State.Pending or State.Activated => 1,
+                    State.TwoLocalOneActivated => 2,
+                    _ => 0,
+                };
+
+                for (var n = 0; n < locals; n++)
+                {
+                    var identity = Guid.NewGuid();
+
+                    await ExecuteAsync(connection,
+                        """
+                        INSERT INTO user_identity
+                            (id, user_id, actor_type, identity_type, identity_provider,
+                             subject_id, username, status, created_at, created_by)
+                        VALUES
+                            (@identity, @id, 'Human', 'Local', 'Application',
+                             @subject, @username, 'Active', now(), @system)
+                        """,
+                        ("identity", identity),
+                        ("id", id),
+                        ("subject", identity.ToString()),
+                        ("username", $"usr-q1-a1-{marker}-{i}-{n}"),
+                        ("system", system));
+
+                    var credentialed = state == State.Activated
+                        || (state == State.TwoLocalOneActivated && n == 1);
+
+                    if (credentialed)
+                    {
+                        await ExecuteAsync(connection,
+                            """
+                            INSERT INTO credential
+                                (id, user_identity_id, identity_type, password_hash,
+                                 password_algorithm, password_changed_at, must_change_password,
+                                 failed_attempt_count, locked_until, created_at, created_by)
+                            VALUES
+                                (@credential, @identity, 'Local', @hash,
+                                 @algorithm, now(), false, 0, NULL, now(), @system)
+                            """,
+                            ("credential", Guid.NewGuid()),
+                            ("identity", identity),
+                            ("hash", hashed.Hash),
+                            ("algorithm", hashed.Algorithm),
+                            ("system", system));
+                    }
+                }
+
+                if (state == State.ExternalOnly)
+                {
+                    var external = Guid.NewGuid();
+
+                    await ExecuteAsync(connection,
+                        """
+                        INSERT INTO user_identity
+                            (id, user_id, actor_type, identity_type, identity_provider,
+                             subject_id, username, status, created_at, created_by)
+                        VALUES
+                            (@identity, @id, 'Human', 'External', 'EntraId',
+                             @subject, NULL, 'Active', now(), @system)
+                        """,
+                        ("identity", external),
+                        ("id", id),
+                        ("subject", $"external-{external:N}"),
+                        ("system", system));
+                }
+            }
+        }
+
+        try
+        {
+            await body(seeded);
+        }
+        finally
+        {
+            await using var connection = await TestDatabase.OpenAsync();
+
+            var ids = seeded.Select(x => x.Id).ToArray();
+
+            foreach (var sql in new[]
+            {
+                "DELETE FROM credential WHERE user_identity_id IN (SELECT id FROM user_identity WHERE user_id = ANY(@ids))",
+                "DELETE FROM user_identity WHERE user_id = ANY(@ids)",
+                "DELETE FROM app_user WHERE id = ANY(@ids)",
+            })
+            {
+                await using var command = new NpgsqlCommand(sql, connection);
+                command.Parameters.AddWithValue("ids", ids);
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+    private static async Task ExecuteAsync(
+        NpgsqlConnection connection, string sql, params (string Name, object Value)[] parameters)
+    {
+        await using var command = new NpgsqlCommand(sql, connection);
+
+        foreach (var (name, value) in parameters)
+            command.Parameters.AddWithValue(name, value);
+
+        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task<IReadOnlyList<UserListRow>> ReadAsync(int offset, int limit)
