@@ -43,7 +43,7 @@ The resolution:
 
 | ID | Means | Status |
 | --- | --- | --- |
-| `USR-Q1` | **GetUser**, as the catalogue defines it | Not specified. Its contract is decided from evidence when a story needs it (for example, a user-detail read for USR-C2). This reconciliation does not design it (R5). |
+| `USR-Q1` | **GetUser**, as the catalogue defines it | This reconciliation did not design it (R5). **Narrow v1 since USR-C2** (userId, firstName, lastName, displayName): see *USR-C2 — Update User Profile, and USR-Q1 GetUser (narrow v1)*. The catalogue's other fields each need their own evidence. |
 | `USR-Q2` | **SearchUsers**: the Users list, `GET /api/users` | Implemented as a deliberately narrow first version: no filtering or search (owner decision, #51), and row fields admitted by the evidence rule. Being narrower than the catalogue's query does not make it a different query. |
 | `USR-Q3` | Whatever the catalogue defines (GetUserAccessSummary) | Not used here, and not repurposed. |
 
@@ -1642,9 +1642,135 @@ After a successful deactivation or reactivation, the client reads again:
 
 ---
 
+## USR-C2 — Update User Profile, and USR-Q1 GetUser (narrow v1)
+
+**Status:** Contract, awaiting owner review. The decisions (G1–G10) were settled by the owner on 2026-09-18, with the G3 and G8 refinements. Two proposals are marked **[confirm]** below. This is story 1, the backend. The UI (G9) is story 2.
+
+### Requirement
+
+An administrator corrects a user's first name, last name and display name. Email and lifecycle status are not touched: each has its own command (USR-C3; USR-C4 and USR-C5). The frozen catalogue's anti-features list forbids a generic `UpdateUser` (*"four commands, four meanings"*). To edit names, a client needs their current values, so a narrow single-user read, `USR-Q1 GetUser`, is introduced with exactly those fields.
+
+### USR-C2 UpdateUserProfile
+
+| | |
+| --- | --- |
+| **Caller** | An administrator holding **`user.update`** (G1). Not human-only: the catalogue does not mark `user.update` so, and the command is not added to the human-only list. |
+| **Inputs** | `UserId`, `FirstName`, `LastName`, `DisplayName`. **No reason** (G4): the catalogue has none, and `UserProfileChanged` has `ReasonRequired: false`. The row actions' convention of a required reason does not apply here. |
+| **Target** | Any existing user **except the System actor** (G8). Lifecycle status does not matter: an **inactive user's profile may be corrected** (G7). |
+| **Touches** | `app_user.first_name`, `last_name` and `display_name` only. Not email, status, identities, credentials, sessions or role assignments. |
+| **Result** | `204`, with no body. |
+
+#### The System actor (G8)
+
+> **USR-C2 must reject attempts to modify the System actor.**
+
+This is a rule of the command, enforced explicitly in its handler, and not left to the database. The AU7 guard, which freezes the System row in PostgreSQL, stays as defence in depth. The wording a caller sees is the application's: *"This user's profile cannot be changed."*, served as `400`. The wording is not part of the domain rule.
+
+#### Name rules (G3)
+
+These apply to each of `FirstName`, `LastName` and `DisplayName`:
+
+1. **Normalised** by removing leading and trailing whitespace. Interior whitespace is kept as it is. **[confirm]** The domain owns this, so every client behaves the same way; the web form's `.trim()` becomes a convenience, not the rule.
+2. **Required and non-blank** after normalisation.
+3. **No control characters**, defined as .NET `char.IsControl`. That is the definition `EmailAddress` uses, whose ranges the email constraint was verified to agree with.
+4. **At most 100 characters**, counted in **Unicode code points** after normalisation. That is what PostgreSQL's `char_length` counts, so a later database check could state the same rule exactly.
+
+The rules live in the domain, in `User.UpdateProfile`, and the values stored are the normalised ones. A violation is refused with a message naming the field. Examples: *"First name is required."*, *"Display name must be at most 100 characters."*, *"Last name must not contain control characters."*
+
+**Not amended here:** USR-C1 (create) and the database. **[confirm]** `User.CreateHuman` still checks only that first and last names are non-blank. Adopting these rules at creation would change USR-C1's behaviour, so it is a separate decision (Known Gaps, *Name rules differ between USR-C1 and USR-C2*). There are no database CHECK constraints for the same reason: they would constrain creation too.
+
+#### No change (G5)
+
+If the normalised values equal the stored ones, the command succeeds with `204`. **Nothing is written and nothing is audited.** `User.UpdateProfile` already returns `false` in this case.
+
+#### Audit
+
+`UserProfileChanged` (existing; no catalogue change), on a change only. The primary is `User`. Before and After hold exactly `FirstName`, `LastName` and `DisplayName`, the paths the catalogue marks as personal data of the primary subject. There is no reason.
+
+#### Concurrency (G6)
+
+**Last write wins in v1.** Two administrators saving the same user in turn leave the second's values. Each save's Before/After is audited, so an overwritten edit is visible in the trail. Optimistic concurrency (a version or an expected-values check) is deferred and recorded (Known Gaps, *USR-C2 is last-write-wins*).
+
+USR-C2 does not take the D6 row lock. That lock orders commands that depend on lifecycle status, and a profile edit does not (G7).
+
+### USR-Q1 GetUser — narrow v1 (G2)
+
+> **`GET /api/users/{userId}` returns exactly `userId`, `firstName`, `lastName` and `displayName`, and requires `user.read`.**
+
+- **Why these four and nothing else.** USR-C2's client must show the current names before editing them. The list row deliberately excludes `FirstName` and `LastName` (USR-Q2, *Excluded fields*: *"DisplayName serves recognition"*). This read exists for that one use.
+- **Not the catalogue's full GetUser.** The frozen catalogue gives GetUser status, actor type, identities and current assignments. **None of those is added here.** Each would need its own evidence, under the same rule as the list's fields (USR-Q2, *Adding a field later*). This is `USR-Q1` v1, narrow on purpose.
+- **Who.** Human users only, as the list scopes. The System actor, and an unknown user, are refused as unknown: `400`, *"The user does not exist."*, following the convention of the reads and commands addressed by `{userId}`.
+- **Authorization and audit.** It declares `Required("user.read")`. Refused, it is `400` (Known Gaps, *Authorization failures are not distinguishable from validation failures*); with no carrier, `401`. It is **not audited**: reads are not events (architecture §11), as USR-Q2.
+- **Nullability.** `firstName` and `lastName` are non-null for humans, by `ck_app_user_human_names`. `displayName` is non-null.
+
+### Endpoints
+
+| Route | Body | Success | Refusals |
+| --- | --- | --- | --- |
+| `GET /api/users/{userId}` | — | `200` with exactly `{ userId, firstName, lastName, displayName }` | `400 { error }` for an unknown user, the System actor, or a missing `user.read`; `401` with no carrier |
+| `POST /api/users/{userId}/profile` | `{ "firstName", "lastName", "displayName" }` | `204`, no body, whether or not anything changed | `400 { error }` for a missing or invalid field, the System actor, an unknown user, or a missing `user.update`; `401` with no carrier |
+
+`POST`, like every existing command endpoint, is covered by the cross-site guard. A body missing a field is `400` before dispatch, as the existing endpoints treat missing inputs.
+
+### Change control (G1)
+
+The frozen catalogue's USR-C2 row is *"Admin or self"*, with permission *"user.update / self"*. Under pipeline behaviour 3 a command carries one fixed permission, so the two cannot be one command. This is the problem the SES-C4 split solved. This story delivers **the administrator command only**. A self-service profile command, if one is wanted, is its own command with its own authorization, delivered with a My account page. It is recorded under Known Gaps, *USR-C2 change control*. No workbook is edited.
+
+### Acceptance Criteria
+
+**USR-C2**
+
+- **P-A1** A caller with `user.update` changes all three names. The stored values are the normalised ones. One `UserProfileChanged` carries exactly those three fields in Before and After, with no reason.
+- **P-A2** Normalisation: leading and trailing whitespace is removed and interior whitespace kept. A value that is only whitespace is refused as required.
+- **P-A3** Each rule refuses, naming the field, and writes nothing: a blank value; a control character (tab, newline, U+0000, U+009F); 101 code points. **Exactly 100 code points is accepted, including astral characters that .NET counts as two units.**
+- **P-A4** No change, including a submission that differs only by surrounding whitespace, is `204` with no write and no audit record.
+- **P-A5** An inactive user's profile can be changed, and their status stays `Inactive`.
+- **P-A6** The System actor is refused by the command and nothing is written. An unknown user is refused. A caller without `user.update` is refused by the pipeline.
+- **P-A7** Email, status, identities, credentials, sessions and role assignments are unchanged by a profile update.
+- **P-A8** Last write wins: two updates in turn leave the second's values, and both are audited.
+
+**USR-Q1 GetUser**
+
+- **G-A1** It returns exactly the four fields, with the stored values.
+- **G-A2** It requires `user.read`; no carrier is `401`. An access reviewer may read it.
+- **G-A3** The System actor and an unknown user are refused as unknown.
+- **G-A4** It writes no audit record.
+
+**Endpoints**
+
+- **E-A1** Both routes behave as the table above, and are listed in the API documentation.
+
+### Not decided here
+
+- **The UI** (story 2): an Edit profile row action, the dialog prefilled from GetUser, and the shared unsaved-changes guard (architecture, *Unsaved changes*), which this would be the first form to use.
+- **A self-service profile command** (G1).
+- **USR-C1 adopting the name rules**, and database CHECK constraints for them.
+- **GetUser's other catalogue fields**: status, actor type, identities and assignments.
+- **Optimistic concurrency.**
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
+
+## USR-C2 change control: "Admin or self" is two commands
+
+**Rule:** the frozen UM command catalogue's USR-C2 row is *"Admin or self"*, with permission *"user.update / self"*.
+
+**State:** pipeline behaviour 3 gives a command one fixed permission, so USR-C2 is the **administrator** command, with `user.update`. A self-service profile command, if wanted, is a separate command with its own authorization, delivered with a My account page. This is the SES-C4 precedent. **No workbook is edited.** It is outstanding change control against the catalogue.
+
+## USR-C2 is last-write-wins
+
+**State:** two administrators editing the same profile in turn: the later save wins. Each save's Before/After is in `UserProfileChanged`, so the overwritten edit is visible in the trail, but the second administrator is not told.
+
+**Deferred:** optimistic concurrency, either a version on `app_user` or an expected-values check on the command. It is a contract change with a client consequence, decided when there is evidence it is needed.
+
+## Name rules differ between USR-C1 and USR-C2
+
+**State:** USR-C2 normalises names and enforces required, non-blank, no control characters, and at most 100 code points. `User.CreateHuman` (USR-C1) still checks only that first and last names are non-blank. A name can therefore be **created** in a form it could not be **edited** to, such as a blank display name or one over 100 characters. There is no database constraint for these rules.
+
+**Deferred:** whether USR-C1 adopts the same rules, which amends its behaviour, and whether database CHECK constraints follow. USR-C1 is not yet written up in this catalogue, so the decision is taken when it is back-filled or next touched.
 
 ## USR-C4 does not handle owned agents
 
