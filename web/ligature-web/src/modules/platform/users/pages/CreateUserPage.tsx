@@ -6,6 +6,7 @@ import { Page } from "@/shared/components/Page";
 import { FormField } from "@/shared/forms/FormField";
 import { useCreateUser } from "../hooks/useCreateUser";
 import { createUserSchema } from "../schemas/createUser";
+import { useUnsavedChangesGuard } from "@/shared/forms/useUnsavedChangesGuard";
 
 /**
  * USR-C1 (docs/frontend-architecture.md §7, §9, §12).
@@ -47,6 +48,13 @@ export function CreateUserPage() {
   const [created, setCreated] = useState<Created | undefined>(undefined);
 
   const create = useCreateUser();
+
+  // USR-C2 UI, option (a): this form keeps useState, and its dirty flag is
+  // computed by hand — "any editable field differs from its initial empty
+  // value", over EVERY field, not only those the server requires. A
+  // successful create clears the form, and with it the guard.
+  const dirty = (Object.keys(EMPTY) as (keyof typeof EMPTY)[]).some((field) => values[field] !== EMPTY[field]);
+  const guard = useUnsavedChangesGuard(dirty);
 
   function set(field: keyof typeof EMPTY, value: string) {
     setValues((current) => ({ ...current, [field]: value }));
@@ -178,6 +186,7 @@ export function CreateUserPage() {
           {create.isPending ? "Creating..." : "Create user"}
         </Button>
       </form>
+      {guard.prompt}
     </Page>
   );
 }

@@ -18,6 +18,7 @@ import { ErrorState } from "@/shared/components/ErrorState";
 import { useUsers } from "../hooks/useUsers";
 import { UserPermissions } from "../permissions";
 import type { UserRow } from "../schemas/users";
+import { EditProfileDialog } from "./EditProfileDialog";
 import { ManageRolesDialog } from "./ManageRolesDialog";
 import { UserActionDialog, type UserAction } from "./UserActionDialog";
 
@@ -59,10 +60,13 @@ interface Allowed {
 
   /** role.read (AUT-Q2): whether the caller may see a user's role assignments. */
   readonly manageRoles: boolean;
+
+  /** user.update (USR-C2): whether the caller may edit a user's names. */
+  readonly editProfile: boolean;
 }
 
-/** A row action: a confirmed command, or Manage roles, which opens its own dialog. */
-type RowAction = UserAction | "manage-roles";
+/** A row action: a confirmed command, or Manage roles or Edit profile, which open their own dialogs. */
+type RowAction = UserAction | "manage-roles" | "edit-profile";
 
 const LABEL: Record<RowAction, string> = {
   "resend-activation": "Resend activation link",
@@ -71,6 +75,7 @@ const LABEL: Record<RowAction, string> = {
   deactivate: "Deactivate",
   reactivate: "Reactivate",
   "manage-roles": "Manage roles",
+  "edit-profile": "Edit profile",
 };
 
 /**
@@ -113,6 +118,12 @@ function actionsFor(user: UserRow, can: Allowed): RowAction[] {
   // not a question the row can answer without asking.
   if (can.manageRoles) {
     actions.push("manage-roles");
+  }
+
+  // Every row, active or inactive (USR-C2 G7; the USR-C2 UI amends the
+  // USR-C4/C5 matrix, U4): a departed person's name may still need correcting.
+  if (can.editProfile) {
+    actions.push("edit-profile");
   }
 
   // Last, apart from the everyday actions: it ends the person's access.
@@ -161,10 +172,12 @@ export function UsersTable() {
     deactivate: useCan(UserPermissions.deactivate),
     reactivate: useCan(UserPermissions.reactivate),
     manageRoles: useCan(UserPermissions.readRoles),
+    editProfile: useCan(UserPermissions.update),
   };
 
   const [pending, setPending] = useState<Pending | undefined>(undefined);
   const [managing, setManaging] = useState<{ user: UserRow; open: boolean } | undefined>(undefined);
+  const [editing, setEditing] = useState<{ user: UserRow; open: boolean } | undefined>(undefined);
   const [announcement, setAnnouncement] = useState("");
   const [queued, setQueued] = useState<string | undefined>(undefined);
   const triggers = useRef(new Map<string, HTMLButtonElement>());
@@ -182,6 +195,8 @@ export function UsersTable() {
 
     if (action === "manage-roles") {
       setManaging({ user, open: true });
+    } else if (action === "edit-profile") {
+      setEditing({ user, open: true });
     } else {
       setPending({ user, action, open: true });
     }
@@ -217,6 +232,29 @@ export function UsersTable() {
           }}
           onClosed={() => {
             setPending(undefined);
+
+            if (queued !== undefined) {
+              setAnnouncement(queued);
+              setQueued(undefined);
+            }
+          }}
+        />
+      )}
+
+      {editing === undefined ? null : (
+        <EditProfileDialog
+          key={editing.user.userId}
+          open={editing.open}
+          user={editing.user}
+          returnFocus={returnFocus}
+          onClose={() => {
+            setEditing({ ...editing, open: false });
+          }}
+          onSaved={(message) => {
+            setQueued(message);
+          }}
+          onClosed={() => {
+            setEditing(undefined);
 
             if (queued !== undefined) {
               setAnnouncement(queued);
@@ -320,7 +358,7 @@ function UsersRegion({ query, pathname, can, triggers, onAction }: UsersRegionPr
   // Offered per permission and, for Resend and Reset, per row: hidden, never
   // disabled. With no permission at all there is no Actions column, and a row
   // with nothing to offer has no button rather than an empty menu.
-  if (can.resend || can.reset || can.revoke || can.deactivate || can.reactivate || can.manageRoles) {
+  if (can.resend || can.reset || can.revoke || can.deactivate || can.reactivate || can.manageRoles || can.editProfile) {
     columns.push({
       header: "Actions",
       className: "w-12 text-right",
