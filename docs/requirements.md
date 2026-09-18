@@ -1854,6 +1854,128 @@ Edit profile is shown to holders of `user.update` on every row, active and inact
 
 ---
 
+## CRD-C4 and SES-C4 (self) — the My account page
+
+**Status:** Contract frozen 2026-09-18 by owner decision (M1–M10). **UI only:** both backends exist and are unchanged. CRD-C4 is `POST /api/account/change-password`, and SES-C4's self form is `POST /api/account/sign-out-everywhere`. See *A5 closed — CRD-C4 revokes other sessions* and *Session revocation — reason semantics and SES-C4 command split* under Known Gaps.
+
+### Requirement
+
+A signed-in person manages their own account from a **My account** page. They can change their password, sign out their other sessions, or sign out everywhere, including here. It is the web client's first page that is about the caller rather than about someone they administer, so it needs **no permission**: every authenticated caller may reach it, and the server decides whether each operation is allowed.
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **M1** | **Built despite the missing attempt limit.** CRD-C4 does not limit incorrect current-password submissions. The page is not blocked on that, because the endpoint already accepts the operation from any authenticated session. Attempt or rate limiting is a **separate security decision**, recorded under Known Gaps. Building the UI does **not** approve unlimited attempts as a security design. |
+| **M2** | **`/account`, inside the signed-in shell.** A **My account** link sits in the shell's footer beside **Sign out**, supplied by `app/` exactly as the Sign out button is. **No sidebar entry:** the sidebar lists areas shown by permission, and this page belongs to every caller. |
+| **M3** | **Ownership follows the backend's split.** `modules/platform/account` owns the page and change password: its API operation, hook and schema. `modules/platform/auth` owns sign-out-everywhere, which is session lifecycle: the API operation and a hook it exports. The page uses that hook and never auth's API operation (frontend architecture §6). |
+| **M4** | **Three fields:** current password, new password, and a **confirmation that stays in the browser** and is never sent. The client checks only that each field is filled and that the confirmation matches. The server owns the password policy. There is **no show-password toggle**. |
+| **M5** | On success the three fields are cleared and the page announces: ***"Your password has been changed. Any other sessions on this account have been signed out; you remain signed in here."*** This stays true whether or not another session existed, which the `204` does not say. |
+| **M6** | **The shared unsaved-changes guard.** The form is dirty while **any** of the three fields is non-empty. A successful change clears the fields, so the guard is off. |
+| **M7** | **Two sign-out actions, each behind `ConfirmAction`.** **Sign out other sessions** sends `keepCurrentSession: true`, stays on the page and announces. **Sign out everywhere** includes this session, then goes to sign-in. |
+| **M8** | **No reason is asked for, and none is sent.** The server records its default explanation. |
+| **M9** | **A failure is not treated as success.** A non-401 failure of either sign-out action is shown, and the caller stays signed in and on the page, because what was revoked is not known. A `401` means this session has already ended, so it is handled as signed out. |
+| **M10** | **Change password is shown to every caller for now.** Only local identities exist today, and the server refuses any other kind with its uniform message. **To revisit** when external identities arrive (IDN-C1), since `/me` would then have to say which kind signed in. Recorded under Known Gaps. |
+
+### Where the code lives (M3)
+
+```text
+modules/platform/account
+├── /account page (My account)
+└── change password ──► POST /api/account/change-password     (CRD-C4)
+        │
+        └── uses auth's hook, never auth's API operation
+                │
+modules/platform/auth
+└── sign out everywhere ──► POST /api/account/sign-out-everywhere   (SES-C4, self)
+```
+
+`/account` is **chosen by the client**. It is not a backend contract path: no email links to it. It must not be confused with the account module's **public** routes (`/activate`, `/forgot-password`, `/reset-password`). Those stay in the public shell. `/account` is composed into the **signed-in** shell, so `RequireAuth` guards it and an unauthenticated visit goes to sign-in with a return path.
+
+### The page
+
+- **Title:** *My account*. It has two sections, **Change password** and **Sessions**, each a labelled region.
+- **The footer link (M2).** **My account** links to `/account`, is marked as the current page when on it, and closes the phone sidebar sheet when followed, as the brand link does. The shell still does not import a module: `app/` passes the link into the footer slot beside the Sign out button.
+
+### Change password (M4, M5, M6)
+
+- **Fields**, each built with `FormField`:
+  - **Current password**, with `type="password"` and `autoComplete="current-password"`;
+  - **New password**, with `autoComplete="new-password"`;
+  - **Confirm new password**, with `autoComplete="new-password"`, never sent.
+  - The button is **Change password**. No `minLength` or `maxLength` attributes.
+- **The form lifecycle.** React Hook Form with a Zod resolver, starting empty. The schema checks presence and the confirmation match **only**.
+  - An empty field is flagged and nothing is sent.
+  - A mismatch shows ***"The passwords do not match."***, the reset page's wording, and nothing is sent.
+- **The request** carries exactly `{ currentPassword, newPassword }`, as typed and untrimmed. The button is busy while the request is in flight, and a repeated press sends once.
+- **On `204`**, all three fields are cleared, the guard turns off, and the M5 sentence is announced in a polite live region. Nothing in the query cache changes, because `/me` describes the same caller as before.
+- **A `400`** is shown word for word at the form level. That includes the uniform *"The password could not be changed."*, a policy refusal, and a reuse refusal. The typed values are kept so the caller can correct them, and the form stays dirty.
+- **A `401`** means this session has ended. The app's normal handling applies: the caller is signed out and sent to sign-in.
+
+### Sessions (M7, M8, M9)
+
+The section says in one sentence what each action does. It lists no sessions, because that needs SES-Q2, which is not built.
+
+| Action | Confirmation | Request | On `204` |
+| --- | --- | --- | --- |
+| **Sign out other sessions** | *"Sign out other sessions?"* — *"Every other session on your account will be signed out. You stay signed in here."* — confirm **Sign out other sessions** | `{ keepCurrentSession: true }` | Stay on the page; announce ***"Your other sessions have been signed out."*** |
+| **Sign out everywhere** | *"Sign out everywhere?"* — *"Every session on your account will be signed out, including this one. You will need to sign in again."* — confirm **Sign out everywhere** | `{ keepCurrentSession: false }` | Signed out locally (the query cache is cleared), then sent to sign-in, replacing the history entry |
+
+- **No `reason` field** is sent (M8).
+- **A non-401 failure** (M9), whether a `4xx`, a `5xx`, a network failure or a contract violation, is shown on the page. Authentication state is **not** changed, and the caller stays on the page. **This differs from the Sign out button on purpose.** Sign out leaves the page even when its call fails, because the person asked to leave. Here, a failure means we cannot say what was revoked.
+- **A `401`** means this session had already ended. It is handled as signed out and goes to sign-in, the same outcome as a successful **Sign out everywhere**.
+- **The guard does not fire once the session has ended.** Signing out everywhere, or the Sign out button, while the password form is dirty does **not** ask "Discard changes?". The session is gone, and the typed passwords are discarded with it.
+- **Before the session ends**, leaving `/account` by an in-app link while the form is dirty does ask, as M6 requires.
+
+### Acceptance Criteria
+
+- **UI-1** `/account` renders *My account* for an authenticated caller holding **no** permissions. An unauthenticated visit goes to sign-in with `/account` as the return path.
+- **UI-2** The footer shows **My account** beside **Sign out** for every signed-in caller. It links to `/account` and is marked current there. It is not in the primary navigation.
+- **UI-3** Change password:
+  - an empty field, or a mismatched confirmation, sends nothing;
+  - otherwise exactly `{ currentPassword, newPassword }` is sent, untrimmed and without the confirmation;
+  - the button is busy while sending, and sends once;
+  - there is no `minLength` or `maxLength`, and the `autocomplete` values are as specified.
+- **UI-4** On `204` the fields are cleared and the M5 sentence is announced word for word. A `400` shows the server's message word for word and keeps the values.
+- **UI-5** Guard:
+  - while any field is non-empty, in-app navigation asks "Discard changes?";
+  - `beforeunload` is registered while dirty and removed when clean;
+  - after a successful change there is no prompt.
+- **UI-6** Sign out other sessions:
+  - the confirmation appears, and Cancel sends nothing;
+  - confirming sends `{ keepCurrentSession: true }` with no `reason`;
+  - on `204` the caller stays and the announcement is made.
+- **UI-7** Sign out everywhere:
+  - the confirmation appears, and Cancel sends nothing;
+  - confirming sends `{ keepCurrentSession: false }` with no `reason`;
+  - on `204` the caller is signed out and at sign-in;
+  - with the password form dirty, no discard prompt appears.
+- **UI-8** Failures:
+  - a `500` or network failure from either sign-out action is shown, and the caller stays signed in on `/account`;
+  - a `401` from either leads to sign-in.
+- **UI-9** No accessibility violations on the page, with each confirmation open, and with the discard prompt open.
+- **UI-10** Browser, in the dev stack, with each state change approved by the owner:
+  - change a password, using an account other than Ada's so that her deliberate must-change-password state is kept;
+  - see a refusal shown word for word;
+  - sign out other sessions, and see a second browser session ended;
+  - sign out everywhere, and land at sign-in.
+
+### After it lands
+
+- **An amendment note in `docs/frontend-architecture.md` §5**, beside W4 and the Administration shell amendment. It records that the footer carries a My account link for every caller, that `/account` is a signed-in, client-chosen path, and that the sidebar stays permission-driven areas only.
+
+### Not included
+
+- Attempt or rate limiting for CRD-C4 (M1).
+- External identities (M10).
+- Editing your own profile, which needs its own command (*USR-C2 change control*).
+- A session list, which needs SES-Q2.
+- Enforcing must-change-password at sign-in (*MustChangePassword is recorded but not enforced*).
+- Migrating the existing forms to React Hook Form.
+- A show-password toggle.
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
@@ -2347,6 +2469,14 @@ product behaviour CRD-C4 does not specify.
 whether authenticated password-change failures must count toward lockout or be
 rate limited.
 **Where recorded:** the class doc of `ChangePasswordCommandHandler`.
+
+> **Known limitation, restated for the My account page (M1, 2026-09-18).** CRD-C4 currently has no attempt limit for incorrect current-password submissions. The account page is not blocked on this limitation, because the endpoint already permits the operation to any authenticated session. Rate or attempt limiting is a separate security decision. **Building the UI does not approve unlimited attempts as a security design.**
+
+## My account offers Change password to every caller (M10)
+
+**State:** the My account page shows Change password to every authenticated caller. Only local identities exist today (IDN-C1 is not built), and CRD-C4 refuses a non-local identity with its uniform *"The password could not be changed."*, so the server decides whether the operation applies.
+
+**Revisit when:** external identities arrive (IDN-C1). A caller who signed in through an external identity provider would then be offered an action that can only fail. `/me` would have to say which kind of identity this session was established with, so the page can withhold the action.
 
 ## A5 closed — CRD-C4 revokes other sessions, which amends two catalogues
 
