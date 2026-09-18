@@ -1754,7 +1754,7 @@ The frozen catalogue's USR-C2 row is *"Admin or self"*, with permission *"user.u
 
 ## USR-C2 — the Edit profile UI (story 2)
 
-**Status:** Contract, awaiting owner review. The decisions (U1–U7) were settled by the owner on 2026-09-18; one proposal is marked **[confirm]**. It builds on story 1 (#65): USR-C2 `POST /api/users/{userId}/profile` and USR-Q1 GetUser `GET /api/users/{userId}`.
+**Status:** Contract frozen 2026-09-18 by owner decision (U1–U7). The owner also confirmed option (a) for Create user and a status note in the architecture document after the implementation lands. It builds on story 1 (#65): USR-C2 `POST /api/users/{userId}/profile` and USR-Q1 GetUser `GET /api/users/{userId}`.
 
 ### Requirement
 
@@ -1802,7 +1802,15 @@ So the client asks only that each field is present, as a non-empty string. Every
 - **Closing a dialog** while dirty, whether by Cancel, Escape or the close button, asks the same "Discard changes?" first. **Discard** closes; **Keep editing** returns to the form with the typed values intact.
 - It is **off after a successful save**, and while any navigation that follows is in progress.
 
-**Create user (retrofit).** The same guard, on the Create user page. **[confirm]** Create user stays a `useState` form: migrating the existing forms to React Hook Form is out of scope. Its dirty flag is computed by hand, as "any field differs from empty". The hook takes a boolean, so both forms use it identically. The consequence, until the existing forms are migrated, is two form styles: React Hook Form for Edit profile, `useState` for the others.
+**Create user (retrofit), option (a), confirmed by the owner.** The same guard, on the Create user page. Create user stays a `useState` form: RHF is introduced for new editing forms, and this story is not a reason to refactor an existing one. Its dirty flag is computed explicitly as **"any editable field differs from its initial empty value"**, covering **every** editable field (first name, last name, display name, email, initial username), not only those the server requires. The guard answers *"has the user changed anything?"*, and must not inherit USR-C1's client/server validation differences.
+
+**The guard is independent of any form library:** it accepts a `boolean`, never a React Hook Form object. Until the existing forms are migrated, the coexistence is deliberate:
+
+```text
+Edit profile  → React Hook Form + Zod
+Create user   → useState + its existing Zod pattern
+Grant role    → useState + its existing pattern (no guard yet)
+```
 
 ### The action matrix, amended (U4)
 
@@ -1826,12 +1834,16 @@ Edit profile is shown to holders of `user.update` on every row, active and inact
 - **UI-4** Save sends exactly the typed values (untrimmed) to `POST /api/users/{userId}/profile`. On `204` it announces, refreshes the list and that user's GetUser query, and closes. It is busy while sending, and sends once.
 - **UI-5** Guard in the dialog: once dirty, Cancel, Escape and the close button each ask "Discard changes?". Keep editing keeps the values; Discard closes. When not dirty, they close without asking. After a successful save there is no prompt.
 - **UI-6** Guard on navigation: a dirty form blocks in-app navigation with the same prompt, and `beforeunload` is registered while dirty and removed when clean.
-- **UI-7** Create user: the guard applies once any field has been typed into, and is off after a successful create.
+- **UI-7** Create user: the guard applies once **any** editable field differs from empty, each field on its own, including email and initial username. It is off again when every field is back to empty, and after a successful create.
 - **UI-8** No accessibility violations with the dialog open, and with the discard prompt open.
 - **UI-9** Browser, in the dev stack, with each state change approved by the owner:
   - edit a profile, see the list refresh;
   - try to leave with unsaved changes;
   - see a server refusal shown word for word.
+
+### After it lands
+
+- **A status note in `docs/frontend-architecture.md` §12, beside W3** (confirmed by the owner). It says React Hook Form was introduced with USR-C2 as the first data-editing form, consistent with W3's deferred form-library decision. W3 itself is not rewritten: the history is kept and the current state recorded.
 
 ### Not included
 
