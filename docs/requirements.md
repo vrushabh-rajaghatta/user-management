@@ -926,7 +926,7 @@ The specification keeps three timestamp pairs apart on purpose (§6.11): who dec
 | Role | Must exist and be **active**. A retired role cannot receive new assignments |
 | Scope | **Global only in v1.** The API takes no scope input; the command always writes `ScopeType = Global` and no `ScopeId` (spec §6.11: *"Global in V1"*) |
 | `EffectiveFrom` | Optional; defaults to the server's current time. **Must not be in the past.** A backdated start would record access as valid before anyone decided to grant it |
-| `EffectiveTo` | Optional; empty means open-ended (permitted for humans). When supplied, **`EffectiveTo >= EffectiveFrom`** |
+| `EffectiveTo` | Optional; empty means open-ended (permitted for humans). When supplied, **`EffectiveTo > EffectiveFrom`, strictly**: a grant must create a period that can authorise. `2026-10-01 → 2026-12-01` and `2026-10-01 → (none)` are accepted; `2026-10-01 → 2026-10-01` is refused |
 | Reason | **Required and not blank.** Recorded as `AssignmentReason` and on the audit record |
 
 - **Overlap.** The same user, role and scope may not hold two assignments whose effective periods overlap (invariant 8, UR5). The database enforces it, because two concurrent grants would both pass an application check. The violation is translated to the ordinary refusal *"The user already holds this role for this scope in an overlapping period."*
@@ -954,11 +954,43 @@ Revoking only ever moves `EffectiveTo` earlier, never later, and never clears it
 
 There is no suspended state (UR13). Pausing access is a revocation now and a new grant later: two attributable events.
 
+### Three rules about the effective period, deliberately different
+
+| Where | Rule | Why |
+| --- | --- | --- |
+| **Database** (`ck_user_role_effective_period`, frozen UR2) | `EffectiveTo IS NULL OR EffectiveTo >= EffectiveFrom` | Admits the empty period, which revocation needs |
+| **GrantRole** | when `EffectiveTo` is supplied, `EffectiveTo > EffectiveFrom` | A new grant must be able to authorise. An assignment that can never authorise records a decision with no effect |
+| **RevokeRole**, future assignment | sets `EffectiveTo = EffectiveFrom` | Cancelling a grant before it takes effect deliberately produces the empty period |
+
+> **The database's `>=` does not make equal dates valid for GrantRole.** It exists so a revocation can close a future grant before it opens. The command is stricter than the constraint on purpose, and the empty period is reachable only through RevokeRole.
+
 ### The database constraint is relaxed to match the frozen model
 
 The frozen entity workbook defines **UR2 as `CHECK (EffectiveTo IS NULL OR EffectiveTo >= EffectiveFrom)`**. The migrated constraint `ck_user_role_effective_period` is **stricter: `effective_to > effective_from`**. That stricter form makes the empty period impossible, and with it the specification's own example of revoking a future grant.
 
 **This story relaxes the constraint from `>` to `>=` to restore alignment with frozen UR2.** It does not change the business contract to fit an implementation limit: it removes an implementation limit the contract never had. Nothing that the stricter constraint admitted is newly refused.
+
+### Endpoints
+
+**Grant:** `POST /api/users/{userId}/role-assignments`
+
+```json
+{ "roleId": "…", "effectiveFrom": "…", "effectiveTo": "…", "reason": "…" }
+```
+
+`effectiveFrom` and `effectiveTo` are optional. Success is **`201 Created`** with the new assignment's identifier, which revocation and the later read address it by:
+
+```json
+{ "userRoleAssignmentId": "…" }
+```
+
+**No `Location` header**, as `POST /api/users` has none: no single-assignment read exists, and none is invented to satisfy convention.
+
+**Revoke:** `POST /api/role-assignments/{assignmentId}/revoke` with `{ "reason": "…" }`. Success is **`204 No Content`**, as `POST /api/sessions/{sessionId}/revoke` is.
+
+Revocation is addressed by the **assignment**, not by `{userId}/{roleId}`: a user may hold the same role in several periods over time, and the assignment is the thing acted on.
+
+Refusals are `400` with the host's `{ "error": … }` body; no carrier is `401`. A missing required field is refused where the request is bound, as on the existing endpoints.
 
 ### Authorisation
 
@@ -985,7 +1017,7 @@ There is no effective-permission cache: permissions are resolved per request (UR
 ### Acceptance Criteria
 
 - **G1** A human holding `role.grant` grants an active role to an active human; one assignment is written with Global scope, the given or defaulted `EffectiveFrom`, the given `EffectiveTo` or none, `AssignedBy` the administrator, and the reason.
-- **G2** An omitted `EffectiveFrom` is the server's current time; a past `EffectiveFrom` is refused; `EffectiveTo` before `EffectiveFrom` is refused.
+- **G2** An omitted `EffectiveFrom` is the server's current time; a past `EffectiveFrom` is refused; an `EffectiveTo` before **or equal to** `EffectiveFrom` is refused.
 - **G3** A future grant does not authorise before `EffectiveFrom` and does from it; an ended grant does not authorise.
 - **G4** An overlapping grant for the same user, role and scope is refused with the overlap message, and writes nothing.
 - **G5** A retired role, an unknown role, an unknown user, a non-human user and an inactive user are refused, and write nothing.
@@ -998,6 +1030,7 @@ There is no effective-permission cache: permissions are resolved per request (UR
 - **R5** `RoleRevoked` is written with the references and content above, the reason, and the administrator as actor.
 - **A1** A caller without `role.grant` / `role.revoke`, and a non-human caller, are refused and write nothing.
 - **D1** `ck_user_role_effective_period` admits `effective_to = effective_from` and still refuses `effective_to < effective_from`.
+- **E1** Grant is `201` with exactly `{ userRoleAssignmentId }` and no `Location`; revoke is `204` with no body; refusals are `400` with the error body; no carrier is `401`.
 
 ### Not decided here
 
