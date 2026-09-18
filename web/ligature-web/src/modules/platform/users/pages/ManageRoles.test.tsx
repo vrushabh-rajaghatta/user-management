@@ -192,6 +192,39 @@ describe("Manage roles is offered by permission", () => {
     expect(within(menu).queryByRole("menuitem", { name: "Manage roles" })).toBeNull();
   });
 
+  /**
+   * PRV-C1 Amendment 1, S7: exactly the permissions the seeded
+   * security-administrator role confers. The standard Users view, with the
+   * standard per-action gates: the list, Manage roles with Grant and Revoke,
+   * and no user-management action at all.
+   */
+  it("gives a security administrator the Users list with Manage roles as the only row action", async () => {
+    backend();
+    const { user } = await render(
+      READ,
+      ROLE_READ,
+      ROLE_GRANT,
+      ROLE_REVOKE,
+      definePermission("role.manage"),
+      definePermission("securitypolicy.read"),
+      definePermission("securitypolicy.change"),
+    );
+
+    await user.click(await actions());
+    const menu = await screen.findByRole("menu");
+
+    // Asserted once the list has loaded, so its absence is not merely early.
+    expect(screen.queryByRole("link", { name: "New user" })).toBeNull();
+
+    expect(within(menu).getAllByRole("menuitem").map((x) => x.textContent)).toEqual(["Manage roles"]);
+
+    await user.click(within(menu).getByRole("menuitem", { name: "Manage roles" }));
+    const dialog = await screen.findByRole("dialog", { name: "Roles for Vru Raj" });
+
+    expect(await within(dialog).findByRole("button", { name: "Grant role" })).toBeInTheDocument();
+    expect(within(requireRow(dialog, REVIEWER.name, "Active")).getByRole("button", { name: /^Revoke/ })).toBeInTheDocument();
+  });
+
   /** The access reviewer's path: the assignments, and nothing to do with them. */
   it("shows a role.read-only caller the assignments with no Grant and no Revoke", async () => {
     backend();

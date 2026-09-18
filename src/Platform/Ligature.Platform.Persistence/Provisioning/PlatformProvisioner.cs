@@ -503,6 +503,11 @@ public sealed class PlatformProvisioner
             new("security-administrator", "securitypolicy.read"),
             new("security-administrator", "securitypolicy.change"),
 
+            // PRV-C1 Amendment 1: deciding who holds a role needs the user
+            // directory. Visibility only; no other user, identity or session
+            // permission. One-way: see docs/requirements.md.
+            new("security-administrator", "user.read"),
+
             // access-reviewer
             new("access-reviewer", "accessreview.read"),
             new("access-reviewer", "user.read"),
