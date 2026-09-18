@@ -154,7 +154,7 @@ The owner accepts this explicitly. It is a consequence of the provisioning model
 - **S3** In a tenant provisioned before this amendment (simulated by removing only that grant), catalogue synchronisation inserts exactly that one grant and nothing else, and converges. A second run inserts nothing.
 - **S4** One-way: an active database grant that the seed does not list is refused as `GrantMissingFromSeed`, naming it, and nothing is committed. This also closes a gap in PRV-C2's own tests, where F5 was untested.
 - **S5** Through the pipeline, a caller holding only `security-administrator` is authorised for USR-Q1, which requires `user.read`.
-- **S6** Over HTTP, a caller holding only `security-administrator` gets `200` from `GET /api/users`. The same caller is refused (`403`) by:
+- **S6** Over HTTP, a caller holding only `security-administrator` gets `200` from `GET /api/users`. The same caller is refused by each of the following. A permission refusal is `400` with a *"does not have permission"* message (Known Gaps, *Authorization failures are not distinguishable from validation failures*), and the test asserts the message, so a validation `400` cannot pass for a refusal:
   - `POST /api/users` (`user.create`);
   - `POST /api/users/{id}/password-reset` (`user.resetpassword`);
   - `POST /api/users/{id}/activation-link` (`user.create`);
