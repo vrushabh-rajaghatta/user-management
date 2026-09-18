@@ -45,12 +45,15 @@ public sealed class UserProfileIntegrationTests : IClassFixture<ActivationDataba
              WHERE event_type = 'UserProfileChanged' AND entity_id = @id
             """, target.Value);
 
+        // Exactly these members with exactly these values. Compared as JSON
+        // objects: jsonb does not keep key order (it sorts keys by length,
+        // then bytes), so the text order is not something the record states.
         Assert.Equal(
-            """{"FirstName": "John", "LastName": "Leaver", "DisplayName": "John Leaver"}""",
-            record[0]);
+            [("DisplayName", "John Leaver"), ("FirstName", "John"), ("LastName", "Leaver")],
+            Members((string)record[0]!));
         Assert.Equal(
-            """{"FirstName": "Ada", "LastName": "King  Lovelace", "DisplayName": "Ada Lovelace"}""",
-            record[1]);
+            [("DisplayName", "Ada Lovelace"), ("FirstName", "Ada"), ("LastName", "King  Lovelace")],
+            Members((string)record[1]!));
         Assert.Equal(DBNull.Value, record[2]);
         Assert.Equal(admin.Value, record[3]);
     }
@@ -183,6 +186,12 @@ public sealed class UserProfileIntegrationTests : IClassFixture<ActivationDataba
     }
 
     // ================================================================ harness
+
+    /// <summary>A JSON object's members, name and string value, in ordinal name order.</summary>
+    private static List<(string Name, string? Value)> Members(string json)
+        => [.. System.Text.Json.JsonDocument.Parse(json).RootElement.EnumerateObject()
+            .Select(x => (x.Name, x.Value.GetString()))
+            .OrderBy(x => x.Name, StringComparer.Ordinal)];
 
     private async Task<UserId> CallerAsync(string? role)
         => (await PermanentTestCaller.EnsureAsync(_database.ConnectionString, $"usr-c2-{role ?? "unprivileged"}", role)).UserId;
