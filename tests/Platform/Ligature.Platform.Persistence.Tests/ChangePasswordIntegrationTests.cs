@@ -666,6 +666,43 @@ public sealed class ChangePasswordIntegrationTests
     }
 
     /// <summary>
+    /// The clock is read AFTER the lock (docs/architecture.md, "Read the clock
+    /// after the lock"). While the attempt waits at N−1, activity is recorded
+    /// on the session at the real moment of the write — clock_timestamp(), as
+    /// the deactivation test does. The revocation that follows must not be
+    /// dated before it: a clock read before the wait would record the session
+    /// as ended earlier than activity it went on to have.
+    /// </summary>
+    [Fact]
+    public async Task The_revocation_is_dated_after_everything_that_committed_while_the_attempt_waited()
+    {
+        var subject = await SeedAsync();
+        var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
+
+        await ExecuteAsync($"UPDATE user_session SET failed_password_change_attempts = {N - 1} WHERE id = '{current}'");
+
+        await using var holder = await _database.OpenAsync();
+        await using var transaction = await holder.BeginTransactionAsync();
+
+        await HolderExecuteAsync(holder, transaction, $"SELECT 1 FROM app_user WHERE id = '{subject.UserId.Value}' FOR UPDATE");
+
+        var attempt = Task.Run(() => DispatchAsync(subject.UserId, current, Wrong, Fresh));
+
+        await Task.Delay(TimeSpan.FromMilliseconds(750));
+        Assert.False(attempt.IsCompleted, "the attempt did not wait for the user's row lock");
+
+        await HolderExecuteAsync(holder, transaction,
+            $"UPDATE user_session SET last_activity_at = clock_timestamp() WHERE id = '{current}'");
+
+        await transaction.CommitAsync();
+
+        Assert.Equal(ChangePasswordOutcome.SessionEnded, (await attempt).Outcome);
+        Assert.True(
+            await ScalarAsync<bool>($"SELECT revoked_at >= last_activity_at FROM user_session WHERE id = '{current}'"),
+            "the revocation is dated before activity that committed while the attempt waited");
+    }
+
+    /// <summary>
     /// The session is re-checked UNDER the lock. It is revoked while the
     /// attempt waits; the attempt must then answer SessionEnded and count
     /// nothing, rather than act on the session it saw before waiting.
