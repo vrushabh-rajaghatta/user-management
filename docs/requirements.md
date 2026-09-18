@@ -775,7 +775,9 @@ Request body:
 
 The notification is the existing `AccountActivation` type and template, so the message is identical to creation's. Delivery is the Notification pipeline's, unchanged: with no mail configured the row records that no attempt was observed, and a development host with the mail sink writes the message to `.secrets/mail/`.
 
-**Accepted consequence.** A notification already queued for a superseded token may still be sent after the reissue. Its link is refused at activation, because the token it carries is invalidated. This matches CRD-C5 and is accepted, not engineered around.
+**A notification already queued for a superseded token is not rewritten or removed.** Its row stays exactly as it was, and CRD-C7 writes nothing to it. The Notification pipeline decides its fate, unchanged. Its eligibility gate (N15) reads the token immediately before transport, finds it invalidated, and closes the row `NotSent`/`TokenNotLive` without sending.
+
+**Accepted consequence.** The old link can still reach the user only if its send had already passed the gate before the reissue committed. That link is then refused at activation, because the token it carries is invalidated. This is the same window CRD-C5 has, and it is accepted, not engineered around.
 
 ### Acceptance Criteria
 
@@ -783,7 +785,7 @@ The notification is the existing `AccountActivation` type and template, so the m
 - **R2** Every prior unused activation token of the identity, expired or not, is invalidated. After success the identity has exactly one open `Activation` token, the new one.
 - **R3** A superseded link can no longer activate the account; the new link can.
 - **R4** One `TokenInvalidated` per superseded token, referencing the new token as `SupersededBy`, and one `TokenIssued` carrying the reason; the administrator is the actor of each. No other audit record.
-- **R5** One `AccountActivation` notification for the new token, to the user's stored email.
+- **R5** One `AccountActivation` notification for the new token, to the user's stored email. A notification already queued for a superseded token is left as it was, and the eligibility gate no longer finds its token live.
 - **R6** A user who holds a credential is refused.
 - **R7** A non-human user, a user who is not `Active`, a user with no email, a user with zero or several local identities, a user whose only local identity is not `Active`, and an unknown `UserId` are each refused with the same message.
 - **R8** A missing, empty or whitespace-only reason is refused.
