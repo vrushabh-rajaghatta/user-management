@@ -105,7 +105,7 @@ public sealed class RoleAssignmentReaderTests
         {
             var names = (await ReadRolesAsync())
                 .Select(x => x.Name)
-                .Where(x => x.EndsWith(seed.Marker, StringComparison.Ordinal))
+                .Where(x => x == $"de la Cruz {seed.Marker}" || x == $"Delacroix {seed.Marker}")
                 .ToList();
 
             Assert.Equal(

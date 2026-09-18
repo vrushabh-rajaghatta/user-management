@@ -14,4 +14,10 @@ export const UserPermissions = {
   // A session permission, used here because signing a user out everywhere is
   // started from the Users table. No sessions module exists to own it yet.
   revokeSessions: definePermission("session.revoke"),
+
+  // Role assignment (AUT-C1, AUT-C2, AUT-Q2), started from the Users table. No
+  // roles module exists to own them yet.
+  readRoles: definePermission("role.read"),
+  grantRoles: definePermission("role.grant"),
+  revokeRoles: definePermission("role.revoke"),
 } as const;

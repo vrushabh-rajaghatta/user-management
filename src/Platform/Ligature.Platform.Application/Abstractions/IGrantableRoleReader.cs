@@ -2,9 +2,9 @@ using Ligature.Platform.Application.Users.Queries.GrantableRoles;
 
 namespace Ligature.Platform.Application.Abstractions;
 
-/// <summary>RED STUB.</summary>
+/// <summary>The grantable-role list's read. Not AUT-Q5.</summary>
 public interface IGrantableRoleReader
 {
-    /// <summary>The active roles, in the contract's order.</summary>
+    /// <summary>The active roles, ordered by name under ICU "unicode", then id.</summary>
     Task<IReadOnlyList<GrantableRole>> ReadAsync(CancellationToken cancellationToken);
 }

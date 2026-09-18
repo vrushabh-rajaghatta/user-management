@@ -153,9 +153,9 @@ public sealed class UserRole : Entity<UserRoleId>
             createdBy);
     }
 
-    /// <summary>AUT-Q2. RED STUB.</summary>
+    /// <summary>Where this assignment stands at <paramref name="now"/> (AUT-Q2).</summary>
     public RoleAssignmentState StateAt(DateTimeOffset now)
-        => throw new NotImplementedException("AUT-Q2 is not implemented.");
+        => RoleAssignmentStates.At(EffectiveFrom, EffectiveTo, RevokedAt, now);
 
     public void Revoke(
         DateTimeOffset revokedAt,

@@ -85,6 +85,12 @@ public static class DependencyInjection
         // USR-Q1 — the user list read.
         services.AddScoped<IUserListReader, UserListReader>();
 
+        // AUT-Q2 — a user's role assignments.
+        services.AddScoped<IUserRoleAssignmentReader, UserRoleAssignmentReader>();
+
+        // The grantable-role list (a Story 2 dependency; not AUT-Q5).
+        services.AddScoped<IGrantableRoleReader, GrantableRoleReader>();
+
         // CRD-C1
         services.AddSingleton<IPasswordHasher, PasswordHasher>();
 

@@ -149,7 +149,18 @@ async function openManageRoles(...codes: PermissionCode[]) {
 const rowFor = (dialog: HTMLElement, roleName: string, state: State) =>
   within(within(dialog).getByRole("table", { name: "Role assignments" }))
     .getAllByRole("row")
-    .find((row) => row.textContent?.includes(roleName) && row.textContent.includes(state));
+    .find((row) => row.textContent.includes(roleName) && row.textContent.includes(state));
+
+/** The row, or a failure naming which one was missing. */
+function requireRow(dialog: HTMLElement, roleName: string, state: State): HTMLElement {
+  const row = rowFor(dialog, roleName, state);
+
+  if (row === undefined) {
+    throw new Error(`No ${state} ${roleName} row in the assignments.`);
+  }
+
+  return row;
+}
 
 // ---------------------------------------------------------------- who is offered what
 
@@ -215,9 +226,8 @@ describe("Manage roles is offered by permission", () => {
       [USER_ADMIN.name, "Ended", false],
       [REVIEWER.name, "Revoked", false],
     ] as const) {
-      const row = rowFor(dialog, roleName, state);
-      expect(row, `${roleName} ${state}`).toBeDefined();
-      expect(within(row!).queryByRole("button", { name: `Revoke ${roleName}` }) !== null).toBe(offered);
+      const row = requireRow(dialog, roleName, state);
+      expect(within(row).queryByRole("button", { name: `Revoke ${roleName}` }) !== null).toBe(offered);
     }
 
     expect(within(dialog).queryByRole("button", { name: "Grant role" })).toBeNull();
@@ -247,7 +257,7 @@ describe("the assignments", () => {
     backend();
     const { dialog } = await openManageRoles();
 
-    const row = rowFor(dialog, REVIEWER.name, "Active")!;
+    const row = requireRow(dialog, REVIEWER.name, "Active");
 
     expect(within(row).getByText("Active")).toBeInTheDocument();
     expect(within(row).getByText(/Ada Lovelace/)).toBeInTheDocument();
@@ -357,7 +367,7 @@ describe("revoking a role", () => {
     const { dialog, user } = await openManageRoles(ROLE_REVOKE);
     const readsBefore = state.reads.length;
 
-    await user.click(within(rowFor(dialog, USER_ADMIN.name, "Future")!).getByRole("button", { name: `Revoke ${USER_ADMIN.name}` }));
+    await user.click(within(requireRow(dialog, USER_ADMIN.name, "Future")).getByRole("button", { name: `Revoke ${USER_ADMIN.name}` }));
 
     const confirm = await screen.findByRole("dialog", { name: `Revoke ${USER_ADMIN.name} from Vru Raj` });
 
@@ -382,7 +392,7 @@ describe("revoking a role", () => {
     const state = backend();
     const { dialog, user } = await openManageRoles(ROLE_REVOKE);
 
-    await user.click(within(rowFor(dialog, REVIEWER.name, "Active")!).getByRole("button", { name: `Revoke ${REVIEWER.name}` }));
+    await user.click(within(requireRow(dialog, REVIEWER.name, "Active")).getByRole("button", { name: `Revoke ${REVIEWER.name}` }));
 
     const confirm = await screen.findByRole("dialog", { name: `Revoke ${REVIEWER.name} from Vru Raj` });
 

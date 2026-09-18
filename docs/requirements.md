@@ -1046,7 +1046,7 @@ There is no effective-permission cache: permissions are resolved per request (UR
 
 **Requirement ID:** `AUT-Q2` GetUserRoleAssignments, as the UM command catalogue defines it. The role list below has **no** requirement ID of its own (see *The grantable-role list is not AUT-Q5*).
 
-**Status:** Approved and frozen, 2026-09-18 by owner decision (D1–D8 and two clarifications). Not yet implemented. Story 2 of two: the read and the UI over AUT-C1 / AUT-C2.
+**Status:** Approved and frozen, 2026-09-18 by owner decision (D1–D8 and two clarifications). Implemented: `UserRoleAssignmentsQueryHandler` and `GrantableRolesQueryHandler`, with the state derived by `RoleAssignmentStates` (which `UserRole.StateAt` also uses), and the Manage roles dialog. Story 2 of two: the read and the UI over AUT-C1 / AUT-C2.
 
 ### Requirement
 

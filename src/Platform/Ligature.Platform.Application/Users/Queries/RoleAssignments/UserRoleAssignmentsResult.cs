@@ -2,10 +2,14 @@ using Ligature.Platform.Domain.Users;
 
 namespace Ligature.Platform.Application.Users.Queries.RoleAssignments;
 
-/// <summary>AUT-Q2. RED STUB.</summary>
+/// <summary>AUT-Q2's response: one user's assignments, latest start first.</summary>
 public sealed record UserRoleAssignmentsResult(IReadOnlyList<UserRoleAssignment> Assignments);
 
-/// <summary>AUT-Q2. RED STUB.</summary>
+/// <summary>
+/// One assignment as served: the stored facts, including the full provenance
+/// (who granted and revoked it, when and why — the reason this read exists),
+/// and the State derived at the instant of the read.
+/// </summary>
 public sealed record UserRoleAssignment(
     UserRoleId AssignmentId,
     RoleId RoleId,
@@ -20,10 +24,10 @@ public sealed record UserRoleAssignment(
     AssignmentActor? RevokedBy,
     string? RevocationReason);
 
-/// <summary>AUT-Q2. RED STUB.</summary>
+/// <summary>An administrator named on an assignment: who granted or revoked it.</summary>
 public sealed record AssignmentActor(UserId UserId, string DisplayName);
 
-/// <summary>AUT-Q2. RED STUB: an assignment as stored, before its state is derived.</summary>
+/// <summary>An assignment as STORED: facts only. It has no state, because state is never stored.</summary>
 public sealed record UserRoleAssignmentRecord(
     UserRoleId AssignmentId,
     RoleId RoleId,
