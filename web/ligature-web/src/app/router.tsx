@@ -1,5 +1,6 @@
 import { createBrowserRouter, type RouteObject } from "react-router";
-import { accountRoutes } from "@/modules/platform/account/routes";
+import { MyAccountLink } from "@/modules/platform/account";
+import { accountRoutes, myAccountRoutes } from "@/modules/platform/account/routes";
 import { SIGN_IN_PATH, SignOutButton } from "@/modules/platform/auth";
 import { authRoutes } from "@/modules/platform/auth/routes";
 import { homeRoutes } from "@/modules/platform/home/routes";
@@ -27,6 +28,14 @@ import { RouteError } from "@/shared/layout/RouteError";
 /** The shell's areas, grouped. Business modules join a "Modules" group when one exists. */
 const navigation: readonly NavigationGroup[] = [{ label: "Platform", areas: [administrationArea] }];
 
+/** The caller's own controls, in the shell's footer: each module fills the slot with its own. */
+const accountActions = (
+  <>
+    <MyAccountLink />
+    <SignOutButton />
+  </>
+);
+
 export function composeRoutes(publicRoutes: RouteObject[], privateRoutes: RouteObject[]): RouteObject[] {
   const routes: RouteObject[] = [];
 
@@ -42,7 +51,7 @@ export function composeRoutes(publicRoutes: RouteObject[], privateRoutes: RouteO
       element: <RequireAuth signInPath={SIGN_IN_PATH} />,
       children: [
         {
-          element: <AppShell actions={<SignOutButton />} navigation={navigation} />,
+          element: <AppShell actions={accountActions} navigation={navigation} />,
           children: [{ errorElement: <RouteError />, children: privateRoutes }],
         },
       ],
@@ -57,7 +66,10 @@ export function composeRoutes(publicRoutes: RouteObject[], privateRoutes: RouteO
   return routes;
 }
 
-export const appRoutes = composeRoutes([...authRoutes, ...accountRoutes], [...homeRoutes, ...administrationRoutes(userRoutes)]);
+export const appRoutes = composeRoutes(
+  [...authRoutes, ...accountRoutes],
+  [...homeRoutes, ...myAccountRoutes, ...administrationRoutes(userRoutes)],
+);
 
 export function createAppRouter() {
   return createBrowserRouter(appRoutes);

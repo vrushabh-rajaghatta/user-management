@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { Link, type RouteObject } from "react-router";
 import { describe, expect, it } from "vitest";
@@ -42,6 +42,46 @@ function Form() {
       {closed ? <p>Closed</p> : null}
       {guard.prompt}
     </main>
+  );
+}
+
+/**
+ * A form whose link lives in something that closes when the link is followed,
+ * as the primary sidebar does on a phone: by the time the person chooses Keep
+ * editing, the element they were on no longer exists.
+ */
+function FormBesideSheet() {
+  const [value, setValue] = useState("");
+  const [sheetOpen, setSheetOpen] = useState(true);
+  const guard = useUnsavedChangesGuard(value !== "");
+
+  return (
+    <>
+      {sheetOpen ? (
+        <nav aria-label="Sheet">
+          <Link
+            to="/elsewhere"
+            onClick={() => {
+              setSheetOpen(false);
+            }}
+          >
+            Leave from the sheet
+          </Link>
+        </nav>
+      ) : null}
+      <main id="main" tabIndex={-1}>
+        <label>
+          Name
+          <input
+            value={value}
+            onChange={(event) => {
+              setValue(event.target.value);
+            }}
+          />
+        </label>
+        {guard.prompt}
+      </main>
+    </>
   );
 }
 
@@ -120,6 +160,51 @@ describe("the unsaved-changes guard", () => {
     await user.click(await screen.findByRole("button", { name: "Discard" }));
 
     expect(await screen.findByRole("heading", { name: "Elsewhere" })).toBeInTheDocument();
+  });
+
+  /**
+   * Found in the My account browser check (UI-10), at phone width: the link
+   * followed was inside the sidebar sheet, which closed as it was followed, so
+   * Keep editing had nowhere to return focus and left it on the document body.
+   * With the element gone, focus goes back into the main content, where the
+   * skip link sends it.
+   */
+  it("returns focus to the main content when the element the person was on has gone", async () => {
+    const { user, router } = renderWithApp(
+      [
+        { path: "/form", element: <FormBesideSheet /> },
+        { path: "/elsewhere", element: <h1>Elsewhere</h1> },
+      ],
+      { path: "/form" },
+    );
+
+    // Filled without ever holding focus, so nothing but the link could have
+    // been where the person was — as in the browser, where focus was in the
+    // sheet.
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Ada" } });
+
+    // By keyboard, as the person this protects would: focus is ON the link
+    // when it is followed, and the link then leaves the document.
+    screen.getByRole("link", { name: "Leave from the sheet" }).focus();
+    await user.keyboard("{Enter}");
+
+    const prompt = await screen.findByRole("dialog", { name: "Discard changes?" });
+    expect(screen.queryByRole("link", { name: "Leave from the sheet" })).toBeNull();
+
+    await user.click(within(prompt).getByRole("button", { name: "Keep editing" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    expect(router.state.location.pathname).toBe("/form");
+    expect(screen.getByLabelText("Name")).toHaveValue("Ada");
+    // Into the main content, not onto the body. The dialog library, handed a
+    // container that is not itself tabbable, moves on to the first tabbable
+    // element inside it, which puts the person back in the form.
+    await waitFor(() => {
+      expect(document.activeElement).not.toBe(document.body);
+      expect(screen.getByRole("main").contains(document.activeElement)).toBe(true);
+    });
   });
 
   it("holds beforeunload only while dirty", async () => {

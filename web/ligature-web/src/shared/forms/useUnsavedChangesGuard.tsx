@@ -23,6 +23,13 @@ import { ConfirmAction } from "@/shared/components/ConfirmAction";
  * — the Cancel button, a field, the link that was followed — so a keyboard
  * user is back where they were. Without it the prompt left focus on the
  * document body (found in the USR-C2 browser check, UI-9).
+ *
+ * If that element has GONE by then, focus goes back into the main content,
+ * the shell's `#main`, where the skip link sends it; the dialog moves it on to
+ * the first tabbable element there, which returns the person to the form. On a
+ * phone the link followed sits in the sidebar sheet, which closes as the link
+ * is followed, so there is nothing else to return to (found in the My account
+ * browser check, UI-10).
  */
 export interface UnsavedChangesGuard {
   /** Runs `proceed` now when clean; asks "Discard changes?" first when dirty. */
@@ -64,6 +71,12 @@ export function useUnsavedChangesGuard(dirty: boolean): UnsavedChangesGuard {
   }, [dirty]);
 
   function keepEditing() {
+    const origin = returnFocus.current;
+
+    if (origin === null || !origin.isConnected || origin === document.body) {
+      returnFocus.current = document.getElementById("main");
+    }
+
     if (blocked) {
       blocker.reset();
     }

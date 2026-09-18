@@ -107,7 +107,12 @@ interface AppShellProps {
  * The shell for signed-in pages, built from shadcn's sidebar (§5, §14).
  *
  * The skip link comes first, so keyboard users can bypass the navigation on
- * every page (WCAG 2.4.1). The header carries a SidebarTrigger at every width:
+ * every page (WCAG 2.4.1).
+ *
+ * EVERYTHING IS IN A LANDMARK, audited as a whole page: the brand in the banner,
+ * the areas in the "Main" navigation, the caller's name and own controls (My
+ * account, Sign out) in an "Account" navigation, and the page in main. Found by
+ * the My account story; a container-only audit never runs axe's region rule. The header carries a SidebarTrigger at every width:
  * below md it opens the sheet, above it restores a sidebar collapsed with
  * Ctrl/⌘+B. Only data the backend supplies is shown — no search, tenant, role
  * subtitle or counts.
@@ -126,17 +131,21 @@ export function AppShell({ actions, navigation }: AppShellProps) {
       </a>
       <Sidebar>
         <SidebarHeader>
-          <Brand />
+          <header>
+            <Brand />
+          </header>
         </SidebarHeader>
         <SidebarContent>
           <PrimaryNavigation groups={navigation ?? []} />
         </SidebarContent>
         {displayName === undefined && actions === undefined ? null : (
           <SidebarFooter>
-            {displayName === undefined ? null : (
-              <p className="truncate px-2 text-sm font-medium">{displayName}</p>
-            )}
-            {actions}
+            <nav aria-label="Account" className="flex flex-col gap-2">
+              {displayName === undefined ? null : (
+                <p className="truncate px-2 text-sm font-medium">{displayName}</p>
+              )}
+              {actions}
+            </nav>
           </SidebarFooter>
         )}
       </Sidebar>

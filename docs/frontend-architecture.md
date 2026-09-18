@@ -205,6 +205,14 @@ export const userRoutes: RouteObject[] = [
 >
 > **`/users/new` moved to `/admin/users/new`.** It was a client-chosen path, never a backend contract, and nothing linked to it; no redirect is kept.
 
+> **Amended (My account). The caller's own controls live in the shell's footer, not in the navigation.**
+>
+> The footer carries **My account** beside **Sign out** for every signed-in caller. `app/` fills the footer slot with each module's control, as it already did with Sign out: `MyAccountLink` from `platform/account`, `SignOutButton` from `platform/auth`. The shell still imports no module.
+>
+> - **`/account` is a signed-in, client-chosen path.** It is composed into the application shell behind `RequireAuth`. The account module's public routes (`/activate`, `/forgot-password`, `/reset-password`) stay in the public shell. No email links to `/account`, so it is not a backend contract path.
+> - **The sidebar stays permission-driven areas only.** A page every caller may reach is not an area, and adding one would give the primary navigation an entry no permission governs.
+> - **Every part of the shell is in a landmark** (§15): the brand in the banner, the areas in the *Main* navigation, the caller's name and own controls in an *Account* navigation, and the page in `main`.
+
 ---
 
 ## 6. API layering
@@ -677,6 +685,8 @@ Accessibility is tested at the level of components, not page by page (§16): if 
 > - **Theme tokens — the token contrast test.** A deterministic invariant: token pair → contrast ratio → WCAG threshold, in both themes, for every surface a token is used on. A required token that is missing fails the test. It proves the tokens; it does not prove every rendered combination.
 >
 > The keyboard focus indicator is an application-level solid outline in `var(--ring)`, because a vendored primitive's translucent ring cannot meet 3:1. `--border` is **decorative** — dividers and outlines of containers that are identified by other means — and is exempt from the 3:1 non-text requirement; anything that is the only visible boundary of a control uses `--input`, which is not exempt.
+
+> **Amended (My account). Shells are audited as a whole page.** axe applies its *region* rule, *all content is contained by landmarks*, only when it audits the page. Every earlier shell test audited the render container, so the rule never ran. Audited as a page, the brand, the caller's display name and the footer controls were outside every landmark. That was true before My account added a link there. The shell now places each in one (§5, *Amended (My account)*). `app/accessibility.test.tsx` audits `document.body` for callers whose permissions are unknown, empty, or include `user.read`, with the caller's name shown.
 
 ---
 
