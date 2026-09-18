@@ -175,7 +175,8 @@ public sealed class UserManagementImmutabilityTests : IAsyncLifetime
     /// </summary>
     [Theory]
     [InlineData("app_user", "display_name", "'A New Display Name'")]
-    [InlineData("app_user", "status", "'Inactive'")]
+    // status moves only with its deactivation stamp (USR-C4/C5, D12).
+    [InlineData("app_user", "status", "'Inactive', \"deactivated_at\" = now(), \"deactivated_by\" = '00000000-0000-0000-0000-000000000001'")]
     [InlineData("user_identity", "username", "'a-new-username'")]
     [InlineData("credential", "password_hash", "'a-rehashed-value'")]
     [InlineData("credential", "failed_attempt_count", "3")]

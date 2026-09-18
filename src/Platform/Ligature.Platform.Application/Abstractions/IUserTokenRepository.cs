@@ -73,4 +73,15 @@ public interface IUserTokenRepository
         TokenType tokenType,
         DateTimeOffset now,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// USR-C4 (D7): invalidates every outstanding (unused, not invalidated)
+    /// activation and password-reset token of every identity the user holds,
+    /// in the caller's transaction. Returns how many were invalidated. No
+    /// TokenInvalidated is emitted for these (D13).
+    /// </summary>
+    Task<int> InvalidateOutstandingForUserAsync(
+        UserId userId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken);
 }

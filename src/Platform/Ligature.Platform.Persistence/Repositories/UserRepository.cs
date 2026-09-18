@@ -84,4 +84,7 @@ public sealed class UserRepository : IUserRepository
         return await _dbContext.Set<User>()
             .FirstOrDefaultAsync(x => x.Id == userId, cancellationToken);
     }
+
+    public Task<User?> FindForUpdateAsync(UserId userId, CancellationToken cancellationToken)
+        => throw new NotImplementedException();
 }

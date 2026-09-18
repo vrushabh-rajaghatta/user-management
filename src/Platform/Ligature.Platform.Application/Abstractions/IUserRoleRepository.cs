@@ -14,4 +14,12 @@ public interface IUserRoleRepository
     Task<UserRole?> FindAsync(
         UserRoleId assignmentId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Every assignment the user holds, whatever its state, tracked. USR-C4
+    /// passes each to UserRole.Revoke, which decides what revocation means.
+    /// </summary>
+    Task<IReadOnlyList<UserRole>> FindForUserAsync(
+        UserId userId,
+        CancellationToken cancellationToken);
 }

@@ -157,6 +157,13 @@ UserId createdBy,
         Status = UserStatus.Inactive;
         Deactivation = deactivation;
     }
+    /// <summary>
+    /// USR-C5 (D5): reactivates this identity only if it carries exactly the
+    /// user's deactivation stamp. Stub — not yet implemented.
+    /// </summary>
+    public bool ReactivateWith(DeactivationStamp userDeactivation)
+        => throw new NotImplementedException();
+
     public void Reactivate()
     {
         if (Status == UserStatus.Active)

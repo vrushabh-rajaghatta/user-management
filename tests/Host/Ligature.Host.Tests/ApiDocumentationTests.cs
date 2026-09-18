@@ -269,6 +269,8 @@ public sealed class ApiDocumentationTests
                      "/api/users/{userId}/activation-link",
                      "/api/users/{userId}/role-assignments",
                      "/api/role-assignments/{assignmentId}/revoke",
+                     "/api/users/{userId}/deactivate",
+                     "/api/users/{userId}/reactivate",
                  })
         {
             var requirements = paths.GetProperty(route).GetProperty("post")

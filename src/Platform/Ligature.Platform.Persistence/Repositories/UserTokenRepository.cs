@@ -156,4 +156,7 @@ public sealed class UserTokenRepository : IUserTokenRepository
             ? new UserIdentityId(identities[0])
             : null;
     }
+
+    public Task<int> InvalidateOutstandingForUserAsync(UserId userId, DateTimeOffset now, CancellationToken cancellationToken)
+        => throw new NotImplementedException();
 }

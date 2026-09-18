@@ -129,6 +129,7 @@ public sealed class SignInCredentialMutationTests
 
     private sealed class SingleIdentityRepository(UserIdentity identity) : IUserIdentityRepository
     {
+        public Task<IReadOnlyList<UserIdentity>> FindByUserIdAsync(UserId userId, CancellationToken cancellationToken) => throw new NotImplementedException();
         public Task<bool> ExistsWithUsernameAsync(
             string username, CancellationToken cancellationToken)
             => Task.FromResult(username == identity.Username);
@@ -155,6 +156,7 @@ public sealed class SignInCredentialMutationTests
 
     private sealed class SingleUserRepository(User user) : IUserRepository
     {
+        public Task<User?> FindForUpdateAsync(UserId userId, CancellationToken cancellationToken) => throw new NotImplementedException();
         public Task<bool> ExistsActiveHumanWithEmailAsync(
             EmailAddress email, CancellationToken cancellationToken)
             => Task.FromResult(false);

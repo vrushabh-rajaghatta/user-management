@@ -38,4 +38,7 @@ public sealed class UserRoleRepository : IUserRoleRepository
         return await _dbContext.Set<UserRole>()
             .FirstOrDefaultAsync(x => x.Id == assignmentId, cancellationToken);
     }
+
+    public Task<IReadOnlyList<UserRole>> FindForUserAsync(UserId userId, CancellationToken cancellationToken)
+        => throw new NotImplementedException();
 }

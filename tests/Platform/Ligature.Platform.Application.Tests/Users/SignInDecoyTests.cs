@@ -104,6 +104,7 @@ public sealed class SignInDecoyTests
 
     private sealed class EmptyIdentityRepository : IUserIdentityRepository
     {
+        public Task<IReadOnlyList<UserIdentity>> FindByUserIdAsync(UserId userId, CancellationToken cancellationToken) => throw new NotImplementedException();
         public Task<bool> ExistsWithUsernameAsync(
             string username, CancellationToken cancellationToken)
             => Task.FromResult(false);
@@ -130,6 +131,7 @@ public sealed class SignInDecoyTests
 
     private sealed class EmptyUserRepository : IUserRepository
     {
+        public Task<User?> FindForUpdateAsync(UserId userId, CancellationToken cancellationToken) => throw new NotImplementedException();
         public Task<bool> ExistsActiveHumanWithEmailAsync(
             EmailAddress email, CancellationToken cancellationToken)
             => Task.FromResult(false);

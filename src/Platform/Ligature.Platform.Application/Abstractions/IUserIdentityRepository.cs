@@ -84,4 +84,9 @@ public interface IUserIdentityRepository
     Task<UserIdentity?> FindAsync(
         UserIdentityId userIdentityId,
         CancellationToken cancellationToken);
+
+    /// <summary>Every identity the user holds, of every type, tracked (USR-C4, USR-C5).</summary>
+    Task<IReadOnlyList<UserIdentity>> FindByUserIdAsync(
+        UserId userId,
+        CancellationToken cancellationToken);
 }

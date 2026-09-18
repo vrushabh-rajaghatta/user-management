@@ -18,4 +18,13 @@ public interface IUserRepository
     Task<User?> FindAsync(
         UserId userId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads a user under a row lock (SELECT ... FOR UPDATE), tracked, inside
+    /// the caller's transaction. USR-C4, USR-C5 and AUT-C1 take this lock
+    /// before checking status, so a grant cannot race a deactivation (D6).
+    /// </summary>
+    Task<User?> FindForUpdateAsync(
+        UserId userId,
+        CancellationToken cancellationToken);
 }

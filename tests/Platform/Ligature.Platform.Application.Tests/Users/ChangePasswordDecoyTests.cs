@@ -170,6 +170,7 @@ public sealed class ChangePasswordDecoyTests
 
     private sealed class OneIdentityRepository(UserIdentity identity) : IUserIdentityRepository
     {
+        public Task<IReadOnlyList<UserIdentity>> FindByUserIdAsync(UserId userId, CancellationToken cancellationToken) => throw new NotImplementedException();
         public Task<bool> ExistsWithUsernameAsync(string username, CancellationToken cancellationToken)
             => Task.FromResult(false);
 

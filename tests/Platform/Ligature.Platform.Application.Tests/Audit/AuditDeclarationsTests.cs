@@ -3,7 +3,9 @@ using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
+using Ligature.Platform.Application.Users.Commands.DeactivateUser;
 using Ligature.Platform.Application.Users.Commands.GrantRole;
+using Ligature.Platform.Application.Users.Commands.ReactivateUser;
 using Ligature.Platform.Application.Users.Commands.RevokeRole;
 using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
@@ -170,6 +172,35 @@ public sealed class AuditDeclarationsTests
     }
 
     /// <summary>
+    /// USR-C4: the cascade's four events, and deliberately NOT TokenInvalidated.
+    /// Its frozen definition requires a SupersededBy token and deactivation has
+    /// none (D13), so the invalidated tokens are recorded as state only.
+    /// </summary>
+    [Fact]
+    public void USR_C4_declares_the_cascade_and_not_TokenInvalidated()
+    {
+        var declaration = AuditDeclarations.For(typeof(DeactivateUserCommand));
+
+        Assert.Equal("UserManagement", declaration!.OwningContext);
+        Assert.Equal(
+            ["IdentityDeactivated", "RoleRevoked", "SessionRevoked", "UserDeactivated"],
+            declaration.Codes.Order(StringComparer.Ordinal));
+        Assert.DoesNotContain("TokenInvalidated", declaration.Codes);
+    }
+
+    /// <summary>USR-C5: the user and each identity it returns; nothing is restored.</summary>
+    [Fact]
+    public void USR_C5_declares_UserReactivated_and_IdentityReactivated()
+    {
+        var declaration = AuditDeclarations.For(typeof(ReactivateUserCommand));
+
+        Assert.Equal("UserManagement", declaration!.OwningContext);
+        Assert.Equal(
+            ["IdentityReactivated", "UserReactivated"],
+            declaration.Codes.Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>
     /// SES-C1 is the command that needs both write paths and both actors.
     /// </summary>
     [Fact]
@@ -212,6 +243,7 @@ public sealed class AuditDeclarationsTests
                 typeof(AdminResetPasswordCommand), typeof(ChangePasswordCommand),
                 typeof(ReissueActivationLinkCommand),
                 typeof(GrantRoleCommand), typeof(RevokeRoleCommand),
+                typeof(DeactivateUserCommand), typeof(ReactivateUserCommand),
                 typeof(UnlockAccountCommand),
                 typeof(RevokeSessionCommand), typeof(RevokeUserSessionsCommand),
                 typeof(SignOutEverywhereCommand),

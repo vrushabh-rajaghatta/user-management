@@ -176,4 +176,7 @@ public sealed class UserIdentityRepository : IUserIdentityRepository
             .FirstOrDefaultAsync(
                 x => x.Id == userIdentityId, cancellationToken);
     }
+
+    public Task<IReadOnlyList<UserIdentity>> FindByUserIdAsync(UserId userId, CancellationToken cancellationToken)
+        => throw new NotImplementedException();
 }
