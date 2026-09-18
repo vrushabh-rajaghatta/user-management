@@ -1984,7 +1984,7 @@ The section says in one sentence what each action does. It lists no sessions, be
 
 ## CRD-C4 — limiting current-password attempts per session
 
-**Status:** Draft, 2026-09-18. The owner has decided L1–L7. The mechanism (*How it is built*) and L8 await the owner's confirmation before this is frozen. It closes the Known Gap *CRD-C4 does not limit current-password attempts*, whose M1 restatement made it a separate security decision.
+**Status:** Contract frozen 2026-09-18 by owner decision (L1–L8, and the mechanism under *How it is built*). It closes the Known Gap *CRD-C4 does not limit current-password attempts*, whose M1 restatement made it a separate security decision.
 
 ### Requirement
 
@@ -2003,7 +2003,7 @@ This complements A5. A **successful** password change ends the other sessions. *
 | **L5** | **The new controlled revocation code is `PasswordChangeAttemptsExceeded`**, recorded as change control. The revocation is audited as `SessionRevoked`, with the account holder as actor and the code in Before/After. The wrong attempts themselves stay unaudited, consistent with CRD-C4 and AUD-D42. |
 | **L6** | **The counter is `user_session.FailedPasswordChangeAttempts`**: an `INTEGER NOT NULL DEFAULT 0`, with `CHECK (>= 0)`. It belongs to the session, because the threat is a compromised session, not a compromised credential. It is purged with the session. |
 | **L7** | **No UI change.** A `401` already means local sign-out, then sign-in (My account, M9). There is no special explanation in this story. |
-| **L8** | *Proposed, awaiting the owner:* **a refusal because the credential is locked counts too.** Today a locked credential and a wrong password return the same message and pay the same hash cost, so time does not tell them apart. If only a wrong password wrote the counter, the extra write would make the two distinguishable by timing. Counting both keeps them alike. A locked credential cannot be changed in any case, so a session repeatedly trying is just as suspicious. |
+| **L8** | **A refusal because the credential is locked counts too.** This is for side-channel consistency. Today a locked credential and a wrong password return the same message and pay the same hash cost, so time does not tell them apart. If only a wrong password wrote the counter, the extra write would make the two distinguishable by timing. Counting both keeps them alike. A locked credential cannot be changed in any case, so a session repeatedly trying is just as suspicious. |
 
 ### What counts, what resets
 
@@ -2017,10 +2017,18 @@ This complements A5. A **successful** password change ends the other sessions. *
 
 "Consecutive" means consecutive **within the session**. A refusal of the new password proves knowledge of the current one, but it is not a success, so it neither counts nor resets.
 
-### How it is built (for confirmation)
+**The counter's scope.** The counter represents consecutive failed current-password attempts **within the authenticated session**. It is not an account-wide counter and does not contribute to credential lockout. `MaxFailedLoginAttempts` is shared as the threshold (L2), but this is **not** a second account-lockout mechanism.
+
+**CRD-C4 does not produce `AccountLocked`.** The only producer of `AccountLocked` remains SES-C1, sign-in.
+
+### How it is built
+
+**The invariant:** *a failed current-password attempt that is counted must commit the counter increment, even though the command itself is refused.*
 
 1. **The refusal must commit.** CRD-C4 refuses today by throwing inside its transaction, which would roll the counter back with everything else. The wrong-password and locked branches instead **return an outcome**: `Refused` or `SessionEnded`. The transaction then commits the counter, and the revocation and its record with it. The endpoint maps `Refused` to the unchanged uniform `400`, and `SessionEnded` to `401` with the cookie cleared. The other refusals (no identity, not local, not active; the new password's policy and reuse checks) stay as they are.
-2. **Atomic: exactly one request crosses N.** The handler first takes the **`app_user` row lock**, using the established *Serialising commands on one user* pattern (`IUserRepository.FindForUpdateAsync`, `docs/architecture.md`). It reads the clock after the lock, then loads the session and **re-checks that it is still active**. Two requests on one session at N−1 are therefore serialised: the first crosses N and revokes the session, and the second finds it revoked and answers `401` without counting. The same lock orders a wrong attempt against a concurrent success, and against USR-C4's cascade.
+2. **Atomic: exactly one request crosses N.** The handler first takes the **`app_user` row lock**, using the established *Serialising commands on one user* pattern (`IUserRepository.FindForUpdateAsync`, `docs/architecture.md`). It reads the clock after the lock, then loads the session and **re-checks that it is still active**. Two requests on one session at N−1 are therefore serialised: the first crosses N and revokes the session, and the second finds it revoked and answers `401` without counting. The same lock orders a wrong attempt against a concurrent success, and against USR-C4's cascade. **The same serialisation point governs competing password-change attempts and competing state-changing operations on the user.**
+
+   **The lock must actually be held by the database transaction for the whole decision and update sequence:** lock, then clock, then session re-check, then credential evaluation, then increment or revoke, then commit. A lock call that exists is not the guarantee. The PostgreSQL integration tests (AC-8) must prove the behaviour under real concurrent transactions, not assert that the lock is requested.
 3. **The revocation** uses `UserSession.Revoke(now, caller, PasswordChangeAttemptsExceeded)` and the shared `SessionRevocations.Declare`. The actor is the account holder. The audit Reason is the explanation *"Too many incorrect current passwords while changing the password"*. The code reaches the trail through Before/After (R1).
 4. **Audit declarations.** `ChangePasswordCommand` already declares `SessionRevoked` (A5), so no catalogue seed changes and `AuditEventCatalogue.Version` is not bumped.
 5. **The migration** adds the column with its default and CHECK. Existing sessions start at 0.
@@ -2041,7 +2049,7 @@ This complements A5. A **successful** password change ends the other sessions. *
 - **AC-5** Reset: N−1 wrong attempts, then a success, sets the counter to 0. N−1 further wrong attempts do not revoke.
 - **AC-6** A correct current password with a refused new password (policy or reuse) leaves the counter unchanged.
 - **AC-7** (L8) A refusal because the credential is locked counts, and the Nth revokes.
-- **AC-8** Concurrency, against PostgreSQL:
+- **AC-8** Concurrency, against PostgreSQL, with real concurrent transactions:
   - at N−1, two concurrent wrong attempts on one session produce **exactly one** revocation and **exactly one** `SessionRevoked`, and both answer `401`;
   - at N−2, two concurrent wrong attempts both count, and exactly one crosses.
 - **AC-9** The database refuses a negative `FailedPasswordChangeAttempts` (CHECK).
