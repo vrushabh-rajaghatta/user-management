@@ -153,8 +153,11 @@ describe("the signed-in shell, audited as a whole page", () => {
 
     await screen.findByRole("heading", { level: 1, name: "Home" });
 
-    const banner = screen.getByRole("banner");
-    expect(within(banner).getByRole("link", { name: "Ligature" })).toBeInTheDocument();
+    // Testing Library's role mapping also counts the page heading's <header>,
+    // which is inside main and so is not a banner to a browser or to axe; the
+    // assertion is that the brand is in one.
+    const brand = screen.getByRole("link", { name: "Ligature" });
+    expect(screen.getAllByRole("banner").some((banner) => banner.contains(brand))).toBe(true);
 
     const account = screen.getByRole("navigation", { name: "Account" });
     expect(within(account).getByRole("link", { name: "My account" })).toBeInTheDocument();
