@@ -63,6 +63,7 @@ export function ManageRolesDialog({ open, user, returnFocus, onClose, onClosed }
   const [includeInactive, setIncludeInactive] = useState(false);
   const [revoking, setRevoking] = useState<{ assignment: RoleAssignment; open: boolean } | undefined>(undefined);
   const revokeFocus = useRef<HTMLElement | null>(null);
+  const title = useRef<HTMLHeadingElement | null>(null);
   const historyLabel = useId();
 
   const assignments = useRoleAssignments(user.userId, includeInactive);
@@ -157,7 +158,11 @@ export function ManageRolesDialog({ open, user, returnFocus, onClose, onClosed }
         }}
       >
         <DialogHeader>
-          <DialogTitle>Roles for {user.displayName}</DialogTitle>
+          {/* Focusable by script only: where focus goes when the element that
+              should get it back has left with a revoked row. */}
+          <DialogTitle ref={title} tabIndex={-1}>
+            Roles for {user.displayName}
+          </DialogTitle>
           <DialogDescription>
             Each assignment&apos;s state is as the server reports it now. Changes take effect on the next request.
           </DialogDescription>
@@ -209,6 +214,12 @@ export function ManageRolesDialog({ open, user, returnFocus, onClose, onClosed }
             user={user}
             assignment={revoking.assignment}
             returnFocus={revokeFocus}
+            onRevoked={() => {
+              // The Revoke button leaves with its row when the assignments are
+              // read again, so focus returns to this dialog's title rather than
+              // falling to the page behind the modal.
+              revokeFocus.current = title.current;
+            }}
             onClose={() => {
               setRevoking({ ...revoking, open: false });
             }}
@@ -379,12 +390,21 @@ interface RevokeRoleConfirmationProps {
   readonly user: UserRow;
   readonly assignment: RoleAssignment;
   readonly returnFocus: RefObject<HTMLElement | null>;
+  readonly onRevoked: () => void;
   readonly onClose: () => void;
   readonly onClosed: () => void;
 }
 
 /** AUT-C2's confirmation, with the reason it requires. */
-function RevokeRoleConfirmation({ open, user, assignment, returnFocus, onClose, onClosed }: RevokeRoleConfirmationProps) {
+function RevokeRoleConfirmation({
+  open,
+  user,
+  assignment,
+  returnFocus,
+  onRevoked,
+  onClose,
+  onClosed,
+}: RevokeRoleConfirmationProps) {
   const revoke = useRevokeRole(user.userId);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | undefined>(undefined);
@@ -406,7 +426,10 @@ function RevokeRoleConfirmation({ open, user, assignment, returnFocus, onClose, 
     revoke.mutate(
       { assignmentId: assignment.assignmentId, reason: parsed.data.reason },
       {
-        onSuccess: onClose,
+        onSuccess: () => {
+          onRevoked();
+          onClose();
+        },
         onError: (failure: unknown) => {
           setError(failure instanceof ApiError ? failure.message : UNKNOWN);
         },

@@ -388,6 +388,34 @@ describe("revoking a role", () => {
     });
   });
 
+  /**
+   * The Revoke button that opened the confirmation leaves with its row once the
+   * assignments are read again. Focus must still land inside the Manage roles
+   * dialog, which stays open, and never on the page behind the modal (§15).
+   */
+  it("returns focus inside the Manage roles dialog after the revoked row disappears", async () => {
+    backend();
+    const { dialog, user } = await openManageRoles(ROLE_REVOKE);
+
+    await user.click(within(requireRow(dialog, USER_ADMIN.name, "Future")).getByRole("button", { name: `Revoke ${USER_ADMIN.name}` }));
+
+    const confirm = await screen.findByRole("dialog", { name: `Revoke ${USER_ADMIN.name} from Vru Raj` });
+
+    await user.type(within(confirm).getByLabelText("Reason"), "Offer withdrawn.");
+    await user.click(within(confirm).getByRole("button", { name: "Revoke role" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: `Revoke ${USER_ADMIN.name} from Vru Raj` })).toBeNull();
+    });
+    await waitFor(() => {
+      expect(rowFor(dialog, USER_ADMIN.name, "Future")).toBeUndefined();
+    });
+
+    await waitFor(() => {
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    });
+  });
+
   it("requires a reason before sending anything", async () => {
     const state = backend();
     const { dialog, user } = await openManageRoles(ROLE_REVOKE);
