@@ -434,6 +434,19 @@ The translator is deliberately narrow: only constraints a command can actually r
 
 Never present a pre-check as the integrity guarantee, and never remove a database constraint because an application check exists.
 
+### Serialising commands on one user
+
+**Commands whose correctness depends on a user's lifecycle status take that user's row lock before reading it.** `IUserRepository.FindForUpdateAsync` locks the `app_user` row (`SELECT … FOR UPDATE`) and then loads it, inside the unit of work's transaction. USR-C4, USR-C5 and AUT-C1 GrantRole all do this (docs/requirements.md, "USR-C4 / USR-C5", D6).
+
+Read Committed alone cannot stop a grant that read `Active` from committing after a deactivation. No constraint spans "this user is inactive" and "this assignment is live", so the ordering has to come from the lock. Whichever command locks first decides the order; the other waits, then re-reads. Do not solve a race like this with retries or after-the-fact cleanup.
+
+Two rules make the lock mean something:
+
+- **Lock first.** EF returns an entity it already tracks without re-reading it, so a user loaded earlier in the same scope would come back as read, not as it is under the lock.
+- **Read the clock after the lock.** A row committed while the command waited was written later than a clock read taken before the wait.
+
+A new command that must not interleave with deactivation takes the same lock. Isolation stays at Read Committed.
+
 ### Provenance
 
 `CreatedAt`/`CreatedBy` are domain properties: the handler reads them from `IClock` and `IExecutionContext` and passes them to the aggregate factory. `UpdatedAt`/`UpdatedBy` (G4) are **EF shadow properties** stamped by `ProvenanceStampingInterceptor` on every `SaveChanges`. Handlers and entities must never set them by hand. Append-only tables declare no shadow properties and are left alone by construction.

@@ -100,7 +100,7 @@ public sealed class AuthorizationServiceTests
                 fixture.Request(), CancellationToken.None));
 
             await ExecuteAsync(
-                "UPDATE app_user SET status = 'Inactive' WHERE id = @id",
+                "UPDATE app_user SET status = 'Inactive', deactivated_at = now(), deactivated_by = '00000000-0000-0000-0000-000000000001' WHERE id = @id",
                 fixture.UserId.Value);
 
             Assert.False(await IsAllowedAsync(service,
@@ -119,7 +119,7 @@ public sealed class AuthorizationServiceTests
                 fixture.Request(), CancellationToken.None));
 
             await ExecuteAsync(
-                "UPDATE user_identity SET status = 'Inactive' WHERE user_id = @id",
+                "UPDATE user_identity SET status = 'Inactive', deactivated_at = now(), deactivated_by = '00000000-0000-0000-0000-000000000001' WHERE user_id = @id",
                 fixture.UserId.Value);
 
             Assert.False(await IsAllowedAsync(service,
@@ -432,7 +432,7 @@ public sealed class AuthorizationServiceTests
             Assert.NotEmpty(await EnumerateAsync(service, fixture));
 
             await ExecuteAsync(
-                "UPDATE app_user SET status = 'Inactive' WHERE id = @id",
+                "UPDATE app_user SET status = 'Inactive', deactivated_at = now(), deactivated_by = '00000000-0000-0000-0000-000000000001' WHERE id = @id",
                 fixture.UserId.Value);
 
             Assert.Empty(await EnumerateAsync(service, fixture));
@@ -447,7 +447,7 @@ public sealed class AuthorizationServiceTests
             Assert.NotEmpty(await EnumerateAsync(service, fixture));
 
             await ExecuteAsync(
-                "UPDATE user_identity SET status = 'Inactive' WHERE user_id = @id",
+                "UPDATE user_identity SET status = 'Inactive', deactivated_at = now(), deactivated_by = '00000000-0000-0000-0000-000000000001' WHERE user_id = @id",
                 fixture.UserId.Value);
 
             Assert.Empty(await EnumerateAsync(service, fixture));
@@ -541,7 +541,7 @@ public sealed class AuthorizationServiceTests
             await AssertAgreementAsync(service, fixture);
 
             await ExecuteAsync(
-                "UPDATE app_user SET status = 'Inactive' WHERE id = @id",
+                "UPDATE app_user SET status = 'Inactive', deactivated_at = now(), deactivated_by = '00000000-0000-0000-0000-000000000001' WHERE id = @id",
                 fixture.UserId.Value);
 
             await AssertAgreementAsync(service, fixture);
@@ -556,7 +556,7 @@ public sealed class AuthorizationServiceTests
             await AssertAgreementAsync(service, fixture);
 
             await ExecuteAsync(
-                "UPDATE user_identity SET status = 'Inactive' WHERE user_id = @id",
+                "UPDATE user_identity SET status = 'Inactive', deactivated_at = now(), deactivated_by = '00000000-0000-0000-0000-000000000001' WHERE user_id = @id",
                 fixture.UserId.Value);
 
             await AssertAgreementAsync(service, fixture);

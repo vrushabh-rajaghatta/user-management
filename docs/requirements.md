@@ -1020,6 +1020,8 @@ The specification keeps three timestamp pairs apart on purpose (§6.11): who dec
 - **No four-eyes approval** (open decision A1). A human holding `role.grant` may grant to anyone, including themselves; segregation of duties at action time belongs to the Workflow context (spec §1.2). A1's recommended practice — an external ticket reference — goes in the reason. User Management does not validate its format.
 - **Agents are out of scope** (invariant 17a). The target must be human, so the agent rules (a finite end date, UR8; no human-only permission on the role, UR9) have no reachable path in v1. They remain enforced by the database and the domain for when agents exist.
 
+> **Amended by USR-C4/C5 (D6).** GrantRole locks the target's `app_user` row (`SELECT … FOR UPDATE`) before its active-human check, so a grant cannot race a deactivation. The contract above is unchanged; see *USR-C4 / USR-C5*, *Concurrency*.
+
 ### AUT-C2 RevokeRole
 
 The assignment is addressed by its own identifier (the catalogue's `UserRoleId`). The reason is **required and not blank**, recorded as `RevocationReason`.
@@ -1245,9 +1247,241 @@ AUT-Q5 ListRoles, as catalogued, also returns permission and active-holder count
 
 ---
 
+## USR-C4 / USR-C5 — Deactivate and Reactivate a User
+
+**Status:** Contract frozen 2026-09-18 by owner decision (D1–D13). Backend story. The UI, and the list amendment it needs, are a following story (D1).
+
+### Requirement
+
+**USR-C4 DeactivateUser** takes a person out of the tenant in one controlled operation. **USR-C5 ReactivateUser** returns them, and restores nothing.
+
+The lifecycle this story establishes is:
+
+```text
+Active  --USR-C4-->  Inactive  --USR-C5-->  Active, holding no role assignments
+```
+
+The frozen specification is the source (UM §6.1, §6.2, §11.7, §11.8; invariants 7, 25, 27; D3, D4). Deactivation is not a column update. *"Reactivation restores nothing"*: any access a returning user needs is granted afresh, by a named person, with a fresh reason (AUT-C1).
+
+Three mechanisms fail safe independently, as §11.8 intends:
+
+1. The per-request check already refuses an inactive user or identity (`CallerEstablisher`, `UserSessionRepository`, `AuthorizationService`), so a deactivated user loses access on their next request whatever the cascade does.
+2. The cascade revokes sessions and assignments explicitly and attributes them, so the trail says why they ended.
+3. Reactivation restores none of them.
+
+### USR-C4 DeactivateUser
+
+- **Caller:** a human holding `user.deactivate`, which is human-only. The command implements `IHumanActorOnlyCommand`.
+- **Inputs:** `UserId` and `Reason`. The reason is required and non-blank, checked before any database work. There is no `NewOwnerUserId` input (D11).
+- **Refusals** (each writes nothing):
+  - **(a)** the target is the System actor, or is not a human (D9a);
+  - **(b)** the target is already inactive (D9b);
+  - **(c)** the target is the caller (D9c);
+  - **(d)** the target does not exist.
+
+  A pending user, meaning one whose account was never activated, **may** be deactivated (D9d).
+
+**The self rule, stated exactly.** *A caller may not deactivate themselves.* That is the whole rule. It does **not** protect "the last administrator", and it does not decide what counts as an administrator. That would be a separate rule needing its own evidence and decision. It is not made here.
+
+#### The transaction
+
+Everything below happens in the pipeline's single transaction, in this order. Each step names the frozen command-steps row it implements, and where it departs from that row.
+
+| # | Step | Detail |
+| --- | --- | --- |
+| 1 | Authorise | The pipeline checks `user.deactivate` and that the caller is human. |
+| 2 | Lock and load the target | `SELECT … FOR UPDATE` on the target's `app_user` row, **before** reading its status (D6). The refusals above are evaluated on the locked row. |
+| 3 | Owned agents | **Not performed; deferred to Slice 6** (D11). See *Agents* below. |
+| 4 | Revoke role assignments | Every assignment the user holds is passed to `UserRole.Revoke`, the same domain rule AUT-C2 uses (D2): an **active** assignment ends now; a **future** one is closed at its own start, an empty period; an **ended** or already **revoked** one is not touched. `RevokedBy` = the System actor, and `RevocationReason` = `User deactivated` (D3, D4). *Amends catalogue step 4; see Catalogue amendments.* |
+| 5 | Revoke sessions | Every active session of every identity the user holds, found the way SES-C4 finds them. Each is revoked at now, with `RevokedBy` = the System actor and `RevocationReason` = `UserDeactivated`, the controlled code (D3, D4, D8). |
+| 6 | Deactivate identities | Every **active** identity is deactivated with the stamp (now, caller), the same stamp as the user's (D5). |
+| 7 | Deactivate the user | `Status` = `Inactive`, and `DeactivatedAt`/`DeactivatedBy` = (now, caller). |
+| 7a | Invalidate tokens | Every outstanding (`used_at IS NULL AND invalidated_at IS NULL`) `Activation` and `PasswordReset` token of every identity the user holds gets `invalidated_at` = now (D7). *An addition to the catalogue steps; see Catalogue amendments.* |
+| 8 | Audit | See below. |
+| 9 | Invalidate caches | **Nothing to do.** There is no effective-permission cache: permissions are resolved per request (UR12). |
+
+"Now" is one instant for the whole operation, truncated to stored precision (`RoleAssignmentTime.AtStoredPrecision`), so every row and record the cascade writes carries the same time. **It is read after the lock is taken, not before.** An assignment granted while C4 waited for the lock was assigned later than a clock read taken before the wait, and `UserRole.Revoke` refuses a revocation dated before the assignment. K1 inserts its racing assignment at the real insert time (`clock_timestamp()`) to hold this.
+
+The steps run in one transaction, so their order within it cannot be observed. The self rule (D9c) is evaluated first, by the domain's `User.Deactivate`, before anything is changed.
+
+**Partial execution is the failure this prevents.** A refusal or a fault at any step rolls back every step. No application-level retry and no after-the-fact cleanup are used.
+
+#### Tokens: state, not audit (D7, D13)
+
+> **C4 SHALL invalidate all outstanding activation and password-reset tokens belonging to the deactivated user. C4 SHALL NOT emit `TokenInvalidated` for these invalidations, because the frozen `TokenInvalidated` event requires a `SupersededBy` token reference and no replacement token exists. The `UserDeactivated` audit event records the administrative action and its reason. Per-token invalidation is therefore not individually represented in the audit event stream in v1.**
+
+This is why the invalidation exists at all. Token redemption already refuses an inactive user. But without invalidation, a reset or activation link issued **before** deactivation would work again **after** reactivation, which is a quiet way for old access to come back.
+
+A future implementer must not "fix" the missing record by fabricating a superseding token, or by weakening the frozen `TokenInvalidated` definition. The gap is recorded as Audit change control (see Known Gaps, *USR-C4/C5 change control*). It closes by amending the Audit workbook, and by adding a definition through per-event versioning (AUD-C3) once that works.
+
+A pending user who is later reactivated gets a fresh activation link through CRD-C7. A user who had a reset in flight asks again (CRD-C2) or is reset by an administrator (CRD-C5).
+
+#### Audit
+
+These are existing event types. No catalogue version bump and no definition change.
+
+- **`UserDeactivated`**, one record: primary `User`, with the administrator's reason. Before and After hold exactly `Status`, `DeactivatedAt` and `DeactivatedBy`, as the frozen workbook specifies. No `NewAgentOwner` ref (D11).
+- **`IdentityDeactivated`**, one per identity deactivated: primary `Identity`, ref `User`/`Subject`, the administrator's reason, and Before/After of the identity's `Status`, `DeactivatedAt` and `DeactivatedBy`.
+- **`RoleRevoked`**, one per assignment revoked: the same shape AUT-C2 writes. The audit **Reason** is the administrator's reason; the row's `RevocationReason` is `User deactivated`.
+- **`SessionRevoked`**, one per session revoked: the shape `SessionRevocations.Declare` writes. The controlled code `UserDeactivated` is in Before/After, and the audit Reason is the administrator's reason (D2/R1 of the session-revocation change control).
+- **No `TokenInvalidated`** (D13, above).
+
+**One operation, one story.** Every record above shares the command's `OperationId`. Each `IdentityDeactivated`, `RoleRevoked` and `SessionRevoked` carries `CausationId` = the `UserDeactivated` record's `AuditId` (Audit pipeline behaviour 18: *"USR-C4 cascade steps ← UserDeactivated"*). AUD-Q3 GetOperation reads it as one sequence.
+
+All of it is written by the command's own transaction. The audit actor of every record is the **administrator**, while the revoked rows name the **System actor** in `RevokedBy` (D3). The two do not contradict each other: `RevokedBy` records that the deactivation ended them, not a person's separate decision, and the audit records say who deactivated.
+
+### USR-C5 ReactivateUser
+
+- **Caller:** a human holding `user.reactivate`, which is human-only.
+- **Inputs:** `UserId` and `Reason`. The reason is required and non-blank, checked before any database work.
+- **Refusals** (each writes nothing):
+  - **(a)** the target is the System actor, or is not a human;
+  - **(b)** the target is already active (D9e);
+  - **(c)** the target's email is held by another human who is not inactive (D9e);
+  - **(d)** the target does not exist.
+
+**Steps, in one transaction:**
+
+1. The pipeline authorises.
+2. Lock the target's `app_user` row `FOR UPDATE` (D6), then evaluate the refusals.
+3. **Email check.** Refuse if another human who is not inactive holds the same email, compared with `lower()` in the database (AU3). The check exists to give a clear message. **The unique index `ux_app_user_active_human_email` remains the guarantee**, and a race past the check is refused by it. *Corrected during implementation:* that refusal carries the translator's existing message for the index, *"A user with this email address already exists."*, not the pre-check's. The index is translated once, for every command, and the unit of work saves after the handler returns, so the handler cannot re-word it. The meaning is the same, and the reactivation is refused either way.
+4. Reactivate every identity whose deactivation stamp equals the user's (`DeactivatedAt` and `DeactivatedBy` both equal) (D5). An identity deactivated separately, by a future IDN-C3, stays inactive.
+5. Reactivate the user: `Status` = `Active`, and the deactivation stamp is cleared. This is lifecycle-controlled, per the frozen model.
+6. Audit: `UserReactivated`, with Before/After of `Status`, `DeactivatedAt` and `DeactivatedBy`, and the reason; plus one `IdentityReactivated` per identity, with `CausationId` = `UserReactivated`. All share one `OperationId`.
+
+**Restores nothing.** No role assignment, session or token is recreated. Revoked assignments stay revoked. Access is granted afresh through AUT-C1, and a password or activation link through CRD-C5 or CRD-C7. Credentials are untouched throughout, as §11.8 specifies.
+
+**The email refusal has no remedy yet.** The holder's email can only change through USR-C3, which is blocked on decision A3. The refusal message says what is wrong, and the record is not reactivated.
+
+### Concurrency: one lock, three commands (D6)
+
+GrantRole (AUT-C1), USR-C4 and USR-C5 each take `SELECT … FOR UPDATE` on the **target user's** `app_user` row, **before** checking its status:
+
+```text
+GrantRole                         DeactivateUser
+    │                                  │
+    ├─ lock target user                ├─ lock target user
+    ├─ verify active                   ├─ verify active
+    ├─ create assignment               ├─ deactivate
+    │                                  ├─ revoke roles
+    │                                  └─ commit
+    └─ commit
+```
+
+Whichever takes the lock first decides the order. If a grant commits first, deactivation then sees and revokes the new assignment. If deactivation commits first, the grant then sees `Inactive` and is refused. No grant can land between C4's check and its commit.
+
+**This amends AUT-C1's implementation**, not its contract: GrantRole's existing "active human" check now runs on the locked row. Race-free ordering is not solved with retries or cleanup.
+
+### Database: status and deactivation agree (D12)
+
+A new migration adds, on both tables:
+
+```sql
+CHECK ((status = 'Inactive') = (deactivated_at IS NOT NULL))
+```
+
+- `ck_app_user_status_deactivation` on `app_user`
+- `ck_user_identity_status_deactivation` on `user_identity`
+
+This is the invariant C4 and C5 rely on, and today nothing but the domain enforces it. The existing pair checks (AU4, UI9) already tie `DeactivatedBy` to `DeactivatedAt`. No rule ID is assigned; the frozen AU/UI numbering belongs to the specification.
+
+**The migration normalises nothing.** A database whose rows violate the check refuses the migration, and that is the correct outcome. The one known violator is a test fixture (`AuthenticationEndToEndTests`, which inserts an `Active` user with `deactivated_at` set), and **it is corrected at its source**, not repaired by the migration.
+
+### Endpoints (D10)
+
+| Route | Body | Success | Refusals |
+| --- | --- | --- | --- |
+| `POST /api/users/{userId}/deactivate` | `{ "reason": string }` | `204`, no body | `400` with `{ error }` for every refusal above and for a permission refusal (Known Gaps, *Authorization failures are not distinguishable from validation failures*); `401` without a carrier |
+| `POST /api/users/{userId}/reactivate` | `{ "reason": string }` | `204`, no body | as above |
+
+Both follow the existing user-command endpoints: bearer or cookie carrier, and the cross-site guard on unsafe methods.
+
+### Agents (D11)
+
+Invariant 25 stands, and **this story does not implement it**. V1 cannot create or activate an agent, so there is no ownership to transfer and no agent assignment to revoke. Building that behaviour now would manufacture state to satisfy a future rule. The obligation is kept explicit:
+
+- Slice 6 (AGT-C1..C4) SHALL add catalogue step 3 to USR-C4: transfer to `NewOwnerUserId`, or the emergency revocation path, inside the same transaction, with the `NewAgentOwner` ref on `UserDeactivated`.
+- It is listed under Known Gaps, *USR-C4 does not handle owned agents*.
+
+### Catalogue amendments
+
+Both amend the frozen UM command catalogue's USR-C4 rows and are recorded as change control (Known Gaps). No workbook is edited.
+
+1. **Future role assignments (step 4).** The catalogue writes `EffectiveTo = now` for every assignment that has not ended. For a future assignment that violates UR2 (`EffectiveTo >= EffectiveFrom`) and contradicts AUT-C2. C4 uses the empty-period rule AUT-C1/C2 established (#59): a future assignment is closed at its own `EffectiveFrom`.
+2. **Outstanding tokens (new step 7a).** The catalogue's USR-C4 row does not list `user_token`. C4 invalidates outstanding activation and reset tokens, without per-token audit records (D7, D13).
+
+A third item is reconciled at the same time:
+
+3. **`IdentityReactivated` emitters.** The frozen Audit workbook and `AuditEventCatalogue.cs` list its emitters as IDN-C4 and OPR-C1, but USR-C5 reactivates identities and emits it (D5). This is a **provenance correction**: USR-C5 is added to the emitter list in the code comment and recorded as Audit workbook change control. The event's definition (shape, refs, reason rule) does not change, so no version question arises.
+
+The session-revocation change control's item 5 (*USR-C4 spelling*) is **resolved** by D4: `UserDeactivated` is the session code and `User deactivated` is the assignment reason.
+
+### Acceptance Criteria
+
+**USR-C4**
+
+- **V1** Refused, writing nothing: the System actor; an inactive user; the caller themselves; an unknown user; a blank reason. A caller without `user.deactivate`, or a non-human caller, is refused by the pipeline.
+- **V2** A pending user can be deactivated.
+- **V3** The user is `Inactive` with stamp (now, caller); every identity that was active is `Inactive` with the same stamp.
+- **V4** Role assignments: an active one ends at now; a future one gets an empty period at its own `EffectiveFrom`; an ended one and an already-revoked one are unchanged. Every revoked row has `RevokedBy` = System and reason `User deactivated`.
+- **V5** Every active session is revoked with `RevokedBy` = System and code `UserDeactivated`. Sessions of other users are untouched.
+- **V6** Every outstanding activation and reset token is invalidated at now. No `TokenInvalidated` record is written.
+- **V7** Audit, all in one `OperationId`:
+  - one `UserDeactivated` with the reason and exactly its Before/After;
+  - one `IdentityDeactivated`, `RoleRevoked` and `SessionRevoked` per row changed;
+  - each of those with `CausationId` = the `UserDeactivated` record;
+  - no other event types.
+- **V8** Atomicity: a fault injected after the cascade has begun leaves the user, identities, assignments, sessions and tokens exactly as they were, and writes no audit record.
+- **V9** Afterwards the user cannot sign in, and a session that was live is refused on its next request.
+
+**USR-C5**
+
+- **R1** Refused, writing nothing: the System actor; an active user; an unknown user; a blank reason; an email held by another human who is not inactive. The pipeline refuses a caller without `user.reactivate`, or a non-human caller.
+- **R2** The user is `Active` with no deactivation stamp. The identities this deactivation stamped are `Active`, and an identity carrying a **different** stamp stays `Inactive`.
+- **R3** **Nothing is restored:** revoked assignments stay revoked, and the user holds no active assignment; revoked sessions stay revoked; invalidated tokens stay invalidated.
+- **R4** Audit: one `UserReactivated` and one `IdentityReactivated` per identity reactivated, the latter caused by the former, all in one `OperationId`.
+- **R5** Round trip: Active → Deactivated → Reactivated leaves the user able to receive a fresh grant (AUT-C1) and a fresh activation link (CRD-C7, for a pending user); pre-deactivation tokens still do not redeem.
+
+**Concurrency and database**
+
+- **K1** A grant and a deactivation of the same user, run concurrently in both orders, never leave an active or future assignment on an inactive user.
+- **K2** GrantRole takes the target's row lock before checking status.
+- **M1** The database refuses `Inactive` without a deactivation stamp, and `Active` with one, on both `app_user` and `user_identity`.
+- **M2** The fixture that inserted an inconsistent row is corrected. The migration contains no data repair.
+
+**Endpoints**
+
+- **E1** Both routes answer `204` on success and `400 { error }` on each refusal. A permission refusal carries the permission message; no carrier gets `401`.
+- **E2** Both routes are listed in the API documentation.
+
+### Not decided here
+
+- A **last-administrator** protection (see *The self rule*).
+- The Users-table UI for deactivate and reactivate, and how the list shows lifecycle status: USR-Q1 Amendment 2, the following story (D1).
+- Agents (D11), and per-token audit records (D13).
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
+
+## USR-C4 does not handle owned agents
+
+**Rule:** invariant 25. Deactivating a person who owns agents transfers ownership in the same operation. Where an emergency deactivation proceeds without a transfer, the owned agents' role assignments are revoked until a new owner attests.
+
+**State:** USR-C4 accepts no `NewOwnerUserId` and performs no agent step. V1 cannot create or activate an agent, so there is nothing to act on.
+
+**Deferred to:** Slice 6 (AGT-C1..C4), which SHALL add the step inside USR-C4's transaction (docs/requirements.md, *USR-C4 / USR-C5*, *Agents*).
+
+## USR-C4/C5 change control against the frozen catalogues
+
+Recorded by owner decision (D2, D5, D7, D13). **No workbook is edited.** Each item is outstanding change control:
+
+1. **UM command catalogue, USR-C4 step 4.** `EffectiveTo = now` for a future assignment violates UR2. It should read: revoked by the AUT-C2 rule (a future assignment is closed at its own `EffectiveFrom`).
+2. **UM command catalogue, USR-C4.** Add `user_token` to *Tables written*, and a step that invalidates outstanding activation and reset tokens.
+3. **Audit workbook, `TokenInvalidated`.** It covers only supersession (`SupersededBy` required). Invalidation without a replacement token, as on deactivation, has no event, so v1 writes the state change with no per-token record. Closing this needs a non-supersession form, added through per-event versioning (AUD-C3), **not** by fabricating a superseding token or weakening the frozen definition.
+4. **Audit workbook, `IdentityReactivated`.** Add USR-C5 to its emitters. It is a provenance correction; the definition is unchanged.
 
 ## UT4 — no partial unique index on open user tokens — RESOLVED
 
@@ -1776,9 +2010,8 @@ and in the handlers that predate it) until separately amended.
    `AdminRevoked` (SES-C3, administrator SES-C4), `SignOutEverywhere` (self
    SES-C4), `UserDeactivated` (USR-C4, not yet implemented). The entity model's
    list currently ends open ("…").
-5. **USR-C4 spelling.** Its command steps write `RevocationReason='User
-   deactivated'` for role assignments and `'UserDeactivated'` for sessions;
-   reconcile before USR-C4 is implemented.
+5. **USR-C4 spelling — RESOLVED** by USR-C4/C5 D4: sessions use the code
+   `UserDeactivated`, role assignments the reason `User deactivated`.
 6. **CRD-C4 departure.** CRD-C4 writes the code `PasswordChanged` into both the
    session's `RevocationReason` and the audit Reason. That contradicts R1, since
    the audit Reason should be an explanation. Known departure, deliberately not

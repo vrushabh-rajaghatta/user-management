@@ -147,6 +147,12 @@ public sealed class User : AggregateRoot<UserId>
         if (Status == UserStatus.Inactive)
             throw new DomainException("User is already inactive.");
 
+        // USR-C4 D9c. Exactly this rule and nothing broader: it does not
+        // protect "the last administrator", which is a separate, undecided
+        // policy (docs/requirements.md, "USR-C4 / USR-C5").
+        if (deactivation.By == Id)
+            throw new DomainException("A user cannot deactivate themselves.");
+
         Status = UserStatus.Inactive;
         Deactivation = deactivation;
     }

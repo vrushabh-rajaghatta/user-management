@@ -10,7 +10,16 @@ public sealed class UserIdentityConfiguration
 {
     public void Configure(EntityTypeBuilder<UserIdentity> builder)
     {
-        builder.ToTable("user_identity");
+        builder.ToTable(
+            "user_identity",
+            table =>
+            {
+                // USR-C4/C5 D12, as on app_user. UI9's pair check lives in a
+                // raw-SQL migration; this closes the triangle beside it.
+                table.HasCheckConstraint(
+                    "ck_user_identity_status_deactivation",
+                    "(\"status\" = 'Inactive') = (\"deactivated_at\" IS NOT NULL)");
+            });
 
         builder.HasKey(x => x.Id);
 

@@ -1724,7 +1724,8 @@ public sealed class AuthenticationEndToEndTests
                     (@id, 'Human', 'Host', 'Tester', 'Host Tester',
                      'permanent-auth-pending@example.test',
                      'Active', @now, @system, @now, @system)
-                ON CONFLICT (id) DO UPDATE SET status = 'Active'
+                ON CONFLICT (id) DO UPDATE
+                    SET status = 'Active', deactivated_at = NULL, deactivated_by = NULL
                 """, connection))
             {
                 user.Parameters.AddWithValue("id", PendingUser);
@@ -1742,7 +1743,8 @@ public sealed class AuthenticationEndToEndTests
                 VALUES
                     (@id, @user, 'Human', 'Local', 'Application',
                      @username, @username, 'Active', @now, @system)
-                ON CONFLICT (id) DO UPDATE SET status = 'Active'
+                ON CONFLICT (id) DO UPDATE
+                    SET status = 'Active', deactivated_at = NULL, deactivated_by = NULL
                 """, connection);
 
             identity.Parameters.AddWithValue("id", PendingIdentity);

@@ -898,15 +898,20 @@ public sealed class ActivateAccountIntegrationTests
         => await SetStatusAsync(table, id, "Active");
 
     /// <summary>
-    /// Status only. The deactivation stamp columns are a both-or-neither pair
-    /// independent of it, and nothing here reads them.
+    /// The status with its deactivation stamp: stamped when Inactive, cleared
+    /// when Active. They were independent until USR-C4/C5 D12, which has the
+    /// database refuse the two apart.
     /// </summary>
     private async Task SetStatusAsync(string table, Guid id, string status)
     {
         await using var connection = await _database.OpenAsync();
 
         await using var command = new NpgsqlCommand(
-            $"UPDATE {table} SET status = @status WHERE id = @id", connection);
+            $"UPDATE {table} SET status = @status, "
+            + "deactivated_at = CASE WHEN @status = 'Inactive' THEN now() END, "
+            + "deactivated_by = CASE WHEN @status = 'Inactive' THEN @system END WHERE id = @id", connection);
+
+        command.Parameters.AddWithValue("system", User.SystemUserId.Value);
 
         command.Parameters.AddWithValue("status", status);
         command.Parameters.AddWithValue("id", id);

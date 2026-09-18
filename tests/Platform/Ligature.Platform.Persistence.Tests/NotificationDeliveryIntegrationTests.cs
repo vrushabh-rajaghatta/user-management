@@ -80,7 +80,7 @@ public sealed class NotificationDeliveryIntegrationTests : IAsyncLifetime
         var seeded = await SeedAsync();
 
         await ExecuteAsync(
-            $"UPDATE user_identity SET status = 'Inactive' WHERE id = '{seeded.IdentityId}'");
+            $"UPDATE user_identity SET status = 'Inactive', deactivated_at = now(), deactivated_by = '00000000-0000-0000-0000-000000000001' WHERE id = '{seeded.IdentityId}'");
 
         // Notification's own condition. Sending would be harmless — sign-in
         // fails on identity status — but a mail inviting a deactivated person
@@ -95,7 +95,7 @@ public sealed class NotificationDeliveryIntegrationTests : IAsyncLifetime
         var seeded = await SeedAsync();
 
         await ExecuteAsync(
-            $"UPDATE app_user SET status = 'Inactive' WHERE id = '{seeded.UserId}'");
+            $"UPDATE app_user SET status = 'Inactive', deactivated_at = now(), deactivated_by = '00000000-0000-0000-0000-000000000001' WHERE id = '{seeded.UserId}'");
 
         Assert.Equal(
             NotificationEligibility.SubjectInactive, await EvaluateAsync(seeded));
@@ -109,7 +109,7 @@ public sealed class NotificationDeliveryIntegrationTests : IAsyncLifetime
         await ExecuteAsync(
             $"UPDATE user_token SET used_at = now() WHERE id = '{seeded.TokenId}'");
         await ExecuteAsync(
-            $"UPDATE app_user SET status = 'Inactive' WHERE id = '{seeded.UserId}'");
+            $"UPDATE app_user SET status = 'Inactive', deactivated_at = now(), deactivated_by = '00000000-0000-0000-0000-000000000001' WHERE id = '{seeded.UserId}'");
 
         // Token first: it is the condition that makes the message useless
         // rather than merely inappropriate.

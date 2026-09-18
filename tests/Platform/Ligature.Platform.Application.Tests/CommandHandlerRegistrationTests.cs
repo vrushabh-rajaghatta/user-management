@@ -7,7 +7,9 @@ using Ligature.Platform.Application.Execution;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
+using Ligature.Platform.Application.Users.Commands.DeactivateUser;
 using Ligature.Platform.Application.Users.Commands.GrantRole;
+using Ligature.Platform.Application.Users.Commands.ReactivateUser;
 using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
 using Ligature.Platform.Application.Users.Commands.RevokeRole;
 using Ligature.Platform.Application.Users.Commands.RevokeSession;
@@ -165,6 +167,20 @@ public sealed class CommandHandlerRegistrationTests
         Assert.IsType<GrantRoleCommandHandler>(handler);
     }
 
+    /// <summary>USR-C4 and USR-C5, resolved for CRD-C5's reason.</summary>
+    [Fact]
+    public void The_dispatcher_can_resolve_the_DeactivateUser_and_ReactivateUser_handlers()
+    {
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.IsType<DeactivateUserCommandHandler>(scope.ServiceProvider
+            .GetRequiredService<ICommandHandler<DeactivateUserCommand, DeactivateUserResult>>());
+
+        Assert.IsType<ReactivateUserCommandHandler>(scope.ServiceProvider
+            .GetRequiredService<ICommandHandler<ReactivateUserCommand, ReactivateUserResult>>());
+    }
+
     /// <summary>AUT-C2, resolved for CRD-C5's reason.</summary>
     [Fact]
     public void The_dispatcher_can_resolve_the_RevokeRole_handler()
@@ -288,6 +304,7 @@ public sealed class CommandHandlerRegistrationTests
 
     private sealed class StubUserRepository : IUserRepository
     {
+        public Task<User?> FindForUpdateAsync(UserId userId, CancellationToken cancellationToken) => throw new NotImplementedException();
         public Task<bool> ExistsActiveHumanWithEmailAsync(
             Domain.Users.EmailAddress email, CancellationToken cancellationToken)
             => Task.FromResult(false);
@@ -302,6 +319,7 @@ public sealed class CommandHandlerRegistrationTests
 
     private sealed class StubUserIdentityRepository : IUserIdentityRepository
     {
+        public Task<IReadOnlyList<UserIdentity>> FindByUserIdAsync(UserId userId, CancellationToken cancellationToken) => throw new NotImplementedException();
         public Task<bool> ExistsWithUsernameAsync(
             string username, CancellationToken cancellationToken)
             => Task.FromResult(false);
@@ -330,6 +348,7 @@ public sealed class CommandHandlerRegistrationTests
 
     private sealed class StubUserTokenRepository : IUserTokenRepository
     {
+        public Task<int> InvalidateOutstandingForUserAsync(UserId userId, DateTimeOffset now, CancellationToken cancellationToken) => throw new NotImplementedException();
         public Task AddAsync(
             Domain.Users.UserToken token, CancellationToken cancellationToken)
             => Task.CompletedTask;
@@ -433,6 +452,7 @@ public sealed class CommandHandlerRegistrationTests
 
     private sealed class StubUserRoleRepository : IUserRoleRepository
     {
+        public Task<IReadOnlyList<UserRole>> FindForUserAsync(UserId userId, CancellationToken cancellationToken) => throw new NotImplementedException();
         public Task AddAsync(UserRole assignment, CancellationToken cancellationToken)
             => throw new NotSupportedException();
 

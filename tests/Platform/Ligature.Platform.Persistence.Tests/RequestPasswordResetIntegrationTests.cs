@@ -319,21 +319,21 @@ public sealed class RequestPasswordResetIntegrationTests
             $"""
              INSERT INTO app_user
                  (id, actor_type, first_name, last_name, display_name, email, status,
-                  created_at, created_by, updated_at, updated_by)
+                  created_at, created_by, updated_at, updated_by, deactivated_at, deactivated_by)
              VALUES
                  ('{userId}', 'Human', 'Reset', 'Subject', 'Reset Subject',
                   {(resolvedEmail is null ? "NULL" : $"'{resolvedEmail}'")},
                   '{userStatus}', now(), '{User.SystemUserId.Value}',
-                  now(), '{User.SystemUserId.Value}');
+                  now(), '{User.SystemUserId.Value}', {Stamp(userStatus)});
 
              INSERT INTO user_identity
                  (id, user_id, actor_type, identity_type, identity_provider,
-                  subject_id, username, status, created_at, created_by)
+                  subject_id, username, status, created_at, created_by, deactivated_at, deactivated_by)
              VALUES
                  ('{identityId}', '{userId}', 'Human', '{identityType}',
                   '{(identityType == "Local" ? "Application" : "Okta")}',
                   '{identityId}', '{resolvedUsername}', '{identityStatus}',
-                  now(), '{User.SystemUserId.Value}');
+                  now(), '{User.SystemUserId.Value}', {Stamp(identityStatus)});
              """);
 
         // Eligibility requires a credential since CRD-C3, so every account
@@ -488,4 +488,11 @@ public sealed class RequestPasswordResetIntegrationTests
 
         await command.ExecuteNonQueryAsync();
     }
+
+    /// <summary>
+    /// The deactivation stamp a row of this status carries: an Inactive row is
+    /// stamped, an Active one is not (USR-C4/C5 D12).
+    /// </summary>
+    private static string Stamp(string status)
+        => status == "Inactive" ? $"now(), '{User.SystemUserId.Value}'" : "NULL, NULL";
 }

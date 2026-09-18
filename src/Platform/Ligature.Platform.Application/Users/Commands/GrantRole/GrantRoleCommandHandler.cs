@@ -75,7 +75,14 @@ public sealed class GrantRoleCommandHandler : ICommandHandler<GrantRoleCommand, 
             {
                 // An active human. The System actor fails the actor-type
                 // check; agents are out of scope in v1 (invariant 17a).
-                var target = await _userRepository.FindAsync(command.UserId, ct);
+                //
+                // Read under the target's row lock, the one USR-C4 and USR-C5
+                // take (D6). Checked unlocked, a grant could read Active, a
+                // deactivation commit, and the grant then commit a live
+                // assignment on an inactive user — dormant until reactivation
+                // revived it, the failure UM §11.7 exists to prevent. Whichever
+                // command locks first decides the order.
+                var target = await _userRepository.FindForUpdateAsync(command.UserId, ct);
 
                 if (target is null
                     || target.ActorType != ActorType.Human

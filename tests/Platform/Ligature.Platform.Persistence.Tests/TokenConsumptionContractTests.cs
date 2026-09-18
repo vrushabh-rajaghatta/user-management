@@ -229,9 +229,15 @@ public sealed class TokenConsumptionContractTests : IAsyncLifetime
         return (bool)(await command.ExecuteScalarAsync())!;
     }
 
+    /// <summary>
+    /// The status with its deactivation stamp: stamped when Inactive, cleared
+    /// when Active. The database refuses the two apart (USR-C4/C5 D12).
+    /// </summary>
     private async Task SetStatusAsync(string table, Guid id, string status)
         => await ExecuteAsync(
-            $"UPDATE {table} SET status = '{status}' WHERE id = '{id}'");
+            status == "Inactive"
+                ? $"UPDATE {table} SET status = 'Inactive', deactivated_at = now(), deactivated_by = '{User.SystemUserId.Value}' WHERE id = '{id}'"
+                : $"UPDATE {table} SET status = '{status}', deactivated_at = NULL, deactivated_by = NULL WHERE id = '{id}'");
 
     private async Task<(UserTokenId Id, string Hash)> SeedTokenAsync(
         TokenType type, bool invalidated = false, bool expired = false)

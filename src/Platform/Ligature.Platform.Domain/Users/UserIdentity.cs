@@ -157,6 +157,25 @@ UserId createdBy,
         Status = UserStatus.Inactive;
         Deactivation = deactivation;
     }
+    /// <summary>
+    /// USR-C5 (D5): reactivates this identity only if it was deactivated by the
+    /// same operation as its user — the same instant and the same actor. An
+    /// identity deactivated on its own (a future IDN-C3) carries a different
+    /// stamp, and returning the user must not undo that decision.
+    /// </summary>
+    /// <returns>Whether the identity was reactivated.</returns>
+    public bool ReactivateWith(DeactivationStamp userDeactivation)
+    {
+        ArgumentNullException.ThrowIfNull(userDeactivation);
+
+        if (Status != UserStatus.Inactive || Deactivation != userDeactivation)
+            return false;
+
+        Reactivate();
+
+        return true;
+    }
+
     public void Reactivate()
     {
         if (Status == UserStatus.Active)

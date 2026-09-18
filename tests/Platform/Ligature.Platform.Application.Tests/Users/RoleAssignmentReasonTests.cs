@@ -70,6 +70,8 @@ public sealed class RoleAssignmentReasonTests
     private sealed class Untouched
         : IExecutionContext, IClock, IUserRepository, IRoleRepository, IUserRoleRepository, IAuditEvents
     {
+        public Task<User?> FindForUpdateAsync(UserId userId, CancellationToken cancellationToken) => throw new NotImplementedException();
+        public Task<IReadOnlyList<UserRole>> FindForUserAsync(UserId userId, CancellationToken cancellationToken) => throw new NotImplementedException();
         public UserId UserId => throw Touched();
         public ActorType ActorType => throw Touched();
         public bool IsAuthenticated => throw Touched();
