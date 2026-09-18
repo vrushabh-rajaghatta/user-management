@@ -46,8 +46,10 @@ public static class MailConfiguration
     {
         ArgumentNullException.ThrowIfNull(configuration);
 
-        if (!string.IsNullOrWhiteSpace(configuration[HostConfiguration.MailDevSinkDirectorySetting]))
-            throw new NotImplementedException("RED STUB: the development mail sink is not implemented.");
+        var sink = configuration[HostConfiguration.MailDevSinkDirectorySetting];
+
+        if (!string.IsNullOrWhiteSpace(sink))
+            return LoadDevelopmentSink(configuration, sink);
 
         var present = Settings
             .Where(name => !string.IsNullOrWhiteSpace(configuration[name]))
@@ -78,6 +80,61 @@ public static class MailConfiguration
                 ServiceAccountPrivateKeyPem: ReadKey(configuration),
                 TransportTimeout: transportTimeout),
             baseUrl);
+    }
+
+    /// <summary>
+    /// The development mail sink (docs/architecture.md §8). Every refusal names
+    /// a setting and never a value.
+    /// </summary>
+    private static DevelopmentSinkDelivery LoadDevelopmentSink(IConfiguration configuration, string directory)
+    {
+#if DEBUG
+        // Two transports at once. Whichever was meant, the other is a mistake,
+        // and guessing would deliver somewhere the operator did not intend.
+        var gmail = Settings
+            .Where(name => name != HostConfiguration.PublicBaseUrlSetting)
+            .Where(name => !string.IsNullOrWhiteSpace(configuration[name]))
+            .ToArray();
+
+        if (gmail.Length > 0)
+        {
+            throw new InvalidOperationException(
+                $"{HostConfiguration.MailDevSinkDirectorySetting} is set together with Gmail settings "
+                + $"({string.Join(", ", gmail)}). The development mail sink replaces Gmail; it is never "
+                + "used beside it. Unset one or the other.");
+        }
+
+        if (string.IsNullOrWhiteSpace(configuration[HostConfiguration.PublicBaseUrlSetting]))
+        {
+            throw new InvalidOperationException(
+                $"{HostConfiguration.MailDevSinkDirectorySetting} is set but "
+                + $"{HostConfiguration.PublicBaseUrlSetting} is not. The links the sink writes are built "
+                + "from the public base URL, so it is required here as it is for Gmail.");
+        }
+
+        var baseUrl = ReadBaseUrl(configuration);
+
+        // Refused here, at start-up, rather than as a TransportFailed row on the
+        // first send. The sink never creates the directory.
+        if (!Directory.Exists(directory))
+        {
+            throw new InvalidOperationException(
+                $"{HostConfiguration.MailDevSinkDirectorySetting} names a directory that does not exist. "
+                + "Create it first; the development mail sink never creates it.");
+        }
+
+        return new DevelopmentSinkDelivery(directory, baseUrl);
+#else
+        // THE SECOND LOCK. A Release build does not contain the sink, and a
+        // setting asking for it is refused rather than ignored: a deployment
+        // that carries it is misconfigured, and should find out now.
+        _ = configuration;
+        _ = directory;
+
+        throw new InvalidOperationException(
+            $"{HostConfiguration.MailDevSinkDirectorySetting} is set, but this is a Release build, which "
+            + "does not contain the development mail sink. It exists for development only. Unset it.");
+#endif
     }
 
     private static Uri ReadBaseUrl(IConfiguration configuration)

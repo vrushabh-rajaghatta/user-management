@@ -56,6 +56,16 @@ if (mail is GmailDelivery gmail)
     builder.Services.AddNotificationDelivery(gmail.PublicBaseUrl);
     builder.Services.AddNotificationTransport(gmail.Settings);
 }
+#if DEBUG
+else if (mail is DevelopmentSinkDelivery sink)
+{
+    // Development only (docs/architecture.md §8). A Release build never gets
+    // here: MailConfiguration refuses the setting, and the sink is not in its
+    // assemblies to register.
+    builder.Services.AddNotificationDelivery(sink.PublicBaseUrl);
+    builder.Services.AddDevelopmentMailSink(sink.Directory);
+}
+#endif
 
 // Registered either way: abandonment is not a delivery concern.
 builder.Services.AddHostedService<NotificationSenderService>();

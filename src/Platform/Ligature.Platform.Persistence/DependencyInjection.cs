@@ -8,6 +8,7 @@ using Ligature.Platform.Persistence.Repositories;
 using Ligature.Platform.Persistence.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Ligature.Platform.Persistence;
@@ -124,6 +125,26 @@ public static class DependencyInjection
 
         return services;
     }
+#if DEBUG
+    /// <summary>
+    /// DEVELOPMENT ONLY (docs/architecture.md §8): the transport that writes
+    /// each message to a file in <paramref name="directory"/> instead of
+    /// sending it. Exists only in Debug builds, as the sink itself does, so a
+    /// Release host cannot register it at all.
+    /// </summary>
+    public static IServiceCollection AddDevelopmentMailSink(
+        this IServiceCollection services,
+        string directory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+
+        services.AddSingleton<INotificationTransport>(sp =>
+            new DevelopmentMailSink(directory, sp.GetRequiredService<ILogger<DevelopmentMailSink>>()));
+
+        return services;
+    }
+#endif
+
     /// <summary>
     /// Registers the mail transport. Called by the composition root ONLY when
     /// the mail settings are present; not calling it leaves INotificationTransport
