@@ -900,6 +900,113 @@ The notification is the existing `AccountActivation` type and template, so the m
 
 ---
 
+## AUT-C1 / AUT-C2 — Role Assignment
+
+**Requirement IDs:** `AUT-C1` GrantRole and `AUT-C2` RevokeRole, as the UM command catalogue defines them. This entry records the v1 contract decided against the frozen specification (§6.11 `user_role`, invariants 7–9, 17a, 24) and the entity workbook (UR1–UR13).
+
+**Status:** Approved and frozen, 2026-09-18 by owner decision. Not yet implemented. Story 1 of two: the commands. Story 2 is the read (`AUT-Q2`), the list of grantable roles and the administration UI.
+
+### Requirement
+
+An administrator can give a human user a role, from now or from a future date, optionally until an end date, and can take it away again. Every grant and every revocation is a separate, attributable event carrying the administrator's reason.
+
+Until now roles were assigned only by provisioning, so a created user could sign in and do nothing.
+
+### Grant date and effective date are different things
+
+> **The grant records when the administrative decision was made (`AssignedAt`/`AssignedBy`, and the audit record's timestamp). `EffectiveFrom` records when authorisation begins.** They are equal only when a grant takes effect immediately. Nothing in this contract, or in any later simplification of it, may assume that a grant becomes effective when it is made.
+
+The specification keeps three timestamp pairs apart on purpose (§6.11): who decided and when, during what period access was valid, and who ended it and when. *"An administrator may grant on Monday access that becomes effective next month, and a different administrator may revoke it in between."*
+
+### AUT-C1 GrantRole
+
+| Input | Rule |
+| --- | --- |
+| Target user | Must exist, be a **human**, and be `Active`. Any other target is refused. A user who has not yet activated is `Active` and may be granted a role |
+| Role | Must exist and be **active**. A retired role cannot receive new assignments |
+| Scope | **Global only in v1.** The API takes no scope input; the command always writes `ScopeType = Global` and no `ScopeId` (spec §6.11: *"Global in V1"*) |
+| `EffectiveFrom` | Optional; defaults to the server's current time. **Must not be in the past.** A backdated start would record access as valid before anyone decided to grant it |
+| `EffectiveTo` | Optional; empty means open-ended (permitted for humans). When supplied, **`EffectiveTo >= EffectiveFrom`** |
+| Reason | **Required and not blank.** Recorded as `AssignmentReason` and on the audit record |
+
+- **Overlap.** The same user, role and scope may not hold two assignments whose effective periods overlap (invariant 8, UR5). The database enforces it, because two concurrent grants would both pass an application check. The violation is translated to the ordinary refusal *"The user already holds this role for this scope in an overlapping period."*
+- **No four-eyes approval** (open decision A1). A human holding `role.grant` may grant to anyone, including themselves; segregation of duties at action time belongs to the Workflow context (spec §1.2). A1's recommended practice — an external ticket reference — goes in the reason. User Management does not validate its format.
+- **Agents are out of scope** (invariant 17a). The target must be human, so the agent rules (a finite end date, UR8; no human-only permission on the role, UR9) have no reachable path in v1. They remain enforced by the database and the domain for when agents exist.
+
+### AUT-C2 RevokeRole
+
+The assignment is addressed by its own identifier (the catalogue's `UserRoleId`). The reason is **required and not blank**, recorded as `RevocationReason`.
+
+| Assignment state at the moment of revocation | Outcome |
+| --- | --- |
+| Does not exist | Refused |
+| Already revoked | **Refused explicitly** — a second revocation never reads as a success |
+| Already ended (`EffectiveTo` at or before now) | **Refused explicitly** — there is nothing left to close |
+| **Active** (`EffectiveFrom <= now`, not ended) | Revoked; **`EffectiveTo = revocation time`** |
+| **Future** (`EffectiveFrom > now`) | Revoked; **`EffectiveTo = EffectiveFrom`** — an empty effective period |
+
+Revocation closes the effective period (invariant 9) and records who ended it, when and why. The two outcomes are **distinct domain cases, stated as such**, not one formula chosen to satisfy the database:
+
+- An active assignment stops authorising at the moment of revocation.
+- A future assignment is closed before it opens. Its period `[EffectiveFrom, EffectiveFrom)` is empty: it never authorises, and it overlaps nothing, so a new grant for the same period is not blocked by it.
+
+Revoking only ever moves `EffectiveTo` earlier, never later, and never clears it. The database's G4 guard refuses anything else.
+
+There is no suspended state (UR13). Pausing access is a revocation now and a new grant later: two attributable events.
+
+### The database constraint is relaxed to match the frozen model
+
+The frozen entity workbook defines **UR2 as `CHECK (EffectiveTo IS NULL OR EffectiveTo >= EffectiveFrom)`**. The migrated constraint `ck_user_role_effective_period` is **stricter: `effective_to > effective_from`**. That stricter form makes the empty period impossible, and with it the specification's own example of revoking a future grant.
+
+**This story relaxes the constraint from `>` to `>=` to restore alignment with frozen UR2.** It does not change the business contract to fit an implementation limit: it removes an implementation limit the contract never had. Nothing that the stricter constraint admitted is newly refused.
+
+### Authorisation
+
+| Command | Permission | Actor |
+| --- | --- | --- |
+| AUT-C1 | `role.grant` | human only (closes the agent self-escalation loop, spec §6.9) |
+| AUT-C2 | `role.revoke` | human only |
+
+A caller without the permission is refused as every command's authorisation failure is today (`400`; the Known Gap *Authorization failures are not distinguishable from validation failures*).
+
+### Audit — existing events
+
+| Command | Event | Primary | References | Content | Reason |
+| --- | --- | --- | --- | --- | --- |
+| AUT-C1 | `RoleGranted` | `UserRoleAssignment` | `User`/`Subject`, `Role`/`GrantedRole` | After: the assignment as created | the assignment reason |
+| AUT-C2 | `RoleRevoked` | `UserRoleAssignment` | `User`/`Subject`, `Role`/`RevokedRole` | Before and After: the assignment's period and revocation fields | the revocation reason |
+
+Both are Transactional and require a reason (AR9). The administrator is the actor. Neither carries personal data. No audit catalogue change.
+
+### Effect on authorisation
+
+There is no effective-permission cache: permissions are resolved per request (UR12). A grant is honoured from `EffectiveFrom` and a revocation from its new `EffectiveTo`, on the next request. The catalogue's step *"invalidate the target's effective-permission cache"* has nothing to act on.
+
+### Acceptance Criteria
+
+- **G1** A human holding `role.grant` grants an active role to an active human; one assignment is written with Global scope, the given or defaulted `EffectiveFrom`, the given `EffectiveTo` or none, `AssignedBy` the administrator, and the reason.
+- **G2** An omitted `EffectiveFrom` is the server's current time; a past `EffectiveFrom` is refused; `EffectiveTo` before `EffectiveFrom` is refused.
+- **G3** A future grant does not authorise before `EffectiveFrom` and does from it; an ended grant does not authorise.
+- **G4** An overlapping grant for the same user, role and scope is refused with the overlap message, and writes nothing.
+- **G5** A retired role, an unknown role, an unknown user, a non-human user and an inactive user are refused, and write nothing.
+- **G6** A blank reason is refused before any database work.
+- **G7** `RoleGranted` is written with the references and content above, the reason, and the administrator as actor.
+- **R1** Revoking an active assignment sets `EffectiveTo` to the revocation time, records who, when and why, and the user loses the role's permissions on the next request.
+- **R2** Revoking a future assignment sets `EffectiveTo = EffectiveFrom`; it never authorises, and a new grant over the same period is accepted.
+- **R3** Revoking an unknown, already-revoked or already-ended assignment is refused, and writes nothing.
+- **R4** A blank reason is refused.
+- **R5** `RoleRevoked` is written with the references and content above, the reason, and the administrator as actor.
+- **A1** A caller without `role.grant` / `role.revoke`, and a non-human caller, are refused and write nothing.
+- **D1** `ck_user_role_effective_period` admits `effective_to = effective_from` and still refuses `effective_to < effective_from`.
+
+### Not decided here
+
+- **The read and the UI.** `AUT-Q2` GetUserRoleAssignments, how an administrator picks a grantable role, and where in the Administration area this lives are Story 2.
+- **Role definitions.** Creating, changing or retiring roles, and changing a role's permissions (AUT-C3–C8), are Slice 4.
+- **Scoped assignments** and **agent assignments**, until their capabilities exist.
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
@@ -935,6 +1042,7 @@ for one identity and now seed an extra identity instead —
 
 **State:** the role-overlap exclusion constraints (raise `23P01`) and RP2's live-grant index are not in the translator's map because no command can reach them yet.
 **Deferred to:** AUT-C1 and AUT-C7, where their wording can be written against a real trigger.
+**Resolution (role overlap):** AUT-C1, approved 2026-09-18, maps both overlap constraints to *"The user already holds this role for this scope in an overlapping period."* Marked resolved for the overlap half when AUT-C1 lands; RP2's live-grant index stays with AUT-C7.
 **Where recorded:** `PostgresExceptionTranslator.KnownViolations` doc.
 
 ## Provisioning entry point — RESOLVED
@@ -1686,6 +1794,8 @@ meaningless and should be refused in the domain, but that is a decision for the
 story that builds the revoke command, not for the story that added the trigger.
 
 **Deferred to:** the role-revocation command, whenever it is built.
+
+**Resolution:** AUT-C2, approved 2026-09-18. Revoking an already-ended assignment is **refused in the domain** as meaningless, so the trigger is never reached by it. A future assignment is revoked by setting `EffectiveTo = EffectiveFrom`, which only moves a NULL or later end earlier. Marked resolved when AUT-C2 lands.
 
 ## CR1 — no unique constraint on credential.user_identity_id — RESOLVED
 
