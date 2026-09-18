@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import type { RouteObject } from "react-router";
@@ -266,5 +266,60 @@ describe("the create user page", () => {
 
     expect(await screen.findByText(SUCCESS)).toBeInTheDocument();
     await expectNoAccessibilityViolations(container);
+  });
+});
+
+/**
+ * UI-7 (USR-C2 UI, option (a)): the unsaved-changes guard on the create page.
+ * The page keeps its useState form; its dirty flag is "any editable field
+ * differs from its initial empty value", over EVERY editable field — not
+ * only the ones the server requires.
+ */
+describe("unsaved changes on the create page", () => {
+  const unloadCancelled = () => {
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  it.each(["First name", "Last name", "Display name", "Email address", "Username"])(
+    "holds beforeunload once %s alone has been typed into, and releases it when emptied again",
+    async (label) => {
+      const { user } = render();
+      const field = await screen.findByLabelText(label);
+
+      expect(unloadCancelled()).toBe(false);
+
+      await user.type(field, "x");
+      expect(unloadCancelled()).toBe(true);
+
+      await user.clear(field);
+      expect(unloadCancelled()).toBe(false);
+    },
+  );
+
+  it("asks before navigating away from a started form", async () => {
+    const { user, router } = render();
+
+    await user.type(await screen.findByLabelText("Email address"), "ada@example.test");
+    await act(async () => {
+      await router.navigate("/sign-in");
+    });
+
+    expect(await screen.findByRole("dialog", { name: "Discard changes?" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/users/new");
+
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+  });
+
+  it("releases the guard after a successful create", async () => {
+    server.use(http.post(USERS, () => HttpResponse.json(CREATED, { status: 201 })));
+    const { user } = render();
+
+    await fill(user);
+    expect(await screen.findByText(SUCCESS)).toBeInTheDocument();
+
+    expect(unloadCancelled()).toBe(false);
   });
 });
