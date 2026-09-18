@@ -329,7 +329,9 @@ The write path is the correction that matters: a `Transactional` record would be
 
 **Requirement ID:** `USR-Q1`, assigned by the owner 2026-09-17 — the first ID in the query family (*Identifier Format*).
 
-**Status:** Approved and frozen — the row projection, the endpoint and identifier semantics, pagination, sorting, filtering, and the implementation contract. All decided 2026-09-17 by owner decision. Not yet implemented.
+**Status:** Approved and frozen — the row projection, the endpoint and identifier semantics, pagination, sorting, filtering, and the implementation contract. All decided 2026-09-17 by owner decision. Implemented (#52).
+
+**Amendment 1 (2026-09-18):** adds one derived field, `activationPending`, to the row. See *Amendment 1 — `activationPending`* below. It changes P1, the excluded-fields table and *Lifecycle status*, each explicitly (*Rules*, 4). Nothing else in this contract changes. Not yet implemented.
 
 ### Requirement
 
@@ -344,6 +346,7 @@ The projection was built up from an empty row, not cut down from the `app_user` 
 | `UserId` | **identity and routing** | Every operation a row can start is addressed by it: `POST /api/users/{userId}/password-reset` and `POST /api/users/{userId}/sign-out-everywhere` |
 | `DisplayName` | recognition | A list of identifiers is not usable by a person |
 | `Email` | disambiguation | `DisplayName` is not unique. Once the list is the entry point for password reset and sign-out-everywhere, two users with the same display name must be distinguishable before acting on either |
+| `ActivationPending` | presentation | Amendment 1. Whether the user has never activated, so a client offers *Resend activation link* (CRD-C7) only where it can succeed. Informational; never authorization |
 
 > **`UserId` is the only identifier. `DisplayName` is presentation data used to recognise a person. `Email` is presentation and disambiguation data used to distinguish users with similar display names. Neither `DisplayName` nor `Email` is a stable identity, and clients must not use either as a user key, route identifier, cache key, equality identity, or stable user reference.**
 
@@ -364,7 +367,6 @@ Each of these stays out of the row until a named story brings the evidence below
 | `Username` | A sign-in handle, and not required to identify a user for any row operation. `Email` already serves disambiguation |
 | `FirstName`, `LastName` | `DisplayName` serves recognition |
 | `Status` | See *Lifecycle status* below |
-| Pending activation | Derived from the absence of a credential (inv. 15); no row operation acts on it |
 | Locked | Derived from `credential.LockedUntil` against the current time; unlock is addressed by identity, not user, and is not a row operation here |
 | `UserIdentityId` | A user may hold more than one identity, so it has no single value on a user row; only unlock needs it |
 | `IdentityProvider`, `IdentityType` | Per identity, not per user; constant (`Application`, `Local`) in every current row |
@@ -558,7 +560,7 @@ Both are an invalid request. Parameters are bound as text and parsed explicitly 
 ```json
 {
   "users": [
-    { "userId": "…", "displayName": "…", "email": "…" }
+    { "userId": "…", "displayName": "…", "email": "…", "activationPending": false }
   ],
   "page": 1,
   "pageSize": 25,
@@ -623,7 +625,7 @@ With the index `(display_name COLLATE "unicode", id) WHERE actor_type = 'Human'`
 
 ### Lifecycle status
 
-`Status` is **not** in the row.
+`Status` is **not** in the row. Amendment 1 exposes exactly one derived lifecycle fact, `activationPending`, and nothing more; see below.
 
 The `user.read` permission is described as *"View user accounts and their current lifecycle status."* That description states the authority `user.read` grants; it is **not** the response schema of every read that uses it:
 
@@ -632,6 +634,85 @@ The `user.read` permission is described as *"View user accounts and their curren
 Exposing `app_user.status` today would be misleading rather than informative. Nothing can deactivate a user, so the value would read `Active` in every row, while the lifecycle states that are meaningful — pending activation and locked — are derived from other tables and would be absent from it. A later read that exposes lifecycle information decides what "status" means there, and whether `user.read` is sufficient for it.
 
 No permission catalogue change and no audit catalogue change accompany this.
+
+### Amendment 1 — `activationPending`
+
+**Decided 2026-09-18.** It closes the UI gap CRD-C7 left: which rows a client offers *Resend activation link* on. CRD-C7 rejected offering the action on every row and relying on refusals.
+
+#### Definition
+
+> **`activationPending` is `true` when the listed user holds at least one local identity and no credential on any identity, and `false` otherwise.**
+
+No credential is the pending-activation state (inv. 15). A credential exists only for a local identity (enforced by the credential's composite foreign key), so *no credential on any identity* and *no local identity holds a credential* are the same condition.
+
+The *at least one local identity* clause keeps a user who could never activate (no local identity, today unreachable through any command) from reading as pending. For every user a current command creates, the two readings coincide: USR-C1 creates exactly one local identity, and CRD-C1 gives it the credential.
+
+#### What it is, and what it is not
+
+- **Presentation data.** It tells a client whether to *offer* CRD-C7. It is **not authorization and not eligibility**: CRD-C7 re-verifies every rule itself (human, active, email, exactly one active local identity, no credential), and a `true` never makes a refused target eligible.
+- **Not a promise that CRD-C7 will succeed.** A pending user may still be ineligible, for example with two local identities or no email. The command refuses them, as it would anyway.
+- **A value at the moment of the read**, like every other field. Nothing snapshots it. A user who activates after the page was read still shows `true` until the next read, and CRD-C7 refuses them.
+- **Not a lifecycle status.** It does not replace, imply or encode `Status`, and it does not say whether the user is locked or active.
+- **`false` means only "not pending".** It does not mean the user has a usable password, can sign in, is unlocked or is otherwise fully active. A client infers nothing from it beyond the negation of the definition above.
+- **No credential detail.** It reveals only whether a credential exists. It exposes nothing about the credential: not its hash, algorithm, age, lockout state, failed attempts or `MustChangePassword`. Nor does it reveal token state (whether a link exists, has expired, or was ever mailed).
+
+#### Pagination, order and filtering are unaffected
+
+The field is computed for the rows a page returns. It plays no part in which rows are returned or in what order:
+
+- the order stays `DisplayName` under `"unicode"`, then `UserId`;
+- offset, `pageSize + 1`, `hasMore` and the absence of a total are unchanged;
+- no parameter filters by it or sorts by it. `?activationPending=true` is an unknown parameter and is ignored (*Request parameters*).
+
+#### Authority: `user.read` is sufficient
+
+*Lifecycle status* left it to the read that exposes lifecycle information to decide whether `user.read` suffices. For this fact, it does. `user.read` is described as *"View user accounts and their current lifecycle status"*, and whether an account has been activated is exactly that. Every `user.read` holder sees the field, including `access-reviewer`, which cannot act on it. No permission catalogue change.
+
+#### The client rule
+
+A client offers *Resend activation link* on a row **only when** `activationPending` is `true` **and** the caller holds `user.create`. Otherwise the action is absent, not merely disabled.
+
+A client **does not offer** *Reset password* (CRD-C5) on a row whose `activationPending` is `true`: CRD-C5 refuses a user with no credential, so the action could only fail. *Sign out everywhere* is unaffected; for a pending user it ends no sessions and succeeds.
+
+Stated as the client's whole logic, with no broader lifecycle inference:
+
+```text
+activationPending  and  holds user.create         →  offer Resend activation link
+not activationPending  and  holds user.resetpassword  →  offer Reset password
+holds session.revoke                                →  offer Sign out everywhere
+```
+
+`user.read` shows the field; `user.create` is what allows the resend. Those are separate concerns, so an access reviewer sees that a user is pending and is offered nothing.
+
+Both are presentation rules. The commands' own refusals are unchanged, and remain the authority.
+
+#### The evidence (*Adding a field later*)
+
+1. **Concrete use.** CRD-C7's action is offered only where it can succeed, and CRD-C5's is withheld where it cannot.
+2. **Data exposure.** One boolean per human user: whether the account has been activated. It carries no credential detail and no token state, and every holder of `user.read` is already authorised to view lifecycle status.
+3. **Necessity.** Without it a client must either offer both actions on every row and rely on refusals (rejected in CRD-C7), or make one request per row, which does not exist and would be worse.
+4. **Removal cost.** Once the Users table depends on it, removing it brings back an action on every row that routinely fails. That is the cost of any field. It is additive for existing clients: the current web schema strips unknown members, so adding it breaks nothing.
+5. **Stable identity.** A boolean cannot be mistaken for an identifier. It is not a key, a route or a cache identity (P4 unchanged).
+
+#### Query
+
+The row is still read in one statement per page, with no count. The derivation is a correlated existence test on the identities and credentials of the returned users only:
+
+```sql
+SELECT u.id, u.display_name, u.email,
+       EXISTS (SELECT 1 FROM user_identity i
+               WHERE i.user_id = u.id AND i.identity_type = 'Local')
+       AND NOT EXISTS (SELECT 1 FROM user_identity i
+                       JOIN credential c ON c.user_identity_id = i.id
+                       WHERE i.user_id = u.id) AS activation_pending
+FROM app_user u
+WHERE u.actor_type = 'Human'
+ORDER BY u.display_name COLLATE "unicode", u.id
+OFFSET (page − 1) × pageSize
+LIMIT pageSize + 1
+```
+
+The existing indexes serve both tests: `user_identity (user_id, actor_type)` and `credential (user_identity_id, identity_type)`. The implementation measures the plan against *Page-size values*' 100,000-user data and records it here. The derivation must not turn the top-N sort into a full join.
 
 ### Adding a field later
 
@@ -647,7 +728,7 @@ A field joins the row only with the same evidence that admitted these three:
 
 ### Acceptance Criteria
 
-- **P1** A user-list row contains exactly `UserId`, `DisplayName`, and `Email`; no additional fields are exposed by the projection.
+- **P1** A user-list row contains exactly `UserId`, `DisplayName`, `Email` and, since Amendment 1, `ActivationPending`; no additional fields are exposed by the projection. *(Amended 2026-09-18: previously exactly the first three.)*
 - **P2** The System user never appears in the list.
 - **P3** No excluded field appears in a row, under any name.
 - **P4** Identifier usage: `UserId` is the only identifier exposed by this projection. `DisplayName` and `Email` must not be used as identifiers by clients. Server-side tests verify that only `UserId` is designated as an identifier; client tests, where applicable, verify that `DisplayName` and `Email` are not used as keys, routes, cache identities, or matching identities.
@@ -665,6 +746,12 @@ A field joins the row only with the same evidence that admitted these three:
 - **P12** The list offers no client-controlled sort field or sort direction: no request parameter changes the order, and every request returns rows in the default order. How an unrecognised parameter is treated is not decided here.
 - **P13** The default order is the same in every environment the platform runs in, including where the database's default collation differs.
 - **P14** No request parameter narrows the result set: every request pages over the complete set of human users.
+- **P15** `activationPending` is `true` for a human user who holds a local identity and no credential, and `false` for one who holds a credential. It is also `false` for a user with no local identity.
+- **P16** `activationPending` is present on every row, as a JSON boolean, never `null`.
+- **P17** Adding `activationPending` changes neither which rows a page returns nor their order, nor `hasMore`. No parameter filters or sorts by it.
+- **P18** No row exposes credential or token detail under any name: no hash, algorithm, lockout, failed-attempt count, `MustChangePassword`, token or token state.
+- **P19** A client offers *Resend activation link* on a row only when `activationPending` is `true` and the caller holds `user.create`, and does not offer *Reset password* on a row whose `activationPending` is `true`.
+- **P20** `activationPending` grants nothing: CRD-C7 and CRD-C5 refuse by their own rules whatever a row said.
 
 ### Notes
 
