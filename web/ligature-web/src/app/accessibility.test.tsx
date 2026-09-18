@@ -1,6 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
-import { beforeEach, describe, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createQueryClient } from "@/app/queryClient";
+import { authKeys } from "@/shared/auth/me";
+import { definePermission } from "@/shared/auth/permissions";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { PageHeader } from "@/shared/components/PageHeader";
 import { AppShell } from "@/shared/layout/AppShell";
@@ -103,5 +106,58 @@ describe("the foundation's rendered accessibility", () => {
     );
 
     await expectNoAccessibilityViolations(container);
+  });
+});
+
+/**
+ * THE WHOLE PAGE, not the render container. axe applies its "all content is
+ * inside a landmark" rule only when auditing the page, which is what a browser
+ * extension or a screen-reader user meets; the container audits above never ran
+ * it. Found by the My account story: the shell's brand and its footer (the
+ * caller's name, My account, Sign out) sat outside every landmark.
+ */
+describe("the signed-in shell, audited as a whole page", () => {
+  const READ = definePermission("user.read");
+
+  const cases = [
+    ["a caller whose permissions are not yet known", null],
+    ["a caller holding no permissions, so the primary navigation is absent", { permissions: [] }],
+    ["a caller holding user.read", { permissions: [{ code: READ }] }],
+  ] as const;
+
+  it.each(cases)("has no violations for %s, with the caller's name shown", async (_, principal) => {
+    const queryClient = createQueryClient();
+
+    queryClient.setQueryData(authKeys.me(), {
+      identity: { userIdentityId: "i-1", username: "ada", displayName: "Ada Lovelace" },
+      permissions: [],
+      session: { expiresAt: "2026-09-17T20:00:00Z", idleExpiresAt: "2026-09-17T12:15:00Z" },
+    });
+
+    renderWithApp(appRoutes, {
+      path: "/",
+      source: new TestSessionSource({ status: "authenticated", principal }),
+      queryClient,
+    });
+
+    await screen.findByRole("heading", { level: 1, name: "Home" });
+    await screen.findByText("Ada Lovelace");
+    await expectNoAccessibilityViolations(document.body);
+  });
+
+  it("puts the brand in the banner and the caller's own controls in an Account navigation", async () => {
+    renderWithApp(appRoutes, {
+      path: "/",
+      source: new TestSessionSource({ status: "authenticated", principal: { permissions: [] } }),
+    });
+
+    await screen.findByRole("heading", { level: 1, name: "Home" });
+
+    const banner = screen.getByRole("banner");
+    expect(within(banner).getByRole("link", { name: "Ligature" })).toBeInTheDocument();
+
+    const account = screen.getByRole("navigation", { name: "Account" });
+    expect(within(account).getByRole("link", { name: "My account" })).toBeInTheDocument();
+    expect(within(account).getByRole("button", { name: "Sign out" })).toBeInTheDocument();
   });
 });
