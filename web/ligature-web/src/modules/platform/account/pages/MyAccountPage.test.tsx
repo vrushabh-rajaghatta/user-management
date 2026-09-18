@@ -452,13 +452,22 @@ describe("sign-out failures (M9)", () => {
     ["Sign out everywhere", "Sign out everywhere?"],
   ] as const;
 
+  /**
+   * Each failure's message as the application shows it: the server's own
+   * sentence for a 500, and the API boundary's for a request that never
+   * reached the server.
+   */
   const failures = [
-    ["the host fails", () => HttpResponse.json({ error: "The request could not be completed." }, { status: 500 })],
-    ["the host cannot be reached", () => HttpResponse.error()],
+    [
+      "the host fails",
+      () => HttpResponse.json({ error: "The request could not be completed." }, { status: 500 }),
+      "The request could not be completed.",
+    ],
+    ["the host cannot be reached", () => HttpResponse.error(), "The server could not be reached."],
   ] as const;
 
   for (const [action, title] of actions) {
-    for (const [failure, respond] of failures) {
+    for (const [failure, respond, message] of failures) {
       it(`${action}: when ${failure}, says so and leaves the caller signed in on /account`, async () => {
         const state = backend({ everywhere: respond });
         const { user, router, source } = render();
@@ -468,7 +477,7 @@ describe("sign-out failures (M9)", () => {
         const dialog = await screen.findByRole("dialog", { name: title });
         await user.click(within(dialog).getByRole("button", { name: action }));
 
-        expect(await screen.findByText(/could not be completed/i)).toBeInTheDocument();
+        expect(await screen.findByText(message)).toBeInTheDocument();
         expect(state.signOuts).toHaveLength(1);
         expect(source.signedOutCalls).toBe(0);
         expect(router.state.location.pathname).toBe("/account");
