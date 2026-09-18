@@ -126,6 +126,105 @@ public sealed partial class DevelopmentMailSinkHostTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// CRD-C7 through the real host: reissuing writes a SECOND message, whose
+    /// link carries the credential of the one open activation token. The first
+    /// link's token is invalidated. Proven by hash, not by activating, for the
+    /// cleanup reason above.
+    /// </summary>
+    [Fact]
+    public async Task Reissuing_writes_a_second_message_carrying_the_one_open_link()
+    {
+        await TestDatabase.EnsureProvisionedAsync();
+
+        await using var factory = new HostFactory(settings: new Dictionary<string, string>
+        {
+            [HostConfiguration.PublicBaseUrlSetting] = BaseUrl,
+            [HostConfiguration.MailDevSinkDirectorySetting] = _directory,
+        });
+
+        var client = factory.CreateClient();
+        var admin = await EnsureAdministratorAsync(client);
+
+        var marker = Guid.NewGuid().ToString("N")[..10];
+
+        Guid? created = null;
+
+        try
+        {
+            using var create = new HttpRequestMessage(HttpMethod.Post, "/api/users")
+            {
+                Content = JsonContent.Create(new
+                {
+                    FirstName = "Sink",
+                    LastName = "Reissued",
+                    DisplayName = $"Sink Reissued {marker}",
+                    Email = $"sink-reissued-{marker}@example.test",
+                    InitialUsername = $"sink-reissued-{marker}",
+                }),
+            };
+
+            create.Headers.Authorization = new AuthenticationHeaderValue("Bearer", admin);
+
+            var response = await client.SendAsync(create);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            created = body.RootElement.GetProperty("userId").GetGuid();
+
+            var first = await WaitForFilesAsync(1);
+            var firstToken = Guid.Parse(ActivationLink().Match(await File.ReadAllTextAsync(first[0])).Groups["id"].Value);
+
+            using var reissue = new HttpRequestMessage(HttpMethod.Post, $"/api/users/{created}/activation-link")
+            {
+                Content = JsonContent.Create(new { Reason = "The first mail was lost." }),
+            };
+
+            reissue.Headers.Authorization = new AuthenticationHeaderValue("Bearer", admin);
+
+            Assert.Equal(HttpStatusCode.Accepted, (await client.SendAsync(reissue)).StatusCode);
+
+            var second = Assert.Single((await WaitForFilesAsync(2)).Except(first));
+            var link = ActivationLink().Match(await File.ReadAllTextAsync(second));
+
+            Assert.True(link.Success, "The reissued message carries no activation link.");
+
+            var (tokenId, secret) = (Guid.Parse(link.Groups["id"].Value), link.Groups["secret"].Value);
+
+            await using var connection = await TestDatabase.OpenAsync();
+
+            await using var open = new NpgsqlCommand(
+                """
+                SELECT t.id, t.token_hash FROM user_token t
+                JOIN user_identity i ON i.id = t.user_identity_id
+                WHERE i.user_id = @user AND t.token_type = 'Activation'
+                  AND t.used_at IS NULL AND t.invalidated_at IS NULL
+                """, connection);
+
+            open.Parameters.AddWithValue("user", created.Value);
+
+            var rows = new List<(Guid Id, string Hash)>();
+
+            await using (var reader = await open.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                    rows.Add((reader.GetGuid(0), reader.GetString(1)));
+            }
+
+            var only = Assert.Single(rows);
+
+            Assert.Equal(tokenId, only.Id);
+            Assert.Equal(Sha256Hex(secret), only.Hash);
+            Assert.NotEqual(firstToken, tokenId);
+        }
+        finally
+        {
+            if (created is not null)
+                await DeleteUserAsync(created.Value);
+        }
+    }
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
     [GeneratedRegex(@"https://localhost:5173/activate#token=(?<id>[0-9a-f-]{36})\.(?<secret>[A-Za-z0-9_-]+)")]
@@ -146,6 +245,26 @@ public sealed partial class DevelopmentMailSinkHostTests : IDisposable
         }
 
         throw new TimeoutException("No message reached the development mail sink.");
+    }
+
+    private async Task<string[]> WaitForFilesAsync(int count)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            var files = Directory.GetFiles(_directory);
+
+            if (files.Length >= count)
+            {
+                Assert.Equal(count, files.Length);
+                return files;
+            }
+
+            await Task.Delay(100);
+        }
+
+        throw new TimeoutException($"{count} message(s) did not reach the development mail sink.");
     }
 
     private static string Sha256Hex(string secret)
