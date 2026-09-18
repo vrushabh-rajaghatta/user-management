@@ -22,9 +22,23 @@ namespace Ligature.Platform.Application.Users.Commands.ChangePassword;
 /// the caller anything about the current one.
 ///
 /// NO LOCKOUT COUNTING (D2). A wrong current password does not touch
-/// FailedAttemptCount and cannot lock the account; that would be a new
-/// security behaviour CRD-C4 does not specify. The consequence — a valid
-/// session can guess without limit — is recorded in docs/requirements.md.
+/// FailedAttemptCount and cannot lock the account, and CRD-C4 never produces
+/// AccountLocked: SES-C1 remains its only producer.
+///
+/// THE SESSION IS LIMITED INSTEAD (docs/requirements.md, "CRD-C4 — limiting
+/// current-password attempts per session", L1–L8). A wrong current password,
+/// and a refusal because the credential is locked (L8), count against THIS
+/// session. Below the effective MaxFailedLoginAttempts the answer is the
+/// uniform refusal; at it, this session is revoked and nothing else is touched.
+/// Counted refusals RETURN an outcome rather than throw, because a thrown
+/// refusal rolls back, and the count must commit although the command refuses.
+/// Every other refusal still throws.
+///
+/// ONE SERIALISATION POINT. The caller's app_user row lock is taken FIRST, the
+/// clock is read after it, and the session is read and re-checked under it
+/// (docs/architecture.md, "Serialising commands on one user"). Two attempts on
+/// one session therefore cannot both see N−1, and an attempt that waited acts
+/// on what committed while it waited, never on what it saw before.
 ///
 /// A LOCKED CREDENTIAL CANNOT BE CHANGED (D3). Otherwise a stolen session would
 /// be a way around lockout, since a successful change clears the lock.
@@ -46,6 +60,10 @@ public sealed class ChangePasswordCommandHandler
     private const string NotChanged = ChangePasswordResult.NotChanged;
 
     private const string RevocationReason = "PasswordChanged";
+
+    /// <summary>The audit Reason when this session is ended by the limit (L5, R1).</summary>
+    internal const string AttemptLimitExplanation =
+        "Too many incorrect current passwords while changing the password";
 
     private readonly IClock _clock;
     private readonly IExecutionContext _executionContext;
@@ -103,12 +121,22 @@ public sealed class ChangePasswordCommandHandler
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        var now = _clock.UtcNow;
         var caller = _executionContext.UserId;
 
         return await _unitOfWork.ExecuteInTransactionAsync(
             async ct =>
             {
+                // ---- Step 0. The serialisation point, then the clock. Nothing
+                // about the session is read before the lock is held.
+
+                if (await _userRepository.FindForUpdateAsync(caller, ct) is null)
+                    throw new BusinessRuleViolationException(NotChanged);
+
+                var now = _clock.UtcNow;
+
+                var policy = await _securityPolicyResolver
+                    .GetEffectiveSettingsAsync(now, ct);
+
                 // ---- Step 1. The session, its identity, and the credential.
 
                 var session = await _userSessionRepository
@@ -131,6 +159,16 @@ public sealed class ChangePasswordCommandHandler
                     throw new BusinessRuleViolationException(NotChanged);
                 }
 
+                // Re-checked UNDER the lock, by the pipeline's own definition
+                // of active (the repository's, with its tolerance). Ended while
+                // this request waited — by the limit, a sign-out, a revocation —
+                // it is over: nothing is counted and nothing changes.
+                if (await _userSessionRepository.FindActiveAsync(
+                        session.Id, now, policy.SessionIdleTimeout, ct) is null)
+                {
+                    return ChangePasswordResult.SessionEnded;
+                }
+
                 var credential = await _credentialRepository
                     .FindByIdentityAsync(identity.Id, ct);
 
@@ -144,12 +182,14 @@ public sealed class ChangePasswordCommandHandler
                 {
                     _passwordHasher.VerifyDecoy(command.CurrentPassword ?? string.Empty);
 
-                    throw new BusinessRuleViolationException(NotChanged);
+                    // L8: counted exactly as a wrong password is, so the count
+                    // is not one more way to tell "locked" from "wrong".
+                    return CountFailedAttempt(session, caller, now, policy);
                 }
 
                 // ---- Step 3. The current password, before anything else is
-                // judged. Fixed-time comparison happens inside the hasher. No
-                // counter moves on failure (D2).
+                // judged. Fixed-time comparison happens inside the hasher. The
+                // credential's counter never moves (D2); the session's does.
 
                 var verification = _passwordHasher.Verify(
                     command.CurrentPassword ?? string.Empty,
@@ -157,12 +197,12 @@ public sealed class ChangePasswordCommandHandler
                     credential.PasswordAlgorithm);
 
                 if (!verification.IsValid)
-                    throw new BusinessRuleViolationException(NotChanged);
+                    return CountFailedAttempt(session, caller, now, policy);
 
                 // ---- Step 4. The new password: the policy floor, then reuse.
-
-                var policy = await _securityPolicyResolver
-                    .GetEffectiveSettingsAsync(now, ct);
+                // A refusal here proves the current password was right, but is
+                // not a success: it neither counts nor resets (thrown, so
+                // nothing commits).
 
                 if (command.NewPassword is null
                     || command.NewPassword.Length < policy.PasswordMinLength)
@@ -202,6 +242,9 @@ public sealed class ChangePasswordCommandHandler
                     hashed.Algorithm,
                     now,
                     mustChangePassword: false);
+
+                // L3: a successful change starts this session's count again.
+                session.ResetFailedPasswordChangeAttempts();
 
                 await _passwordHistoryRepository.AddAsync(
                     PasswordHistory.Create(
@@ -270,5 +313,25 @@ public sealed class ChangePasswordCommandHandler
                 return ChangePasswordResult.Changed;
             },
             cancellationToken);
+    }
+
+    /// <summary>
+    /// One counted refusal (L1–L5). Below the effective MaxFailedLoginAttempts —
+    /// deliberately the sign-in threshold, applied here to consecutive failures
+    /// within ONE session (L2) — the uniform refusal. At it, this session is
+    /// revoked with the controlled code and recorded once as SessionRevoked, by
+    /// the account holder, with the explanation as its Reason and the code in
+    /// Before/After (R1). Returned, never thrown, so the count commits.
+    /// </summary>
+    private ChangePasswordResult CountFailedAttempt(
+        UserSession session, UserId caller, DateTimeOffset now, SecurityPolicySettings policy)
+    {
+        if (session.RecordFailedPasswordChange() < policy.MaxFailedLoginAttempts)
+            return ChangePasswordResult.Refused;
+
+        if (session.Revoke(now, caller, SessionRevocations.PasswordChangeAttemptsExceeded))
+            SessionRevocations.Declare(_auditEvents, session, caller, AttemptLimitExplanation);
+
+        return ChangePasswordResult.SessionEnded;
     }
 }

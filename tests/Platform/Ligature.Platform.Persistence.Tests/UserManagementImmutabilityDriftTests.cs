@@ -96,7 +96,9 @@ public sealed class UserManagementImmutabilityDriftTests : IAsyncLifetime
              "must_change_password", "failed_attempt_count", "locked_until"],
         ["password_history"] = [],
         ["user_token"] = [],
-        ["user_session"] = ["last_activity_at"],
+        // failed_password_change_attempts: CRD-C4's per-session attempt count
+        // (L6), mutable by design — it rises and resets.
+        ["user_session"] = ["last_activity_at", "failed_password_change_attempts"],
         ["security_policy"] = [],
         ["role"] = ["name", "description", "is_active", "updated_at", "updated_by"],
         // Release-controlled: changed by a release migration, never a tenant.

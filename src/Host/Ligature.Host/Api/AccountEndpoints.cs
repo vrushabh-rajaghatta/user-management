@@ -92,7 +92,13 @@ public static class AccountEndpoints
                 + "other sessions; this session stays signed in. A wrong current "
                 + "password and an account that cannot be changed right now "
                 + "return the same 400. A new password the policy refuses also "
-                + "returns 400. Success is 204 with no body.")
+                + "returns 400. Success is 204 with no body.\n\n"
+                + "Attempts are limited per session: after the policy's "
+                + "MaxFailedLoginAttempts consecutive incorrect current "
+                + "passwords, THIS session is ended, the response is 401 and "
+                + "the carrier cookie is cleared. The account is not locked and "
+                + "its other sessions are unaffected. A successful change "
+                + "starts the count again.")
             .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
@@ -158,10 +164,18 @@ public static class AccountEndpoints
     /// <summary>
     /// The session comes from the carrier this request presented, never from a
     /// body: it names whose password changes and which session survives.
+    ///
+    /// Counted refusals arrive as outcomes, not exceptions (docs/requirements.md,
+    /// "CRD-C4 — limiting current-password attempts per session"): Refused is
+    /// the SAME 400 a thrown refusal produces, body and all; SessionEnded is the
+    /// pipeline's 401 wording, with the cookie naming the ended session cleared
+    /// (L4). Every other refusal still throws and leaves through
+    /// ProblemMiddleware as before.
     /// </summary>
     private static async Task<IResult> ChangePasswordAsync(
         ChangePasswordRequest? request,
         CurrentCarrier currentCarrier,
+        HttpContext context,
         ICommandDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
@@ -174,12 +188,30 @@ public static class AccountEndpoints
                 new { Error = "The current password and a new password are required." });
         }
 
-        await dispatcher.SendAsync<ChangePasswordCommand, ChangePasswordResult>(
+        var result = await dispatcher.SendAsync<ChangePasswordCommand, ChangePasswordResult>(
             new ChangePasswordCommand(
                 currentCarrier.SessionId, request.CurrentPassword, request.NewPassword),
             cancellationToken);
 
-        return Results.NoContent();
+        switch (result.Outcome)
+        {
+            case ChangePasswordOutcome.Changed:
+                return Results.NoContent();
+
+            case ChangePasswordOutcome.Refused:
+                return Results.BadRequest(new { Error = ChangePasswordResult.NotChanged });
+
+            case ChangePasswordOutcome.SessionEnded:
+                // The session is over, so the cookie naming it goes too — after
+                // the revocation committed, as at sign-out.
+                CarrierCookie.Clear(context.Response);
+
+                return Results.Json(new { Error = Rejected }, statusCode: 401);
+
+            default:
+                throw new InvalidOperationException(
+                    $"Unmapped CRD-C4 outcome '{result.Outcome}'.");
+        }
     }
 
     /// <summary>Never persisted, and never echoed back.</summary>

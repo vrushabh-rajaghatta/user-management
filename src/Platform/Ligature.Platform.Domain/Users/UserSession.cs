@@ -47,16 +47,31 @@ public sealed class UserSession : Entity<UserSessionId>
 
     public string? UserAgent { get; }
 
-    /// <summary>COMPILE-ONLY STUB (red tests).</summary>
+    /// <summary>
+    /// CRD-C4's consecutive failed current-password attempts within THIS
+    /// authenticated session (docs/requirements.md, "CRD-C4 — limiting
+    /// current-password attempts per session", L6).
+    ///
+    /// Session-scoped by design. It is not an account-wide count, and it is not
+    /// the credential's FailedAttemptCount: reaching the threshold ends this
+    /// session and nothing else — never a lockout. The threshold is policy and
+    /// is applied by the command, not here.
+    /// </summary>
     public int FailedPasswordChangeAttempts { get; private set; }
 
-    /// <summary>COMPILE-ONLY STUB (red tests).</summary>
+    /// <summary>Counts one failed attempt and returns the new count.</summary>
     public int RecordFailedPasswordChange()
-        => throw new NotImplementedException();
+    {
+        FailedPasswordChangeAttempts++;
 
-    /// <summary>COMPILE-ONLY STUB (red tests).</summary>
+        return FailedPasswordChangeAttempts;
+    }
+
+    /// <summary>A successful change starts the count again (L3). No time decay.</summary>
     public void ResetFailedPasswordChangeAttempts()
-        => throw new NotImplementedException();
+    {
+        FailedPasswordChangeAttempts = 0;
+    }
 
     public static UserSession Create(
         UserSessionId id,
