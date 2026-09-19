@@ -270,6 +270,31 @@ describe("a username the server refuses", () => {
     });
   });
 
+  // Like a late answer (UA-9): a refusal about a value the field no longer
+  // holds must neither show nor block.
+  it("is discarded when it arrives after the field changed", async () => {
+    const state = backend({
+      check: async (username) => {
+        await delay(200);
+        return refuseSpaced(username);
+      },
+    });
+    const { user } = render();
+    await fillOthers(user);
+
+    await enterUsername(user, " ada.lovelace");
+    await user.type(screen.getByLabelText("Username"), "2");
+    await delay(300);
+
+    expect(screen.queryByText(REFUSED)).toBeNull();
+
+    await create(user);
+
+    await waitFor(() => {
+      expect(state.creates()).toBe(1);
+    });
+  });
+
   it("ties the sentence to the field, with no accessibility violations", async () => {
     backend({ check: refuseSpaced });
     const { container, user } = render();
