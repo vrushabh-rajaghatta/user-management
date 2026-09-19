@@ -7,10 +7,15 @@ using Microsoft.EntityFrameworkCore;
 namespace Ligature.Platform.Persistence.Services;
 
 /// <summary>
-/// USR-Q1 GetUser, narrow v1 (docs/requirements.md, "USR-C2 — Update User
-/// Profile, and USR-Q1 GetUser (narrow v1)"): exactly the four profile fields,
-/// for HUMAN users only — the scope the list uses — so the System actor reads
-/// as unknown. None of the catalogue's other GetUser fields.
+/// USR-Q1 GetUser v2 (docs/requirements.md, "USR-Q1 GetUser v2 and the User
+/// detail page"): the names, and the list row's email, status and
+/// activationPending — read through the SAME projection the list uses, so the
+/// two agree. HUMAN users only, the scope the list uses, so the System actor
+/// reads as unknown.
+///
+/// Nothing else: no identities and no assignments (the USR-Q1 composition
+/// amendment — those are IDN-Q1's under identity.read and AUT-Q2's under
+/// role.read), and no actor type or deactivation time.
 /// </summary>
 public sealed class UserProfileReader : IUserProfileReader
 {
@@ -30,13 +35,14 @@ public sealed class UserProfileReader : IUserProfileReader
         var row = await _dbContext.Set<User>()
             .AsNoTracking()
             .Where(x => x.Id == userId && x.ActorType == ActorType.Human)
-            .Select(x => new { x.Id, x.FirstName, x.LastName, x.DisplayName })
+            .Select(UserLifecycleProjection.Of(_dbContext))
             .SingleOrDefaultAsync(cancellationToken);
 
         // First and last name are non-null for humans (ck_app_user_human_names).
         return row is null
             ? null
-            // COMPILE-ONLY STUB (red tests): v2's fields are not read yet.
-            : new UserProfileResult(row.Id, row.FirstName!, row.LastName!, row.DisplayName, null, UserStatus.Active, false);
+            : new UserProfileResult(
+                row.UserId, row.FirstName!, row.LastName!, row.DisplayName,
+                row.Email?.Value, row.Status, row.ActivationPending);
     }
 }

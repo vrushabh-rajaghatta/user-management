@@ -3,9 +3,11 @@ using Ligature.Platform.Domain.Users;
 namespace Ligature.Platform.Application.Users.Queries.UserProfile;
 
 /// <summary>
-/// COMPILE-ONLY STUB (red tests) for v2's three added fields.
-/// USR-Q1 v1: exactly these four fields. First and last name are non-null for
-/// the human users this read serves (ck_app_user_human_names).
+/// USR-Q1 GetUser v2: exactly these seven fields. First and last name are
+/// non-null for the human users this read serves (ck_app_user_human_names).
+/// Email, Status and ActivationPending mean exactly what they mean on the
+/// list row (USR-Q2): Email is nullable because the column is, and
+/// ActivationPending false means only "not pending".
 /// </summary>
 public sealed record UserProfileResult(
     UserId UserId,

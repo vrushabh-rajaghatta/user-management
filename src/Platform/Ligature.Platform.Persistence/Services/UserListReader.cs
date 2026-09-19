@@ -60,31 +60,15 @@ public sealed class UserListReader : IUserListReader
         var rows = await page
             .OrderBy(x => EF.Functions.Collate(x.DisplayName, Collation))
             .ThenBy(x => x.Id)
-            .Select(x => new
-            {
-                x.Id,
-                x.DisplayName,
-                x.Email,
-
-                // USR-Q2 Amendment 2: the stored status, exactly. On the row
-                // already read, so it costs nothing and takes no part in
-                // which rows or in what order.
-                x.Status,
-
-                // USR-Q2 amendment 1 (D1), exactly and nothing broader: at
-                // least one local identity, and no credential on any identity
-                // of the user. It takes no part in which rows or in what order.
-                ActivationPending =
-                    _dbContext.Set<UserIdentity>().Any(i =>
-                        i.UserId == x.Id && i.IdentityType == IdentityType.Local)
-                    && !_dbContext.Set<UserIdentity>()
-                        .Where(i => i.UserId == x.Id)
-                        .Any(i => _dbContext.Set<Credential>().Any(c => c.UserIdentityId == i.Id)),
-            })
+            // What each user IS (email, status, activationPending) comes from
+            // the projection the detail read shares, so the two views cannot
+            // disagree (UserLifecycleProjection). It takes no part in which
+            // rows or in what order.
+            .Select(UserLifecycleProjection.Of(_dbContext))
             .ToListAsync(cancellationToken);
 
         return rows
-            .Select(x => new UserListRow(x.Id, x.DisplayName, x.Email?.Value, x.ActivationPending, x.Status))
+            .Select(x => new UserListRow(x.UserId, x.DisplayName, x.Email?.Value, x.ActivationPending, x.Status))
             .ToList();
     }
 }

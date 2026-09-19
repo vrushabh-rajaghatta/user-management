@@ -5,7 +5,7 @@ using Ligature.SharedKernel.Exceptions;
 namespace Ligature.Platform.Application.Users.Queries.UserProfile;
 
 /// <summary>
-/// USR-Q1 GetUser, narrow v1. A query has no pipeline, so the handler
+/// USR-Q1 GetUser (v2: the names, email, status and activationPending). A query has no pipeline, so the handler
 /// establishes, in order, as USR-Q2's and AUT-Q2's do: authenticate,
 /// authorise user.read, then read. An unknown user — the System actor
 /// included — is refused as unknown. Not audited: reads are not events.
