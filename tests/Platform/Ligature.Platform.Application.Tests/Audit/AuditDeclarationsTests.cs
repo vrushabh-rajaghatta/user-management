@@ -3,6 +3,7 @@ using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
+using Ligature.Platform.Application.Users.Commands.ChangeUserEmail;
 using Ligature.Platform.Application.Users.Commands.DeactivateUser;
 using Ligature.Platform.Application.Users.Commands.GrantRole;
 using Ligature.Platform.Application.Users.Commands.ReactivateUser;
@@ -183,6 +184,19 @@ public sealed class AuditDeclarationsTests
     }
 
     /// <summary>
+    /// USR-C3: one record, and deliberately NOT TokenInvalidated for the links
+    /// it invalidates — none is superseded (D13, as USR-C4).
+    /// </summary>
+    [Fact]
+    public void USR_C3_declares_UserEmailChanged()
+    {
+        var declaration = AuditDeclarations.For(typeof(ChangeUserEmailCommand));
+
+        Assert.Equal("UserManagement", declaration!.OwningContext);
+        Assert.Equal(["UserEmailChanged"], declaration.Codes);
+    }
+
+    /// <summary>
     /// USR-C4: the cascade's four events, and deliberately NOT TokenInvalidated.
     /// Its frozen definition requires a SupersededBy token and deactivation has
     /// none (D13), so the invalidated tokens are recorded as state only.
@@ -255,7 +269,7 @@ public sealed class AuditDeclarationsTests
                 typeof(ReissueActivationLinkCommand),
                 typeof(GrantRoleCommand), typeof(RevokeRoleCommand),
                 typeof(DeactivateUserCommand), typeof(ReactivateUserCommand),
-                typeof(UpdateUserProfileCommand),
+                typeof(UpdateUserProfileCommand), typeof(ChangeUserEmailCommand),
                 typeof(UnlockAccountCommand),
                 typeof(RevokeSessionCommand), typeof(RevokeUserSessionsCommand),
                 typeof(SignOutEverywhereCommand),

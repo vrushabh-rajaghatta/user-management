@@ -13,6 +13,7 @@ import { ApiError } from "@/shared/api/errors";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { useCan } from "@/shared/auth/useCan";
 import { Page } from "@/shared/components/Page";
+import { ChangeEmailDialog } from "../components/ChangeEmailDialog";
 import { EditProfileDialog } from "../components/EditProfileDialog";
 import { ManageRolesDialog } from "../components/ManageRolesDialog";
 import { UserActionDialog, type UserAction } from "../components/UserActionDialog";
@@ -200,6 +201,18 @@ function UserDetail({ detail }: { readonly detail: UserProfile }) {
       ) : opened.action === "edit-profile" ? (
         // Its own save already re-reads GetUser and the list (USR-C2 UI).
         <EditProfileDialog
+          open={opened.open}
+          user={user}
+          returnFocus={returnFocus}
+          onClose={close}
+          onSaved={(message) => {
+            setQueued(message);
+          }}
+          onClosed={closed}
+        />
+      ) : opened.action === "change-email" ? (
+        // Its own save already re-reads GetUser and the list (USR-C3 UI).
+        <ChangeEmailDialog
           open={opened.open}
           user={user}
           returnFocus={returnFocus}

@@ -161,6 +161,10 @@ public sealed class SignInCredentialMutationTests
             EmailAddress email, CancellationToken cancellationToken)
             => Task.FromResult(false);
 
+        public Task<bool> ExistsOtherActiveHumanWithEmailAsync(
+            EmailAddress email, UserId excluding, CancellationToken cancellationToken)
+            => Task.FromResult(false);
+
         public Task AddAsync(User added, CancellationToken cancellationToken)
             => Task.CompletedTask;
 

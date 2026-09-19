@@ -62,6 +62,39 @@ public sealed class UserRepository : IUserRepository
     }
 
     /// <summary>
+    /// USR-C3 (CE5): the same predicate as ExistsActiveHumanWithEmailAsync —
+    /// the index's own terms — with the target left out, so a user's own
+    /// address is never a collision with itself. The HOLDER's status is what
+    /// the predicate reads; the target's status is irrelevant here.
+    /// </summary>
+    public async Task<bool> ExistsOtherActiveHumanWithEmailAsync(
+        EmailAddress email,
+        UserId excluding,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(email);
+        ArgumentNullException.ThrowIfNull(excluding);
+
+        var value = email.Value;
+        var id = excluding.Value;
+
+        return await _dbContext.Database
+            .SqlQuery<bool>(
+                $"""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM "app_user"
+                    WHERE lower("email") = lower({value})
+                      AND "actor_type" = 'Human'
+                      AND "status" <> 'Inactive'
+                      AND "email" IS NOT NULL
+                      AND "id" <> {id}
+                ) AS "Value"
+                """)
+            .SingleAsync(cancellationToken);
+    }
+
+    /// <summary>
     /// Adds to the change tracker only. UnitOfWork owns the save, so that a
     /// command writing several aggregates cannot half-commit.
     /// </summary>
