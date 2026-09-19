@@ -281,7 +281,7 @@ describe("unlocking", () => {
     const dialog = await screen.findByRole("dialog", { name: "Unlock vr.ra" });
     await user.click(within(dialog).getByRole("button", { name: "Unlock" }));
 
-    expect(await within(dialog).findByText(/reason/i)).toBeInTheDocument();
+    expect(await within(dialog).findByText("A reason is required.")).toBeInTheDocument();
     expect(state.unlocks).toHaveLength(0);
   });
 
@@ -312,7 +312,12 @@ describe("unlocking", () => {
       expect(state.identityReads()).toBeGreaterThan(readsBefore);
     });
     expect(await screen.findByText("vr.ra was unlocked.")).toBeInTheDocument();
-    expect(await within(region).findByText("Not locked")).toBeInTheDocument();
+    // The unlocked identity's own row: the external one always read "Not locked".
+    await waitFor(() => {
+      const row = within(region).getByText("vr.ra").closest("tr");
+      expect(row).not.toBeNull();
+      expect(row).toHaveTextContent("Not locked");
+    });
     expect(screen.queryByRole("button", { name: "Unlock vr.ra" })).toBeNull();
 
     // Nothing else is re-read: unlocking changes nothing they show.
