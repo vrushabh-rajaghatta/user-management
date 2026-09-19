@@ -2237,7 +2237,7 @@ A section's request is **never made** when its permission is not held. The clien
 
 ## IDN-Q1 GetUserIdentities and Unlock on the User detail page (story 2)
 
-**Status:** Draft, 2026-09-19. The owner has decided I1–I9. **The identity response and the Unlock acceptance criteria below are open for review** before freezing. This builds on story 1 (*USR-Q1 GetUser v2 and the User detail page*, #69) and on CRD-C6 `UnlockAccount` (`POST /api/identities/{identityId}/unlock`), which is unchanged.
+**Status:** Contract frozen 2026-09-19 by owner decision (I1–I9, the identity response, and the Unlock acceptance criteria, with the owner's two clarifications). This builds on story 1 (*USR-Q1 GetUser v2 and the User detail page*, #69) and on CRD-C6 `UnlockAccount` (`POST /api/identities/{identityId}/unlock`), which is unchanged.
 
 ### Requirement
 
@@ -2272,7 +2272,7 @@ This gives CRD-C6 the identity-selection contract its own requirements asked for
 | `locked` | Decides whether Unlock is offered (I6), and shows the administrator why a person cannot sign in. | Whether sign-in is blocked right now, to holders of `identity.read`: the people who manage identities. There is no count and no history. | Without it the page must offer Unlock on every local identity and rely on *"This account is not currently locked."*: offer-and-refuse, the pattern the action matrix exists to avoid. | Unlock returns to offer-and-refuse. It is additive. | A boolean, not an identifier. |
 | `lockedUntil` | Tells the administrator how long the lock would last on its own, so they can choose to wait instead of unlocking. | One instant, present only while locked. | Without it the administrator cannot weigh waiting against unlocking. | The page loses the "until" text. It is additive. | An instant, not a key. |
 
-### The identity response (for review)
+### The identity response
 
 ```json
 {
@@ -2294,7 +2294,7 @@ This gives CRD-C6 the identity-selection contract its own requirements asked for
 - **`type`** is `"Local"` or `"External"`. **`provider`** is `"Application"` for local identities, or the provider's name.
 - **`username`** is a string for local identities and `null` for external ones.
 - **`status`** is `"Active"` or `"Inactive"`. **`deactivatedAt`** is set exactly when `status` is `"Inactive"` (`ck_user_identity_status_deactivation`).
-- **`locked`** is `true` exactly when the identity has a credential whose `LockedUntil` is later than the server's clock at the read. **`lockedUntil`** is that instant when `locked`, and `null` otherwise. An identity with no credential (external, or pending activation) is `locked: false`.
+- **`locked` is a read-time projection, not persisted identity state.** No column holds it, on `user_identity` or anywhere else. It is computed at each read from the credential's `LockedUntil` and the server's clock. **`locked`** is `true` exactly when the identity has a credential whose `LockedUntil` is later than the server's clock at the read. **`lockedUntil`** is that instant when `locked`, and `null` otherwise. An identity with no credential (external, or pending activation) is `locked: false`.
 - **Ordered** by the identity's creation, oldest first; ties are broken by `userIdentityId`.
 - **Refusals:** `400 { error }` for an unknown user, the System actor, or a missing `identity.read`; `401` with no carrier.
 
@@ -2338,7 +2338,11 @@ This gives CRD-C6 the identity-selection contract its own requirements asked for
   - **the page is the caller's own**, on any of its identities, including a locked one.
 - **ID-5:** the dialog requires a reason and sends nothing without one. It sends exactly `{ reason }` to `POST /api/identities/{identityId}/unlock`. It is busy while sending, and sends once. On `204`: close, re-read the identities, announce, and the row shows *"Not locked"* with no Unlock.
 - **ID-6:** refusals are shown word for word, and the dialog stays open. *"This account is not currently locked."* also re-reads the identities. *"An administrator cannot unlock their own account."* is shown as the server words it, whatever the client decided.
-- **ID-7, the server's authority:** over HTTP, an administrator who names **their own** identity, or **any** identity of their own user, is refused with *"An administrator cannot unlock their own account."* and no `AccountUnlocked`. This is independent of the client.
+- **ID-7, the server's authority:** over HTTP, independent of the client, an administrator is refused with *"An administrator cannot unlock their own account."*, and no `AccountUnlocked` is written, **in both forms of self-targeting**:
+  - naming **the caller's own session `userIdentityId`**;
+  - naming **any other identity belonging to the caller's own `userId`**.
+
+  CRD-C6's rule is **user-level**, not identity-level. This criterion is kept even though the existing rule may already satisfy it, so that this story's server-authority contract is explicit.
 - **ID-8 (I8), against the seeded roles:**
   - **user administrator:** section and request, and Unlock on an eligible locked identity;
   - **security administrator:** no section and **no request**;
@@ -2350,7 +2354,9 @@ This gives CRD-C6 the identity-selection contract its own requirements asked for
   3. Unlock with a reason: `204`, the identities re-read, *"Not locked"*, and Unlock gone.
   4. `AccountUnlocked` is in the trail with the reason.
   5. The unlocked user signs in.
-  6. On **Ada's own page**, no Unlock appears, even while Ada's own identity is locked.
+  6. On **Ada's own page**, no Unlock is offered.
+
+  Whether Unlock stays absent **while the caller's own identity is locked** is proved by **ID-4 (web) and ID-7 (server)**, not in the browser. A deliberate 15-minute lock on Ada would make the manual check fragile.
 
 ### Not included
 
