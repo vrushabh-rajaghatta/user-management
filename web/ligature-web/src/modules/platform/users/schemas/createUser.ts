@@ -15,7 +15,11 @@ export const createUserSchema = z.object({
   lastName: z.string().trim().min(1, "A last name is required."),
   displayName: z.string().trim().min(1, "A display name is required."),
   email: z.string().trim().min(1, "An email address is required."),
-  initialUsername: z.string().trim().min(1, "A username is required."),
+  // An identifier, sent exactly as typed and never trimmed ("Local usernames
+  // refuse surrounding whitespace", WS7). Presence only: JavaScript's
+  // whitespace is not .NET's, so the server's rule is not copied here, and its
+  // refusal is shown word for word.
+  initialUsername: z.string().min(1, "A username is required."),
 });
 
 export type CreateUserRequest = z.infer<typeof createUserSchema>;

@@ -66,9 +66,7 @@ UserId createdBy,
             throw new DomainException(
                 "The system user cannot have an identity.");
 
-        if (string.IsNullOrWhiteSpace(username))
-            throw new DomainException(
-                "Username cannot be empty.");
+        ValidateUsernameBoundary(username);
 
         // ArgumentNullException.ThrowIfNull(created);
 
@@ -126,10 +124,29 @@ UserId createdBy,
             null);
     }
 
-    // Compile-only stub for the red tests of "Local usernames refuse
-    // surrounding whitespace" (docs/requirements.md). Not yet implemented.
+    /// <summary>
+    /// THE local username rule (docs/requirements.md, "Local usernames refuse
+    /// surrounding whitespace", WS1 and WS2), and its single source of truth:
+    /// CreateLocal and ChangeUsername apply it, and USR-C1, IDN-Q3 and
+    /// provisioning call it rather than reproducing it.
+    ///
+    /// A username is an identifier, so a value Trim() would change is REFUSED,
+    /// never trimmed. Whitespace is exactly char.IsWhiteSpace, the set Trim()
+    /// removes; invisible format characters such as U+200B are not in it and
+    /// are deliberately not this rule's business (WS9). Whitespace inside a
+    /// username is untouched, and case is the UI7 index's concern, not this.
+    ///
+    /// ck_user_identity_local_username_no_surrounding_whitespace names the
+    /// same 25 characters as the database's backstop; a test holds the two to
+    /// the same answer for every UTF-16 code unit.
+    /// </summary>
     public static void ValidateUsernameBoundary(string username)
     {
+        if (string.IsNullOrWhiteSpace(username))
+            throw new DomainException("Username cannot be empty.");
+
+        if (!string.Equals(username, username.Trim(), StringComparison.Ordinal))
+            throw new DomainException("A username cannot begin or end with whitespace.");
     }
 
     public bool ChangeUsername(string newUsername)
@@ -138,8 +155,7 @@ UserId createdBy,
             throw new DomainException(
                 "Only local identities can change username.");
 
-        if (string.IsNullOrWhiteSpace(newUsername))
-            throw new DomainException("Username cannot be empty.");
+        ValidateUsernameBoundary(newUsername);
 
         if (string.Equals(
                 Username,
