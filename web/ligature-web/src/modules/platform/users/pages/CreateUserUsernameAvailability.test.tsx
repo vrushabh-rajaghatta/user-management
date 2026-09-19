@@ -269,17 +269,19 @@ describe("without identity.read", () => {
 // ---------------------------------------------------------------- UA-11
 
 describe("accessibility", () => {
+  // The page is rendered without the application shell, so the audit is of
+  // what it renders, as CreateUserPage.test.tsx's own audit is.
   it("has no violations with the in-use message, and with the available message", async () => {
     backend();
-    const { user } = render();
+    const { container, user } = render();
 
     await enterUsername(user, "v.r");
     await screen.findByText(IN_USE);
-    await expectNoAccessibilityViolations(document.body);
+    await expectNoAccessibilityViolations(container);
 
     await enterUsername(user, "ada.lovelace");
     await screen.findByText(AVAILABLE);
-    await expectNoAccessibilityViolations(document.body);
+    await expectNoAccessibilityViolations(container);
   });
 
   it("ties the message to the field", async () => {
