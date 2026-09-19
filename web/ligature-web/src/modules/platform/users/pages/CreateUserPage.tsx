@@ -1,10 +1,13 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/shared/api/errors";
+import { useCan } from "@/shared/auth/useCan";
 import { Page } from "@/shared/components/Page";
 import { FormField } from "@/shared/forms/FormField";
 import { useCreateUser } from "../hooks/useCreateUser";
+import { useUsernameAvailability } from "../hooks/useUsernameAvailability";
+import { UserPermissions } from "../permissions";
 import { createUserSchema } from "../schemas/createUser";
 import { useUnsavedChangesGuard } from "@/shared/forms/useUnsavedChangesGuard";
 
@@ -29,6 +32,16 @@ const SUCCESS = "The account has been created. They must activate it before they
 
 const UNKNOWN = "The request could not be completed.";
 
+const USERNAME_HELP = "What they will sign in with.";
+const USERNAME_IN_USE = "This username is already in use.";
+const USERNAME_AVAILABLE = "Username available.";
+
+/**
+ * IDN-Q3's answer, and the one value it is about (UN6). "checking" blocks
+ * nothing; "taken" blocks Create only while the field still holds that value.
+ */
+type Availability = { readonly username: string; readonly state: "checking" | "taken" | "available" };
+
 const EMPTY = { firstName: "", lastName: "", displayName: "", email: "", initialUsername: "" };
 
 /** What was created, kept so the page can confirm it after the form is cleared. */
@@ -49,6 +62,17 @@ export function CreateUserPage() {
 
   const create = useCreateUser();
 
+  // IDN-Q3 (docs/requirements.md, "IDN-Q3 CheckUsernameAvailable on Create
+  // user"). Only for identity.read: without it no availability request is
+  // ever made, and USR-C1's refusal at submit still applies.
+  const canCheck = useCan(UserPermissions.readIdentities);
+  const check = useUsernameAvailability();
+  const [availability, setAvailability] = useState<Availability | undefined>(undefined);
+
+  // What the field holds NOW, trimmed as it will be submitted — read when an
+  // answer arrives, so an answer about an earlier value is discarded.
+  const currentUsername = useRef("");
+
   // USR-C2 UI, option (a): this form keeps useState, and its dirty flag is
   // computed by hand — "any editable field differs from its initial empty
   // value", over EVERY field, not only those the server requires. A
@@ -58,6 +82,37 @@ export function CreateUserPage() {
 
   function set(field: keyof typeof EMPTY, value: string) {
     setValues((current) => ({ ...current, [field]: value }));
+
+    // Any edit makes the previous answer about something else (UN6).
+    if (field === "initialUsername") {
+      currentUsername.current = value.trim();
+      setAvailability(undefined);
+    }
+  }
+
+  /** On blur: ask about exactly the value that would be submitted. */
+  function checkUsername() {
+    const username = values.initialUsername.trim();
+
+    if (!canCheck || username === "" || availability?.username === username) {
+      return;
+    }
+
+    setAvailability({ username, state: "checking" });
+
+    check.mutate(username, {
+      onSuccess: (result) => {
+        if (currentUsername.current !== username) {
+          return;
+        }
+
+        setAvailability({ username, state: result.available ? "available" : "taken" });
+      },
+      onError: () => {
+        // UN7: a failed check blocks nothing and says nothing.
+        setAvailability((current) => (current?.username === username ? undefined : current));
+      },
+    });
   }
 
   function submit() {
@@ -73,6 +128,12 @@ export function CreateUserPage() {
 
     const request = parsed.data;
 
+    // UN6: the server has said this exact value is taken, and under D2 that
+    // cannot change. Any other value — or no answer — goes to the server.
+    if (availability?.state === "taken" && availability.username === request.initialUsername) {
+      return;
+    }
+
     create.mutate(request, {
       onSuccess: () => {
         // The entered details, not the response: the response carries only
@@ -84,6 +145,8 @@ export function CreateUserPage() {
         });
 
         setValues(EMPTY);
+        currentUsername.current = "";
+        setAvailability(undefined);
       },
       onError: (failure: unknown) => {
         setCreated(undefined);
@@ -163,7 +226,13 @@ export function CreateUserPage() {
           )}
         </FormField>
 
-        <FormField id="username" label="Username" description="What they will sign in with." required>
+        <FormField
+          id="username"
+          label="Username"
+          description={availability?.state === "available" ? USERNAME_AVAILABLE : USERNAME_HELP}
+          error={availability?.state === "taken" ? USERNAME_IN_USE : undefined}
+          required
+        >
           {(control) => (
             <Input
               {...control}
@@ -172,6 +241,7 @@ export function CreateUserPage() {
               onChange={(event) => {
                 set("initialUsername", event.target.value);
               }}
+              onBlur={checkUsername}
             />
           )}
         </FormField>
