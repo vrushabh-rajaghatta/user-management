@@ -527,7 +527,7 @@ Unlock is identity-scoped by decision, not by accident. `UnlockAccountCommand` i
 
 `IUserIdentityRepository.FindLocalByUserIdAsync` exists, and CRD-C5 applies an *exactly one* rule to it — as its own eligibility rule. Carrying that rule over to unlock would be the identity selection CRD-C6 refused. Any path from a row to unlock is therefore a new identity-selection contract, however it is built: a `UserIdentityId` in the row, a lookup endpoint, or a client-side join.
 
-**`UserIdentityId` is not added to the row because unlock needs it.** That would design the read around a command whose contract says it is identity-scoped. Making unlock reachable from a user list needs its own decision.
+**`UserIdentityId` is not added to the row because unlock needs it.** That would design the read around a command whose contract says it is identity-scoped. Making unlock reachable from a user list needs its own decision. *(Later: unlock is reached from the **User detail page**, where the administrator chooses the identity from IDN-Q1's list. It is still not reached from a row. See* IDN-Q1 GetUserIdentities and Unlock on the User detail page*.)*
 
 ### Correlating a row with the caller
 
@@ -2357,6 +2357,13 @@ This gives CRD-C6 the identity-selection contract its own requirements asked for
   6. On **Ada's own page**, no Unlock is offered.
 
   Whether Unlock stays absent **while the caller's own identity is locked** is proved by **ID-4 (web) and ID-7 (server)**, not in the browser. A deliberate 15-minute lock on Ada would make the manual check fragile.
+
+### Implementation notes
+
+- **The lock state is decided in the reader.** It reads the credential's `LockedUntil` and compares it with the instant the handler takes **once** per read, so every identity in one response is judged at the same moment. Nothing about it is stored.
+- **The page re-reads the identities when an unlock *settles*, success or refusal.** I7 names a success and *"not currently locked"*. Re-reading on every refusal covers both without branching on a message's text, which §7 forbids, and is harmless for the others. Nothing else is invalidated.
+- **Unlock sits in the Lock cell**, keeping the four columns I5 names. The eligibility rule is `identityActions.unlockOffered`.
+- **The self check** compares `useCallerIdentityId()` (from `/me`) with the listed identities, so it works at the user level: any match means the page is the caller's own. ID-7 proves that the server enforces the rule regardless.
 
 ### Not included
 
