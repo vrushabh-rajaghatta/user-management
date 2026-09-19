@@ -18,6 +18,7 @@ import { ManageRolesDialog } from "../components/ManageRolesDialog";
 import { UserActionDialog, type UserAction } from "../components/UserActionDialog";
 import { UserIdentitiesSection } from "../components/UserIdentitiesSection";
 import { UserRolesSection } from "../components/UserRolesSection";
+import { UserSessionsSection } from "../components/UserSessionsSection";
 import { ACTION_LABEL, getUserActions, type RowAction, useUserActionPermissions } from "../components/userActions";
 import { userKeys } from "../hooks/userKeys";
 import { useUserProfile } from "../hooks/useUserProfile";
@@ -81,6 +82,7 @@ function UserDetail({ detail }: { readonly detail: UserProfile }) {
   // IDN-Q1's section needs identity.read, and is not mounted without it — so
   // its request is never made (I5).
   const canReadIdentities = useCan(UserPermissions.readIdentities);
+  const canReadSessions = useCan(UserPermissions.readSessions);
   const actions = getUserActions({ user: detail, can });
 
   const [opened, setOpened] = useState<Open | undefined>(undefined);
@@ -183,6 +185,8 @@ function UserDetail({ detail }: { readonly detail: UserProfile }) {
       ) : null}
 
       {canReadIdentities ? <UserIdentitiesSection userId={detail.userId} userStatus={detail.status} /> : null}
+
+      {canReadSessions ? <UserSessionsSection userId={detail.userId} /> : null}
 
       {opened === undefined ? null : opened.action === "manage-roles" ? (
         <ManageRolesDialog
