@@ -155,6 +155,64 @@ public sealed class UserProfileEndpointTests
         });
     }
 
+    // ================================================================ USR-C3
+
+    /// <summary>
+    /// USR-C3 ChangeUserEmail over HTTP (docs/requirements.md, CE-A11): 204 and
+    /// no body, on a change and on no change; the new address is what GetUser
+    /// then reads.
+    /// </summary>
+    [Fact]
+    public async Task An_email_change_answers_204_and_is_read_back()
+    {
+        await RunAsync(async (client, admin, _, target) =>
+        {
+            var address = $"changed-{target:N}@example.test";
+
+            var response = await PostAsync(client, admin, $"/api/users/{target}/email",
+                new { Email = $" {address} ", Reason = "Corrected at the user's request." });
+
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+            Assert.Empty(await response.Content.ReadAsStringAsync());
+
+            using var body = JsonDocument.Parse(await (await GetAsync(client, admin, $"/api/users/{target}")).Content.ReadAsStringAsync());
+            Assert.Equal(address, body.RootElement.GetProperty("email").GetString());
+
+            var again = await PostAsync(client, admin, $"/api/users/{target}/email", new { Email = address.ToUpperInvariant() });
+            Assert.Equal(HttpStatusCode.NoContent, again.StatusCode);
+        });
+    }
+
+    /// <summary>CE-A11 refusals: a missing email, a rule, uniqueness, the System actor, the permission, no carrier.</summary>
+    [Fact]
+    public async Task Email_change_refusals_are_400_with_the_reason_and_no_carrier_is_401()
+    {
+        await RunAsync(async (client, admin, reviewer, target) =>
+        {
+            var path = $"/api/users/{target}/email";
+
+            Assert.Equal(HttpStatusCode.BadRequest, (await PostAsync(client, admin, path, new { Reason = "No address." })).StatusCode);
+
+            await AssertErrorAsync(await PostAsync(client, admin, path, new { Email = "not-an-address" }), "Email address has an invalid format.");
+
+            await AssertErrorAsync(
+                await PostAsync(client, admin, path, new { Email = "PERMANENT-USR-C2-USER-ADMINISTRATOR@example.test" }),
+                "A user with this email address already exists.");
+
+            await AssertErrorAsync(
+                await PostAsync(client, admin, $"/api/users/{User.SystemUserId.Value}/email", new { Email = $"system-{target:N}@example.test" }),
+                "This user's email cannot be changed.");
+
+            var refused = await PostAsync(client, reviewer, path, new { Email = $"reviewer-{target:N}@example.test" });
+            Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+            Assert.Contains("does not have permission", await ErrorAsync(refused));
+
+            Assert.Equal(
+                HttpStatusCode.Unauthorized,
+                (await PostAsync(client, null, path, new { Email = $"anonymous-{target:N}@example.test" })).StatusCode);
+        });
+    }
+
     // ================================================================ harness
 
     private static async Task RunAsync(Func<HttpClient, string, string, Guid, Task> body)

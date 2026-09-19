@@ -334,7 +334,7 @@ function expectedMenu(detail: Detail, holds: ReadonlySet<PermissionCode>): strin
   }
 
   if (holds.has(ROLE_READ)) menu.push("Manage roles");
-  if (holds.has(UPDATE)) menu.push("Edit profile");
+  if (holds.has(UPDATE)) menu.push("Edit profile", "Change email");
 
   return menu.sort();
 }
