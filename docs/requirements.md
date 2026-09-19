@@ -2373,6 +2373,158 @@ This gives CRD-C6 the identity-selection contract its own requirements asked for
 
 ---
 
+## Behaviour 11 — rate limiting the anonymous commands
+
+**Status:** Contract frozen 2026-09-19 by owner decision (B1–B10, with the owner's seven contract details and red-test list). It closes the Known Gap *CRD-C2 is not first-tenant-ready: rate limiting is missing*, and gives CRD-C3 the same closure.
+
+### Requirement
+
+The four commands that run without a signed-in caller — SES-C1 `SignIn`, CRD-C1 `ActivateAccount`, CRD-C2 `RequestPasswordReset` and CRD-C3 `ResetPassword` — must not be callable at unlimited speed. Behaviour 11 of the command catalogue: *"Rate limiting · Anonymous commands · Per address and per IP on password reset and sign-in · Both are enumeration and brute-force surfaces."* CRD-C2's catalogue row makes it a **precondition** of the command, and D-NOTIF-03 and AUD-D41 accept the residual timing difference, and the absence of any record for an unknown address, **because** this control exists.
+
+**Rate limiting measures request volume, not authentication correctness.** It is not a failed-login counter and not a second lockout.
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **B1** | **A command pipeline behaviour, `RateLimitBehavior`, registered FIRST** — before `AuthenticationBehavior`, and so before the transaction, the handler and any password derivation. A command declares its limits through a marker the behaviour tests; the behaviour names no command. |
+| **B2** | **All four anonymous commands are limited per client IP. Sign-in and forgot password are also limited per normalised address.** Reset and activate get no per-token or per-address limit: the valid token is already the authorization boundary, and the IP limit covers their cost. |
+| **B3** | **The address key is normalised before keying, and every request counts**, including one naming no account. |
+| **B4** | **The limits** (table below), frozen. |
+| **B5** | **Fixed release constants**, like `TransportTimeout`. Not configuration, and not `security_policy`: the frozen entity model has no rate-limit fields. |
+| **B6** | **A refusal is `429 Too Many Requests`, with `Retry-After` and one fixed sentence**, identical for every command and every key. |
+| **B7** | **An operational warning only.** No audit event, no catalogue change, no `AuditEventCatalogue.Version` bump (AUD-D41: enumeration telemetry belongs to the operational log, not the regulated trail; EO5 permits no new anonymous event). |
+| **B8** | **Trusted-proxy configuration.** `X-Forwarded-For` is authoritative only when the immediate peer is a configured trusted proxy; otherwise the connection address is used. |
+| **B9** | **The dev stack trusts its Vite container** as a proxy, and Vite sends the header, so the browser check exercises the real path. |
+| **B10** | **Bounded, in-memory counters.** Correct for the single-process deployment (`docs/architecture.md` §4). A restart resets them. |
+
+### The limits (B4)
+
+| Command | Key | Limit | Window |
+| --- | --- | ---: | ---: |
+| SES-C1 Sign-in | normalised username | **10** | **15 minutes** |
+| SES-C1 Sign-in | client IP | **30** | **1 minute** |
+| CRD-C2 Forgot password | normalised email or username | **3** | **1 hour** |
+| CRD-C2 Forgot password | client IP | **10** | **1 hour** |
+| CRD-C3 Reset password | client IP | **10** | **15 minutes** |
+| CRD-C1 Activate | client IP | **10** | **15 minutes** |
+
+Each (command, key kind) pair is its own bucket: a sign-in and a forgot-password request from one IP draw on different buckets.
+
+### Admission
+
+```text
+request → host resolves the client address (B8)
+        → RateLimitBehavior: every applicable bucket has room?
+              no  → 429, nothing else runs
+              yes → count the request in every applicable bucket
+                    → AuthenticationBehavior → … → handler
+```
+
+1. **Before anything costly.** A refused request reaches no later behaviour and no handler: no transaction, no lookup, no password derivation.
+2. **The keys are an AND-gate.** A request is admitted only if **every** applicable bucket has room. If any is exhausted, it is refused.
+3. **Admission is atomic across the keys.** An admitted request is counted in every applicable bucket; a refused request is counted in **none**. Concurrent requests at the limit admit exactly the limit, never more.
+4. **Requests are counted, not failures.** A successful sign-in counts. A forgot-password request naming no account counts. The outcome of the command never changes a bucket.
+5. **The window slides.** An admitted request counts against a bucket for exactly one window from the instant it was admitted. A bucket has room while fewer than *limit* admitted requests fall within the last window. Time is read from `IClock`, once per request.
+6. **Refused requests do not extend the refusal.** Because a refusal counts nowhere, a caller that keeps retrying while refused is admitted again as soon as the window allows.
+7. **Independent of lockout.** Rate limiting never changes `FailedAttemptCount` or `LockedUntil`, never writes `SignInFailed` or `AccountLocked`, and never writes `TokenRejected`. A `429` means *abuse protection fired*, not *authentication failed*. An admitted request is then judged exactly as today.
+
+### The keys
+
+- **Normalised address (B3).** Trimmed of surrounding whitespace and lower-cased with the invariant culture. This makes the key at least as coarse as the database's `lower(…)` match for ordinary input: `Ada`, `ada` and ` ada ` share a bucket. *Accepted limitation:* the in-memory fold is .NET's invariant one, not PostgreSQL's `lower()` under the database collation; for the few characters where those differ, two spellings the database treats as one could draw on separate buckets. Matching the database exactly would cost a database round-trip before admission, which is the thing B1 exists to avoid.
+- **An empty normalised address has no address bucket.** A blank forgot-password request is limited by IP alone; the command refuses it as today.
+- **Client IP.** The address the host resolved (B8). An IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) is keyed as its IPv4 address. **An IPv6 address is keyed by its /64 prefix**, because one subscriber is routinely assigned a whole /64, and a per-address key would let that subscriber rotate through it.
+- **No resolvable client address (owner detail 7).** The request is **not** placed in a shared "unknown" bucket; the IP gate simply does not apply to it, and its address bucket (if any) still does. This keeps integration tests — and a production host whose proxy configuration is wrong — from collapsing every caller into one global bucket. The command layer never invents an address: the host passes "unknown" (null) through.
+
+### The refusal (B6)
+
+- **Status `429`**, body `{ "error": "Too many attempts. Try again later." }` — the same sentence for every command and every exhausted key, so the response never says which key was responsible.
+- **`Retry-After`, in whole seconds, rounded up, at least 1:** the time until **every** exhausted bucket for the request has room again — the latest of their availability instants. *(Owner detail 5 asked for the time until the earliest exhausted bucket becomes available. A retry succeeds only when all of them have room, so an earlier value would promise a retry that is refused again; the latest instant is the boundary that detail's intent — "a useful retry boundary" — requires.)*
+- The refusal is thrown by the behaviour as a dedicated exception carrying the retry interval, and mapped by `ProblemMiddleware`, which today maps exactly three exceptions onto HTTP. This adds a fourth, on the same allowlist principle: nothing is read off the exception but the interval.
+- **The web client needs no change.** Every anonymous page already shows a non-401 failure's server sentence word for word. Mutations are never retried, so the client does not hammer the limit.
+
+### The operational warning (B7)
+
+`ProblemMiddleware` logs one **Warning** per refusal: the method and path, the client address (or *unknown*), the key kinds that were exhausted (`ip`, `address`) and the retry interval. **It never logs the typed username or address**: that is attacker-supplied, possibly third-party PII (AUD-O15), and AUD-D41 keeps it out of every record. Nothing is written to the audit trail.
+
+### The client address (B8, B9)
+
+- **Configuration:** `LIGATURE_TRUSTED_PROXIES`, a comma-separated list of IP addresses and CIDR ranges. **Absent or empty means no proxy is trusted.** A malformed entry stops the host at startup, as a malformed signing key does.
+- **Nothing is trusted implicitly — loopback included.** ASP.NET's forwarded-headers defaults trust loopback; those defaults are cleared.
+- **Only `X-Forwarded-For` is read.** `X-Forwarded-Proto` and `X-Forwarded-Host` are ignored: the cross-site check depends on the request's own Host, and this story does not change it.
+- **The walk:** starting from the immediate peer, while the current hop is a trusted proxy, the next address to the left in `X-Forwarded-For` becomes the candidate. The first address that is not a trusted proxy is the client. If the immediate peer is not trusted, the header is ignored entirely. An entry that is not an IP address ends the walk, and the address is the last one established by a trusted hop — never the malformed value.
+- **The resolved address flows into the existing evidence fields**, unchanged in shape: `SignInSucceeded` and `SignInFailed` (`ipAddress`), `PasswordResetRequested` (`RequestIp`), and `user_session.IpAddress`. Behind a configured proxy they record the real caller rather than the proxy. **No audit schema, catalogue or payload shape changes.**
+- **`ActivateAccountCommand` and `ResetPasswordCommand` gain the client address**, for rate limiting only. It is recorded nowhere: `TokenRejected` and the success records are unchanged.
+- **Dev (B9):** `compose.dev.yaml` pins the web container's address on the dev network and sets `LIGATURE_TRUSTED_PROXIES` to exactly that address; Vite's `/api` proxy sends `X-Forwarded-For`. Outside the container nothing is configured, so the header Vite sends is ignored — the safe default.
+
+### Storage (B10)
+
+- A singleton store in the Application layer, keyed by (command, key kind, key value). Each key holds at most *limit* admission instants, so one key's memory is bounded by its limit.
+- **A key whose admissions have all left the window is removed** — the store keeps nothing for callers that have gone quiet. Removal happens during admission, so no background timer is needed.
+- A restart, or a second host instance, starts with empty counters. **Explicit non-decision:** more than one host instance would need a shared store; that is a deployment change, decided when it is made.
+
+### Acceptance Criteria
+
+**Admission and independence**
+
+- **RL-1** Sign-in, **username gate:** with the IP bucket having room, the 11th request for one normalised username within 15 minutes is `429`; the first 10 are judged as today. The 11th reaches no handler: no `SignInFailed`, no `SignInSucceeded`, `FailedAttemptCount` and `LockedUntil` unchanged, no session.
+- **RL-2** Sign-in, **IP gate:** with every username bucket having room (31 different usernames), the 31st request from one IP within 1 minute is `429`.
+- **RL-3** Forgot password: the 4th request for one normalised address within 1 hour is `429` **whether or not the address names an account**; with distinct addresses, the 11th request from one IP within 1 hour is `429`. A refused request queues no mail, issues no token, writes no `PasswordResetRequested`.
+- **RL-4** Reset password and activate: the 11th request from one IP within 15 minutes is `429`, and consumes no token.
+- **RL-5** **Successes count:** 10 successful sign-ins for one username exhaust its bucket; the 11th, with the right password, is `429`.
+- **RL-6** **Unknown accounts count:** requests for a username or address that names no account draw on its bucket exactly as a real one does, and the `429` is byte-identical for a real and an unknown address.
+- **RL-7** **Normalisation:** `Ada`, `ada` and ` ada ` share one bucket, for sign-in and for forgot password.
+- **RL-8** **Refusal changes no authentication state:** an exhausted bucket followed by a request with a wrong password leaves `FailedAttemptCount`, `LockedUntil` and the audit trail exactly as they were; an exhausted bucket never produces `AccountLocked`.
+- **RL-9** **Atomic AND:** a request refused by one exhausted bucket is counted in none — the other bucket's remaining room is unchanged afterwards.
+- **RL-10** **Concurrency:** with one request of room left in a bucket, concurrent requests admit exactly one.
+- **RL-11** **The window slides, without sleeping:** driven by a controlled `IClock`, a bucket regains room exactly one window after its oldest counted admission, not before; and a caller that keeps being refused is admitted as soon as that instant passes (refusals do not extend it).
+- **RL-12** **Position:** the behaviour runs before `AuthenticationBehavior` — a refused `IBearerAuthenticatedCommand` under an established caller is `429`, not `401` — and before any password derivation (a refused sign-in performs no hash verification).
+- **RL-13** **Every anonymous command is limited:** a test enumerates the Application assembly's `IAnonymousCommand` implementations and requires each to declare its limits, so a future anonymous command cannot be added unlimited. Authenticated commands are never limited by this behaviour.
+
+**The refusal**
+
+- **RL-14** `429`, body exactly `{ "error": "Too many attempts. Try again later." }`, the same for every command and key.
+- **RL-15** `Retry-After` is the whole seconds (rounded up, at least 1) until every exhausted bucket has room: with only the username bucket exhausted it follows that bucket; with both exhausted, the later of the two.
+- **RL-16** One Warning is logged per refusal, carrying the path, the client address and the exhausted key kinds, and **not** containing the typed username or address. No audit record is written.
+- **RL-17** Each of the four web pages (sign-in, forgot password, reset password, activate) shows the sentence word for word on a `429`.
+
+**Keys and memory**
+
+- **RL-18** An IPv4-mapped IPv6 address shares its IPv4 address's bucket; two IPv6 addresses in one /64 share a bucket; in different /64s they do not.
+- **RL-19** **No resolvable address:** requests with no client address are not IP-limited — 31 sign-ins for 31 usernames with no address are all admitted — and their address buckets still apply.
+- **RL-20** Once every admission of a key has left its window, the key is no longer held by the store.
+- **RL-21** A new host instance starts with empty counters.
+
+**The client address**
+
+- **RL-22** **Untrusted `X-Forwarded-For` is ignored:** with no trusted proxies configured — including a request from loopback — the connection address is used and the header changes nothing, neither the bucket nor the recorded `ipAddress`.
+- **RL-23** **A trusted proxy's `X-Forwarded-For` is used:** with the peer configured as trusted, the resolved client address keys the IP bucket and is what `SignInFailed`, `SignInSucceeded`, `PasswordResetRequested` and `user_session.IpAddress` record.
+- **RL-24** **The walk:** a chain of two trusted proxies resolves the first untrusted address; a spoofed leftmost entry behind one trusted proxy is not reached; a malformed entry is never used as the address.
+- **RL-25** **Configuration:** a malformed `LIGATURE_TRUSTED_PROXIES` entry stops the host at startup; absent or empty trusts nothing; IP addresses and CIDR ranges are both accepted.
+
+**Browser, in the dev stack (RL-26),** each state change approved by the owner:
+
+1. Sign in 11 times with a username that **names no account** (the owner types it): the first 10 answer *"Invalid username or password."*, the 11th *"Too many attempts. Try again later."*. No account is locked.
+2. Forgot password 4 times for an address that **names no account**: the 4th is refused with the sentence. No mail is written to the dev sink.
+3. The `SignInFailed` records from step 1 carry the **browser's** address as resolved through Vite, not the web container's.
+4. Ada signs in normally throughout: her own bucket is untouched.
+
+### Accepted consequences
+
+- **Anyone can make one username's sign-in wait**, by spending its 10 requests in 15 minutes. This is the same class of exposure as the existing lockout (five wrong passwords lock an account, as the #70 browser check showed), which this story does not change; it is noted, not solved.
+- **A legitimate user who signs in more than 10 times in 15 minutes** — for example, across many devices — is refused until the window allows.
+- **A restart resets every bucket.**
+
+### Not included
+
+- Deliberate lockout of another person's account, and any change to lockout policy.
+- Authenticated commands: CRD-C4's attempt limit was closed by L1–L8, and CRD-C5 requires an administrator.
+- The Notification specification's timing validation (*CRD-C2 response time for known vs unknown accounts … differs by less than the recorded residual*), a separate validation item.
+- More than one host instance, and tenant-configurable limits.
+- `X-Forwarded-Proto` and `X-Forwarded-Host`.
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
