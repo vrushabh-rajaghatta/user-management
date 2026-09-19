@@ -6,6 +6,7 @@ using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.ResetPassword;
 using Ligature.Platform.Application.Users.Commands.SignOutEverywhere;
+using Ligature.Platform.Application.Users.Queries.MySessions;
 
 namespace Ligature.Host.Api;
 
@@ -131,6 +132,52 @@ public static class AccountEndpoints
             // Documentation only. The pipeline refuses an unauthenticated
             // caller; this marker refuses nothing.
             .WithMetadata(new RequiresCarrier());
+
+        // SES-Q2: the caller's own active sessions, with SES-Q1's meaning.
+        routes.MapGet("/api/account/sessions", MySessionsAsync)
+            .WithTags("Account")
+            .WithSummary("The signed-in account's active sessions.")
+            .WithDescription(
+                "Requires a carrier; no permission. Returns { sessions } for the "
+                + "caller's own account, most recently active first, each with "
+                + "sessionId, createdAt, lastActivityAt, expiresAt, "
+                + "idleExpiresAt, ipAddress, userAgent and current — the same "
+                + "fields and meaning as GET /api/users/{userId}/sessions. "
+                + "'current' marks the session this request presented. Nothing "
+                + "in the request selects another account. Not audited.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+    }
+
+    /// <summary>
+    /// The caller's session id is the one the Host recovered from the carrier
+    /// it verified, passed explicitly as /me passes it; the account is the
+    /// execution context's caller. Neither comes from the request.
+    /// </summary>
+    private static async Task<IResult> MySessionsAsync(
+        CurrentCarrier currentCarrier,
+        IQueryDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var result = await dispatcher.SendAsync<MySessionsQuery, MySessionsResult>(
+            new MySessionsQuery(currentCarrier.SessionId),
+            cancellationToken);
+
+        return Results.Ok(new
+        {
+            Sessions = result.Sessions.Select(x => new
+            {
+                SessionId = x.SessionId.Value,
+                x.CreatedAt,
+                x.LastActivityAt,
+                x.ExpiresAt,
+                x.IdleExpiresAt,
+                x.IpAddress,
+                x.UserAgent,
+                x.Current,
+            }),
+        });
     }
 
     /// <summary>

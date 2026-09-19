@@ -13,10 +13,10 @@ import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { FormField } from "@/shared/forms/FormField";
+import { formatInstant } from "@/shared/format/formatInstant";
 import { useGrantRole, useGrantableRoles, useRevokeRole, useRoleAssignments } from "../hooks/useRoleAssignments";
 import { UserPermissions } from "../permissions";
 import { grantFormSchema, type RoleAssignment } from "../schemas/roleAssignments";
-import { formatInstant } from "./formatInstant";
 import { reasonSchema, type UserRow } from "../schemas/users";
 
 const UNKNOWN = "The action could not be completed. Try again.";

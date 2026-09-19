@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { useSignOutEverywhere } from "@/modules/platform/auth";
 import { ApiError } from "@/shared/api/errors";
 import { ConfirmAction } from "@/shared/components/ConfirmAction";
+import { useRefreshMySessions } from "../hooks/useMySessions";
 
 const UNKNOWN = "The request could not be completed.";
 
@@ -36,10 +37,12 @@ const ACTIONS: Record<Choice, { label: string; title: string; description: strin
  * changes nothing about authentication (M9): what was revoked is not known.
  * A 401 is left to the application, which signs the caller out.
  *
- * No list of sessions: that needs SES-Q2, which is not built.
+ * The list above these buttons (SES-Q2) is read again once the other sessions
+ * have been signed out (MY6); signing out everywhere leaves the page.
  */
 export function SessionActions() {
   const signOut = useSignOutEverywhere();
+  const refreshSessions = useRefreshMySessions();
   const [open, setOpen] = useState<Choice | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
   const [announcement, setAnnouncement] = useState("");
@@ -78,6 +81,7 @@ export function SessionActions() {
           if (action.keepCurrentSession) {
             pendingAnnouncement.current = OTHERS_ENDED;
             setOpen(undefined);
+            void refreshSessions();
           }
         },
         onError: (failure: unknown) => {

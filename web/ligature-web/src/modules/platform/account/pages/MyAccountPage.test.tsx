@@ -44,6 +44,8 @@ function backend(options: { change?: () => Response | Promise<Response>; everywh
   const signOuts: unknown[] = [];
 
   server.use(
+    // SES-Q2's list reads on arrival; its own tests are in MyAccountSessions.test.tsx.
+    http.get(at("/api/account/sessions"), () => HttpResponse.json({ sessions: [] })),
     http.post(CHANGE, async ({ request }) => {
       changes.push(await request.json());
       return options.change === undefined ? new HttpResponse(null, { status: 204 }) : options.change();

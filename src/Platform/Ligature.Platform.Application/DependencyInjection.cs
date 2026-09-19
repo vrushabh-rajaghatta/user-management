@@ -17,6 +17,7 @@ using Ligature.Platform.Application.Users.Commands.ReactivateUser;
 using Ligature.Platform.Application.Users.Commands.RevokeRole;
 using Ligature.Platform.Application.Users.Commands.UpdateUserProfile;
 using Ligature.Platform.Application.Users.Queries.UserIdentities;
+using Ligature.Platform.Application.Users.Queries.MySessions;
 using Ligature.Platform.Application.Users.Queries.UserSessions;
 using Ligature.Platform.Application.Users.Queries.UserProfile;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
@@ -349,7 +350,9 @@ public static class DependencyInjection
         // USR-Q1 GetUser, narrow v1.
         services.AddQuery<UserProfileQuery, UserProfileResult, UserProfileQueryHandler>();
         services.AddQuery<UserIdentitiesQuery, UserIdentitiesResult, UserIdentitiesQueryHandler>();
+        services.AddScoped<ActiveSessionListing>();
         services.AddQuery<UserSessionsQuery, UserSessionsResult, UserSessionsQueryHandler>();
+        services.AddQuery<MySessionsQuery, MySessionsResult, MySessionsQueryHandler>();
 
         // The grantable-role list: a Story 2 dependency of AUT-C1, not AUT-Q5.
         services.AddQuery<GrantableRolesQuery, GrantableRolesResult, GrantableRolesQueryHandler>();

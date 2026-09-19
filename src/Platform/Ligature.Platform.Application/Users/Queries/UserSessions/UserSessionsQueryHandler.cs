@@ -11,18 +11,11 @@ namespace Ligature.Platform.Application.Users.Queries.UserSessions;
 /// pipeline, so the handler establishes, in order, as the other reads do:
 /// authenticate, authorise session.read, then read. Not audited.
 ///
-/// NO NEW SESSION SEMANTICS. "Active" is the canonical test the per-request
-/// check and SES-C3 apply, read through the same repository method SES-C4
-/// uses, so the list shows exactly what Revoke can act on. This handler adds
-/// only what a read needs: the unknown-user refusal, the order, and two
-/// derived fields.
-///
-/// <list type="bullet">
-/// <item><c>IdleExpiresAt</c> is /me's conservative instant — last activity
-/// plus the effective idle timeout, without the enforcement tolerance.</item>
-/// <item><c>Current</c> compares SESSION ids: the one row, if any, whose id is
-/// the session the Host recovered from this request's carrier.</item>
-/// </list>
+/// NO SESSION SEMANTICS OF ITS OWN. What an active-session list means — the
+/// canonical test, the order, IdleExpiresAt, Current and the projection — is
+/// ActiveSessionListing's, shared with SES-Q2, so the list shows exactly what
+/// Revoke can act on. This handler decides only who may read and whose
+/// sessions: session.read, and a human target user.
 /// </summary>
 public sealed class UserSessionsQueryHandler : IQueryHandler<UserSessionsQuery, UserSessionsResult>
 {
@@ -30,30 +23,26 @@ public sealed class UserSessionsQueryHandler : IQueryHandler<UserSessionsQuery, 
     private readonly IAuthorizationService _authorizationService;
     private readonly IClock _clock;
     private readonly IUserRepository _userRepository;
-    private readonly IUserSessionRepository _userSessionRepository;
-    private readonly ISecurityPolicyResolver _securityPolicyResolver;
+    private readonly ActiveSessionListing _listing;
 
     public UserSessionsQueryHandler(
         IExecutionContext executionContext,
         IAuthorizationService authorizationService,
         IClock clock,
         IUserRepository userRepository,
-        IUserSessionRepository userSessionRepository,
-        ISecurityPolicyResolver securityPolicyResolver)
+        ActiveSessionListing listing)
     {
         ArgumentNullException.ThrowIfNull(executionContext);
         ArgumentNullException.ThrowIfNull(authorizationService);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentNullException.ThrowIfNull(userRepository);
-        ArgumentNullException.ThrowIfNull(userSessionRepository);
-        ArgumentNullException.ThrowIfNull(securityPolicyResolver);
+        ArgumentNullException.ThrowIfNull(listing);
 
         _executionContext = executionContext;
         _authorizationService = authorizationService;
         _clock = clock;
         _userRepository = userRepository;
-        _userSessionRepository = userSessionRepository;
-        _securityPolicyResolver = securityPolicyResolver;
+        _listing = listing;
     }
 
     public async Task<UserSessionsResult> Handle(UserSessionsQuery query, CancellationToken cancellationToken)
@@ -88,26 +77,8 @@ public sealed class UserSessionsQueryHandler : IQueryHandler<UserSessionsQuery, 
         if (user is null || user.ActorType != ActorType.Human)
             throw new BusinessRuleViolationException("The user does not exist.");
 
-        // ---- 4. Read, with the one definition of an active session.
-        var policy = await _securityPolicyResolver.GetEffectiveSettingsAsync(now, cancellationToken);
-
-        var sessions = await _userSessionRepository.FindActiveForUserAsync(
-            query.UserId, now, policy.SessionIdleTimeout, cancellationToken);
-
-        var views = sessions
-            .OrderByDescending(x => x.LastActivityAt)
-            .ThenBy(x => x.Id.Value)
-            .Select(x => new UserSessionView(
-                x.Id,
-                x.CreatedAt,
-                x.LastActivityAt,
-                x.ExpiresAt,
-                x.LastActivityAt + policy.SessionIdleTimeout,
-                x.IpAddress?.ToString(),
-                x.UserAgent,
-                query.CallerSessionId is { } caller && x.Id == caller))
-            .ToList();
-
-        return new UserSessionsResult(views);
+        // ---- 4. Read, with the one definition of an active-session list.
+        return new UserSessionsResult(
+            await _listing.ListAsync(query.UserId, query.CallerSessionId, now, cancellationToken));
     }
 }

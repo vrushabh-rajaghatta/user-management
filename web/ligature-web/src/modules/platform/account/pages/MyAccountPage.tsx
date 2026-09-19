@@ -1,5 +1,6 @@
 import { Page } from "@/shared/components/Page";
 import { ChangePasswordForm } from "../components/ChangePasswordForm";
+import { MySessionsList } from "../components/MySessionsList";
 import { SessionActions } from "../components/SessionActions";
 
 /**
@@ -25,6 +26,7 @@ export function MyAccountPage() {
         <h2 id="sessions-heading" className="text-lg font-semibold">
           Sessions
         </h2>
+        <MySessionsList />
         <SessionActions />
       </section>
     </Page>

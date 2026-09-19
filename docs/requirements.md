@@ -1916,6 +1916,8 @@ modules/platform/auth
 
 The section says in one sentence what each action does. It lists no sessions, because that needs SES-Q2, which is not built.
 
+> **Superseded for the list (MY8, 2026-09-19):** the section now lists the caller's sessions above the two actions — see *SES-Q2 GetMySessions on the My account page*. The actions below are unchanged.
+
 | Action | Confirmation | Request | On `204` |
 | --- | --- | --- | --- |
 | **Sign out other sessions** | *"Sign out other sessions?"* — *"Every other session on your account will be signed out. You stay signed in here."* — confirm **Sign out other sessions** | `{ keepCurrentSession: true }` | Stay on the page; announce ***"Your other sessions have been signed out."*** |
@@ -1975,7 +1977,7 @@ The section says in one sentence what each action does. It lists no sessions, be
 - Attempt or rate limiting for CRD-C4 (M1).
 - External identities (M10).
 - Editing your own profile, which needs its own command (*USR-C2 change control*).
-- A session list, which needs SES-Q2.
+- A session list, which needs SES-Q2 (since built: *SES-Q2 GetMySessions on the My account page*).
 - Enforcing must-change-password at sign-in (*MustChangePassword is recorded but not enforced*).
 - Migrating the existing forms to React Hook Form.
 - A show-password toggle.
@@ -2751,6 +2753,98 @@ No schema change, no new audit event, and SES-C3 is unchanged.
 - The system-wide session list; SES-Q2 My sessions.
 - Any change to SES-C3, SES-C4, `/me` or the execution context.
 - User-agent parsing, IP geolocation, session history, an identity column.
+
+---
+
+## SES-Q2 GetMySessions on the My account page
+
+**Status:** Contract frozen 2026-09-19 by owner decision (MY1–MY9, with the owner's refinement to MY2). It follows *SES-Q1 GetActiveSessions and Revoke on the User detail page* (#73), whose session semantics it shares, and fills the list M7 left out of the My account page.
+
+### Requirement
+
+On My account, every signed-in person sees where they are signed in, with the session they are using marked. They end other sessions with the existing **Sign out other sessions** and **Sign out everywhere**; no new command is introduced.
+
+**SES-Q1 and SES-Q2 share session semantics, not HTTP or web implementation.**
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **MY1** | **The read is `GET /api/account/sessions`**: authenticated, **no permission** (self, as `/me` and CRD-C4). It returns the sessions of the **caller's own user**, taken from the execution context; nothing in the request names a user. Not audited. |
+| **MY2** | **Identical semantics to SES-Q1, through one Application-level listing service** (see *One listing, two access rules*). The two handlers differ only in whose sessions they list and how access is decided. |
+| **MY3** | **`current` is SES-Q1's rule:** `session.Id == CurrentCarrier.SessionId`, the id the Host passes explicitly. The browser renders it and never works it out from timestamps, addresses, browsers or anything else. The caller is signed in, so exactly one row is current. |
+| **MY4** | **No per-session self sign-out.** The catalogue has no self command to end one other session, and SES-C3 is administrator-only. **Sign out other sessions** remains the mechanism. |
+| **MY5** | **The list sits inside the existing Sessions section, above the two buttons.** Columns: **Signed in**, **Last active**, **IP address**, **Browser**; a missing value shows "—"; the current row is marked **This session**. **No action column.** Its loading, error and retry are its own, and its failure leaves both buttons working. |
+| **MY6** | **The list is re-read after a successful Sign out other sessions** and **after a successful password change** (A5 ends the other sessions). Sign out everywhere leaves the page, so nothing is re-read. |
+| **MY7** | **The `account` web module owns its read:** its own API operation, schema, hook and table, importing nothing from `users` internals. `formatInstant` moves to `shared/` as a formatting-only utility — no session or business logic — so both pages show instants identically, and neither module depends on the other. |
+| **MY8** | **Contract linkage:** M7's *"It lists no sessions, because that needs SES-Q2, which is not built"* now points here; the catalogue's *"Powers the sign-out-everywhere screen"* holds. |
+| **MY9** | **Out of scope:** per-session self sign-out (MY4), user-agent parsing, session history. |
+
+### One listing, two access rules (MY2)
+
+```text
+SES-Q1 handler: authenticate → authorise session.read → the target must be a human user ─┐
+                                                                                         ├─ ActiveSessionListing
+SES-Q2 handler: authenticate → the caller's own UserId (self; no permission) ───────────┘
+```
+
+`ActiveSessionListing` is an **Application-level service**, not an HTTP or web abstraction. It is the **only** implementation of:
+
+- the active-session predicate (through `IUserSessionRepository.FindActiveForUserAsync`, the canonical test);
+- traversal of every identity of the user;
+- the order (most recently active first, then session id);
+- `idleExpiresAt` (last activity plus the effective idle timeout, no tolerance);
+- `current` (`session.Id == callerSessionId`);
+- the projection to the eight fields.
+
+SES-Q1's handler is refactored onto it in this story, so there is one implementation, not two that agree today. Its behaviour is unchanged, and its tests stay as they are.
+
+### The response
+
+Exactly SES-Q1's shape: `{ "sessions": [ … ] }` with `sessionId`, `createdAt`, `lastActivityAt`, `expiresAt`, `idleExpiresAt`, `ipAddress`, `userAgent`, `current`.
+
+### Acceptance Criteria
+
+**The read (MY1–MY3)**
+
+- **MS-1** For a caller with sessions on **two identities**, the read returns exactly the caller's sessions the canonical test accepts — revoked, expired and idle-beyond-tolerance sessions are not listed — most recently active first, and **no other user's session ever appears**.
+- **MS-2** **One semantics:** for the same user and the same caller session, the SES-Q2 read (as that user) and the SES-Q1 read (as an administrator) return **identical** lists, field for field and in the same order.
+- **MS-3** `current` is session-level: with two sessions of the caller, reading as one marks only that one; reading as the other flips it. Exactly one row is current.
+- **MS-4** **No permission is needed:** a caller holding no role reads their own sessions. Without a caller the read is refused (`401` over HTTP). No audit record is written.
+- **MS-5** Over HTTP: exactly the eight fields; `current` follows the carrier presented; a `userId` or any other parameter in the request cannot make it read another user.
+- **MS-6** Over HTTP, after **Sign out other sessions**, the read returns exactly one session, marked `current`; after a **password change** from one of two sessions, likewise.
+
+**The page (MY5–MY7)**
+
+- **MS-7** Every signed-in caller sees the list in the Sessions section, above **Sign out other sessions** and **Sign out everywhere**, with columns Signed in, Last active, IP address and Browser; a missing value shows "—"; the current row says **This session**; there is **no Revoke or other per-row action**.
+- **MS-8** The list has its own loading, error and retry; when it fails, both buttons still work.
+- **MS-9** After **Sign out other sessions** succeeds, the list is re-read; after a **password change** succeeds, the list is re-read. **Sign out everywhere** still signs out and goes to sign-in, as M7 decided.
+- **MS-10** No accessibility violations with the list loaded, while it loads, and when its read failed.
+- **MS-11** The User detail page's Active sessions (SQ-6 to SQ-12) is unchanged, and still shows instants the same way through the moved `formatInstant`.
+
+**Browser, in the dev stack (MS-12),** each state change approved by the owner, **after a fresh host restart**:
+
+1. V R signs in, in two browsers. On My account in one of them: **two rows**, **This session** on that browser's own row.
+2. **Sign out other sessions** in that browser:
+   - the **other browser** is refused on its next request and lands on sign-in;
+   - the **current browser** stays signed in;
+   - the list re-reads to **exactly one** session;
+   - that row is marked **This session**.
+3. (Optional) With a second session open again, **change the password**: the list re-reads to one row.
+
+### Implementation notes
+
+- **`ActiveSessionListing`** (`Users/Queries/UserSessions`) is the shared service, registered scoped. `UserSessionsQueryHandler` now authenticates, authorises `session.read`, refuses a non-human target, and delegates. `MySessionsQueryHandler` authenticates and delegates with the execution context's `UserId`. Neither handler touches the repository or the security policy any more.
+- **SES-Q1's tests were not changed** and pass on the shared service. MS-2 compares the two reads' `UserSessionView` lists by record equality.
+- **`GET /api/account/sessions`** sits in `AccountEndpoints` and passes `CurrentCarrier.SessionId`, as the `/me` endpoint does.
+- **The page:** `MySessionsList` is rendered in the Sessions section above `SessionActions`. On success, **Sign out other sessions** calls `useRefreshMySessions` from the account module, because its mutation hook belongs to the auth module. `useChangePassword` invalidates the list on success itself.
+- **`formatInstant`** is now `src/shared/format/formatInstant.ts`, which is formatting only. The users module imports it from there.
+
+### Not included
+
+- Ending one other session of one's own (MY4); any new command.
+- Any change to SES-C2, SES-C4, CRD-C4, `/me` or SES-Q1's behaviour.
+- User-agent parsing and session history.
 
 ---
 
