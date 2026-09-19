@@ -1700,7 +1700,7 @@ USR-C2 does not take the D6 row lock. That lock orders commands that depend on l
 > **`GET /api/users/{userId}` returns exactly `userId`, `firstName`, `lastName` and `displayName`, and requires `user.read`.**
 
 - **Why these four and nothing else.** USR-C2's client must show the current names before editing them. The list row deliberately excludes `FirstName` and `LastName` (USR-Q2, *Excluded fields*: *"DisplayName serves recognition"*). This read exists for that one use.
-- **Not the catalogue's full GetUser.** The frozen catalogue gives GetUser status, actor type, identities and current assignments. **None of those is added here.** Each would need its own evidence, under the same rule as the list's fields (USR-Q2, *Adding a field later*). This is `USR-Q1` v1, narrow on purpose.
+- **Not the catalogue's full GetUser.** The frozen catalogue gives GetUser status, actor type, identities and current assignments. **None of those is added here.** *(Later: v2 adds `email`, `status` and `activationPending`, and the USR-Q1 composition amendment moves identities and assignments out of USR-Q1. See* USR-Q1 GetUser v2 and the User detail page*.)* Each would need its own evidence, under the same rule as the list's fields (USR-Q2, *Adding a field later*). This is `USR-Q1` v1, narrow on purpose.
 - **Who.** Human users only, as the list scopes. The System actor, and an unknown user, are refused as unknown: `400`, *"The user does not exist."*, following the convention of the reads and commands addressed by `{userId}`.
 - **Authorization and audit.** It declares `Required("user.read")`. Refused, it is `400` (Known Gaps, *Authorization failures are not distinguishable from validation failures*); with no carrier, `401`. It is **not audited**: reads are not events (architecture §11), as USR-Q2.
 - **Nullability.** `firstName` and `lastName` are non-null for humans, by `ck_app_user_human_names`. `displayName` is non-null.
@@ -2096,6 +2096,124 @@ No workbook is edited. The following are outstanding against the frozen document
 **For the record.** 6 is below the minimum of 8 that common guidance (NIST SP 800-63B) sets for user-chosen passwords. This was raised with the owner before the decision was confirmed.
 
 **Tests.** `SecurityPolicyResolverTests` now runs on its own freshly provisioned database. Its premise is "a provisioned database with no overrides", and the shared test database, seeded at 12 under the earlier baseline, no longer meets it.
+
+---
+
+## USR-Q1 GetUser v2 and the User detail page (story 1)
+
+**Status:** Draft, 2026-09-19. The owner has decided G1–G8. The **field and permission matrix** below is open for review before freezing. This builds on USR-Q1 v1 (*USR-C2 — Update User Profile, and USR-Q1 GetUser (narrow v1)*), on AUT-Q2 (#60), and on the Users-table actions (USR-C4/C5, USR-C2 UI).
+
+### Requirement
+
+An administrator opens one user's page from the Users table and sees who that user is and what state they are in. The page offers the same actions the row offers. When the caller may read role assignments, it also shows the user's current roles.
+
+The page is **composed from independently authorised reads**. The page needs `user.read`, and each section needs its own read permission, so two administrators can legitimately see different versions of the same page.
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **G1** | **Two stories.** Story 1, this one: GetUser v2, the detail page, the existing actions, and a Roles section. Story 2: identities (IDN-Q1) with lock state, and the unlock UI (CRD-C6). |
+| **G2** | **Each section under its own read permission.** `user.read` authorises the core detail; `role.read` authorises Roles (AUT-Q2); `identity.read` will authorise Identities (IDN-Q1, story 2). **This is change control against the frozen catalogue.** See *USR-Q1 composition amendment*. |
+| **G3** | **GetUser v2 adds `email`, `status` and `activationPending`** to `userId`, `firstName`, `lastName` and `displayName`. It adds no actor type, deactivation time, identities or assignments. Each new field carries the five-point evidence below. |
+| **G4** | **The route is `/admin/users/:userId`**, a client-chosen path. **The display name in the Users table becomes a link to it.** An unknown user, or the System actor, shows the server's *"The user does not exist."* as a not-found state. |
+| **G5** | **The page offers the same actions as the row**, under the same permissions and status rules, using the existing dialogs. After an action, the client **re-reads GetUser** and **invalidates the list**; it never guesses the new state locally. The row actions stay in the table. |
+| **G6** | **A Roles section, only for holders of `role.read`.** Its source is AUT-Q2, current assignments only (the default: Active and Future). It is read-only and shows the server-derived state as sent. **Manage roles** opens the existing dialog. |
+| **G7** | **A section the caller cannot read is hidden**: never disabled, and never shown as "denied". |
+| **G8** | **Out of scope:** identities and unlock (story 2); sessions (SES-Q1); the access summary (USR-Q3); audit history (AUD-Q2); `Location` on create; agents and the System actor. |
+
+### USR-Q1 composition amendment (G2, change control)
+
+> **USR-Q1 composition amendment:** GetUser provides core user detail under `user.read`. Role assignments are not returned by USR-Q1; they are obtained through AUT-Q2 under `role.read`. Identities are similarly obtained through IDN-Q1 under `identity.read` in the subsequent story.
+
+**Why.** The frozen catalogue's USR-Q1 row returns *"identities (provider, username, status), current assignments"* under `user.read`. Its sibling queries put exactly that data under separate permissions: IDN-Q1 under `identity.read`, and AUT-Q2 under `role.read`. The seeded roles separate these permissions deliberately:
+
+| Seeded role | `user.read` | `identity.read` | `role.read` |
+| --- | :---: | :---: | :---: |
+| user-administrator | ✓ | ✓ | ✗ |
+| security-administrator | ✓ | ✗ | ✓ |
+| access-reviewer | ✓ | ✓ | ✓ |
+
+Bundling the data under `user.read` would stop `role.read` controlling access to role assignments, and `identity.read` controlling access to identities. A user administrator would read assignments that AUT-Q2 refuses them. **The sibling contracts are not weakened;** USR-Q1 is narrowed instead.
+
+**Outstanding change control, with no workbook edited:** the UM command catalogue's *Queries* sheet, USR-Q1 row, *Returns* column. It should list the core fields only, and name AUT-Q2 and IDN-Q1 as where assignments and identities come from.
+
+### The field and permission matrix (for review)
+
+| Page part | Data | Source | Permission | If not held |
+| --- | --- | --- | --- | --- |
+| **The page** | `userId`, `firstName`, `lastName`, `displayName`, `email`, `status`, `activationPending` | USR-Q1 GetUser v2, `GET /api/users/{userId}` | `user.read` | The route shows the established denied state, as other permission-gated routes do. The Users-table link is not offered without `user.read`, because the table itself needs it. |
+| **Actions** | the row's actions | the existing commands | each action's own permission, as in the table | that action is hidden |
+| **Roles** | current assignments: role name, effective from, effective to, state | AUT-Q2, `GET /api/users/{userId}/role-assignments` (default: Active and Future) | `role.read` | the section is hidden |
+| **Manage roles** | opens the existing dialog | AUT-C1 and AUT-C2 | `role.grant` or `role.revoke`, as the table offers it | hidden |
+| *Identities (story 2)* | — | IDN-Q1 | `identity.read` | hidden |
+
+A section's request is **not made** when its permission is not held, so no refusal is fetched only to be hidden.
+
+### GetUser v2 (G3)
+
+> **`GET /api/users/{userId}` returns exactly `{ userId, firstName, lastName, displayName, email, status, activationPending }`, and requires `user.read`.**
+
+- **The added fields mean exactly what they mean on the list row (USR-Q2).** `email` is nullable because the column is. `status` is `"Active"` or `"Inactive"`, the stored lifecycle status (USR-Q2, amendment 2). `activationPending` is derived exactly as USR-Q2 derives it (amendment 1). False means only "not pending": never "activated", "has a password" or "can sign in".
+- **Unchanged from v1:** human users only; the System actor and an unknown user are refused as unknown (`400`, *"The user does not exist."*); `401` without a carrier; not audited. The read is still one statement.
+- **Additive for existing clients.** The web schema for v1 strips unknown members, so the Edit profile dialog is unaffected.
+
+#### The evidence (*Adding a field later*)
+
+| Field | 1. Concrete use | 2. Data exposure | 3. Necessity | 4. Removal cost | 5. Stable identity |
+| --- | --- | --- | --- | --- | --- |
+| `email` | The page identifies the user beyond the display name, as the row does. | Already served to every `user.read` holder on the row. | A deep link, a reload or a bookmark has no row to borrow from. | The page would lose the second identifying line. It is additive. | A label for people, never a key or a match (P4). |
+| `status` | The Inactive marker, and the action matrix (Deactivate or Reactivate; actions withheld from inactive users). | Already served on the row, and lifecycle status is `user.read` data. | Without it the page must offer actions that are refused, or depend on list data it may not have. | The action matrix would return to offer-and-refuse. It is additive. | An enum value, not an identifier. |
+| `activationPending` | The action matrix: Resend activation link offered, Reset password withheld. | One boolean, already on the row. It carries no credential detail and no token state. | As `status`. | As `status`. | A boolean cannot be mistaken for an identifier. |
+
+### The page (G4, G5, G7)
+
+- **Route:** `/admin/users/:userId`, under the Administration area. The *Users* navigation entry stays current on it, because the entry is current on its path and beneath. It is lazy-loaded, like every page.
+- **Entry:** the display name in each Users-table row becomes a link to the page. The row's Actions menu stays as it is.
+- **Header:**
+  - **Title:** the display name.
+  - Below it, the full name (first and last) and the email address, or *"No email address"* when null.
+  - The **Inactive** and **Pending activation** markers, as the table shows them.
+- **Loading and errors:**
+  - While GetUser loads, a skeleton.
+  - A refusal of GetUser shows its message word for word in the shared `ErrorState`, with **Try again**.
+  - An unknown user or the System actor shows *"The user does not exist."* the same way. It is a stated not-found, never a redirect.
+- **Actions (G5):** the same matrix as the row, with the same permissions and the same status and `activationPending` rules. They use the existing dialogs: the lifecycle actions, Resend, Reset, Sign out everywhere, Edit profile and Manage roles. After any action succeeds:
+  - GetUser for this user is **invalidated and re-read**;
+  - the Users list is **invalidated**;
+  - for Manage roles, the Roles section's AUT-Q2 query is invalidated as well.
+
+  The page shows only what the server then returns. Announcements are as each dialog already makes them.
+- **Roles (G6):**
+  - A section titled **Roles**, shown only with `role.read`.
+  - It lists the current assignments (AUT-Q2's default) with the role name, **From**, **To** (or "No end date") and **State**, exactly as sent.
+  - With none, it says *"No current roles."*
+  - It has its own loading and error states, independent of the page.
+  - **Manage roles** in the section opens the existing dialog, under the same condition as the row action.
+
+### Acceptance Criteria
+
+- **DV-1:** GetUser v2 returns exactly the seven fields, with `email` null where the column is. `status` and `activationPending` agree with the list row for the same user, across all four combinations. The System actor and an unknown user are refused as before.
+- **DV-2:** a caller without `user.read` is refused (`400`). There is no audit record.
+- **DV-3:** a Users-table display name links to `/admin/users/{userId}`. The page renders the header from GetUser alone, including on a direct load with no list read.
+- **DV-4:** loading shows a skeleton, and a refusal shows its message with Try again. An unknown user shows *"The user does not exist."*.
+- **DV-5:** the page offers exactly the row's actions for each permission, status and `activationPending` combination. The same matrix test is applied to the page.
+- **DV-6:** after each action succeeds, GetUser is re-read, the list is invalidated, and (for Manage roles) AUT-Q2 is re-read. The page reflects the server's new state, and nothing changes locally before the re-read.
+- **DV-7:** Roles is shown with `role.read` and **absent, with no request made**, without it. It lists AUT-Q2's current assignments with the server's state as sent, and shows *"No current roles."* when there are none. Its error does not break the page.
+- **DV-8:** a user administrator (no `role.read`) sees the page without Roles, and a security administrator sees it with Roles. Both are proved against the seeded roles.
+- **DV-9:** no accessibility violations on the page, with a dialog open, and in the loading and error states.
+- **DV-10:** browser check in the dev stack, each state change approved by the owner:
+  - open a user from the table and by direct URL;
+  - perform one action and see the page re-read;
+  - compare the page as a user administrator and as a security administrator.
+
+### Not included
+
+- Identities and lock state, and the unlock UI (story 2).
+- Sessions (SES-Q1), the access summary (USR-Q3), audit history (AUD-Q2).
+- `Location` on `POST /api/users`.
+- Agents and the System actor.
+- Deactivation time, actor type, created-at, or any other GetUser field.
 
 ---
 
