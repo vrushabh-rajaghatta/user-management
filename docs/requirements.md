@@ -2914,6 +2914,19 @@ taken / available ── any edit ─► unchecked
 2. `V.R`: in use too.
 3. An unused name: *"Username available."*.
 
+### Implementation notes
+
+- **The handler** authenticates, authorises `identity.read`, refuses a blank value, then returns `!ExistsWithUsernameAsync(username)`: the method USR-C1 calls, unchanged. UA-2 proves the two agree value by value.
+- **The route** sits in `IdentityEndpoints`. A missing body or field is sent as the blank case and refused by the query. The request record is never logged, and UA-4 checks that no host log line contains the typed value.
+- **The page** keeps an `Availability` value of `{ username, state }`:
+  - **Blur:** a blur with `identity.read` and a non-blank trimmed value sends one check, unless that exact value is already answered.
+  - **Late answers:** each answer is applied only if the field still holds that value, tracked in a ref that every edit updates. Every edit also clears the answer.
+  - **Submit:** it is refused locally only when the current value is the one answered *taken*.
+  - **Failures:** a failed check clears its own "checking" state and nothing else.
+  - **After a successful create:** the form clears the answer along with the fields.
+  - **The request:** it is a mutation with `retry: false`, never cached.
+- **Announcements (UN8):** *"This username is already in use."* is the field's error. `FormField` renders errors with `role="alert"`, so it is announced immediately, as every field error in the application is. *"Username available."* is the field's description. `FormField`'s description paragraph now carries `aria-live="polite"`, so a description that changes is announced; static descriptions never change, so for them it announces nothing.
+
 ### Not included
 
 - **Surrounding whitespace in local usernames** — ruled a separate small story (see the Known Gap *Local usernames accept surrounding whitespace*). This story checks exactly the value the client submits.
