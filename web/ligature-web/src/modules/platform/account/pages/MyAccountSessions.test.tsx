@@ -208,6 +208,7 @@ describe("when the list cannot be read", () => {
   it("leaves both buttons working", async () => {
     backend({ read: () => HttpResponse.json({ error: "The request could not be completed." }, { status: 400 }) });
     const { user } = render();
+    await screen.findByRole("heading", { level: 1, name: "My account" });
     await within(region()).findByText("The request could not be completed.");
 
     await signOutOthers(user);
@@ -269,7 +270,10 @@ describe("reading the list again", () => {
     const before = state.reads();
 
     await signOutOthers(user);
-    await within(region()).findByText("The request could not be completed.");
+
+    // A refusal is shown in the confirmation, which stays open (M9).
+    const dialog = screen.getByRole("dialog", { name: "Sign out other sessions?" });
+    await within(dialog).findByText("The request could not be completed.");
     await delay(50);
 
     expect(state.reads()).toBe(before);
