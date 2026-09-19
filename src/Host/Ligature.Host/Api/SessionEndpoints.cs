@@ -1,12 +1,14 @@
+using Ligature.Host.Authentication;
 using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Users.Commands.RevokeSession;
+using Ligature.Platform.Application.Users.Queries.UserSessions;
 using Ligature.Platform.Domain.Users;
 
 namespace Ligature.Host.Api;
 
 /// <summary>
-/// SES-C3 over HTTP.
+/// SES-C3 and SES-Q1 over HTTP.
 ///
 /// Authorisation is the pipeline's: a caller without session.revoke is refused
 /// inside it, with the same 400 a validation failure gets
@@ -34,6 +36,56 @@ public static class SessionEndpoints
             // Documentation only. The pipeline refuses an unauthenticated
             // caller; this marker refuses nothing.
             .WithMetadata(new RequiresCarrier());
+
+        // SES-Q1 GetActiveSessions for one user: exactly the sessions the
+        // canonical active-session test accepts, which is what SES-C3 can end.
+        routes.MapGet("/api/users/{userId:guid}/sessions", ListAsync)
+            .WithTags("Sessions")
+            .WithSummary("A user's active sessions.")
+            .WithDescription(
+                "Requires a carrier and the 'session.read' permission. Returns "
+                + "{ sessions }, most recently active first, each with "
+                + "sessionId, createdAt, lastActivityAt, expiresAt, "
+                + "idleExpiresAt, ipAddress, userAgent and current. "
+                + "'idleExpiresAt' is conservative and informational, not a "
+                + "deadline. 'current' is true only for the session this "
+                + "request presented. Human users only: an unknown user, the "
+                + "System actor and a missing permission are 400. Not audited.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+    }
+
+    /// <summary>
+    /// The caller's session id is the one the Host recovered from the carrier
+    /// it verified — passed explicitly, as /me passes it. Nothing the client
+    /// sends can name it; it decides only which row is current.
+    /// </summary>
+    private static async Task<IResult> ListAsync(
+        Guid userId,
+        CurrentCarrier currentCarrier,
+        IQueryDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var result = await dispatcher.SendAsync<UserSessionsQuery, UserSessionsResult>(
+            new UserSessionsQuery(new UserId(userId), currentCarrier.SessionId),
+            cancellationToken);
+
+        return Results.Ok(new
+        {
+            Sessions = result.Sessions.Select(x => new
+            {
+                SessionId = x.SessionId.Value,
+                x.CreatedAt,
+                x.LastActivityAt,
+                x.ExpiresAt,
+                x.IdleExpiresAt,
+                x.IpAddress,
+                x.UserAgent,
+                x.Current,
+            }),
+        });
     }
 
     /// <summary>

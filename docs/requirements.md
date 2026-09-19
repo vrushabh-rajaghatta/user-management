@@ -2651,6 +2651,109 @@ Neither is coupled to the authentication behaviour.
 
 ---
 
+## SES-Q1 GetActiveSessions and Revoke on the User detail page (story 3)
+
+**Status:** Contract frozen 2026-09-19 by owner decision (SS1–SS10, with the owner's two clarifications on `current` and `idleExpiresAt`). This builds on the User detail page (stories 1 and 2, #69 and #70) and on SES-C3 `RevokeSession` (`POST /api/sessions/{sessionId}/revoke`), which is **unchanged**.
+
+### Requirement
+
+On the User detail page, an administrator allowed to read sessions sees where the user is signed in. An administrator who may also revoke sessions can end one, with a reason — except the one they are using, which the page marks as theirs.
+
+The read and the command judge "active" identically, so the page lists exactly what Revoke can act on.
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **SS1** | **The read is `GET /api/users/{userId}/sessions`, under `session.read`, for one user.** Human users only: an unknown user and the System actor get *"The user does not exist."*, as GetUser and IDN-Q1 do. Not audited. The catalogue's system-wide form (SES-Q1 with `UserId` omitted) is deferred. |
+| **SS2** | **"Active" is exactly the existing canonical test** — the one the per-request session check and SES-C3 apply, owned by `IUserSessionRepository` (not revoked, before absolute expiry, within the idle timeout widened by the enforcement tolerance, an Active identity of an Active human user) — across **every** identity of the user. The read reuses `FindActiveForUserAsync`, which SES-C4 already uses; nothing is restated. An inactive user has no active sessions. |
+| **SS3** | **Eight fields per session:** `sessionId`, `createdAt`, `lastActivityAt`, `expiresAt`, `idleExpiresAt`, `ipAddress`, `userAgent`, `current`. No identity is returned: identity data stays under `identity.read`. See *The two derived fields*. |
+| **SS4** | **Most recently active first**; ties broken by session id. |
+| **SS5** | **An "Active sessions" section below Sign-in identities, mounted only with `session.read`** — without it the section is absent **and its request is never made**. Columns: **Signed in**, **Last active**, **IP address**, **Browser** (the raw user-agent string), and the Revoke action. The caller's own row is marked **This session**. With none: *"No active sessions."* Its loading, error and retry are its own. |
+| **SS6** | **Revoke is offered only when the caller holds `session.revoke` and the row is not `current`.** Hidden, never disabled. **A UI affordance, not authorization:** SES-C3 gains no self rule — revoking one's own session is signing out, which the account footer already offers. |
+| **SS7** | **The Revoke dialog** is the existing confirmation-with-reason pattern; the **reason is required**; it sends exactly `{ reason }`. Refusals are shown word for word. When it **settles — success or refusal** — the sessions are **re-read** (an already-ended session answers `204` and the re-read drops it). Nothing else is re-read. |
+| **SS8** | **Sign out everywhere and Deactivate also re-read the sessions**, because both end them. |
+| **SS9** | **The seeded roles, proved:** a user administrator sees the list and Revoke; an access reviewer sees the list without Revoke; a security administrator sees no section, and **no request is made**. |
+| **SS10** | **Out of scope:** the system-wide list; SES-Q2 My sessions (the next story, which reuses this read); parsing user agents, IP geolocation; ended sessions and history (the audit trail, AUD-Q7); an identity column. |
+
+### The two derived fields (owner clarifications)
+
+**`current` is server-derived, and is a session-level fact.** It is `true` for exactly one row at most: the session **whose id is the caller's own session id** — not every session of the caller's identity, which would mark all of an administrator's sessions on their own page. The caller's session id reaches the query the way it reaches `MeQuery` and SES-C2: **the Host passes `CurrentCarrier.SessionId` as an explicit query input**, recovered from the carrier it verified. It is not put into the execution context (`CurrentCarrier` records why: the application layer stays free of access-token transport state), it is not added to `/me`, and **the client never names it or infers it** — it trusts `current`.
+
+**`idleExpiresAt` keeps `/me`'s conservative semantics.** The server computes `lastActivityAt + the effective SessionIdleTimeout`, **without** the enforcement tolerance — exactly as `/me` does. It is an informational instant, not a deadline: activity writes are throttled and enforcement carries a tolerance, so a listed session may still be accepted slightly after it. The browser displays it as an instant and **never computes it or counts down from it**. (Because the list uses the tolerant canonical test, a session inside the tolerance window can be listed with an `idleExpiresAt` already past; that is the same conservatism, not a contradiction.)
+
+### The response
+
+```json
+{
+  "sessions": [
+    {
+      "sessionId": "…",
+      "createdAt": "2026-09-19T11:40:31Z",
+      "lastActivityAt": "2026-09-19T11:52:07Z",
+      "expiresAt": "2026-09-19T19:40:31Z",
+      "idleExpiresAt": "2026-09-19T12:22:07Z",
+      "ipAddress": "192.168.65.1",
+      "userAgent": "Mozilla/5.0 …",
+      "current": false
+    }
+  ]
+}
+```
+
+`ipAddress` and `userAgent` may be `null` (both are nullable security evidence).
+
+### Change control
+
+Outstanding against the frozen catalogue; no workbook is edited:
+
+1. **SES-Q1 *Returns*:** "computed idle remaining" is served as **`idleExpiresAt`**, a conservative instant with `/me`'s semantics, and SES-Q1 gains **`current`** — which the catalogue gives only to SES-Q2 — derived server-side from the caller's session.
+2. **SES-Q1 *Parameters*:** `UserId` is required in this slice; the system-wide form is deferred (SS1).
+
+No schema change, no new audit event, and SES-C3 is unchanged.
+
+### Acceptance Criteria
+
+**The read (SS1–SS4)**
+
+- **SQ-1** For a user with sessions on **two identities**, the read returns exactly the sessions the canonical test accepts: an active session on each identity is listed; a **revoked**, an **expired** and an **idle-beyond-tolerance** session are not. Each row has exactly the eight fields, most recently active first, ties by id.
+- **SQ-2** The read and SES-C3 agree: every listed session is one `FindActiveAsync` accepts, and every seeded session that is not listed is one SES-C3 treats as already ended.
+- **SQ-3** `idleExpiresAt` equals `lastActivityAt` plus the effective `SessionIdleTimeout`, with no tolerance added.
+- **SQ-4** An **inactive** user has no active sessions (an empty list, not a refusal). An unknown user and the System actor are refused with *"The user does not exist."*. Without `session.read` the read is refused (`400`); without a carrier, `401`. No audit record is written.
+- **SQ-5** **`current` is session-level and server-derived:** with two sessions of the caller's own identity, reading as one of them marks **only that one** `current`; reading as the other flips it. A session of another user is never `current`. Over HTTP, `current` follows the carrier presented, and nothing the client sends can set it.
+
+**The page (SS5–SS9)**
+
+- **SQ-6** The section is shown only with `session.read`. Without it the section is absent and **no sessions request is made** (counted). It has its own loading, error and retry, and its failure leaves the page standing. With no sessions it says *"No active sessions."*.
+- **SQ-7** The columns are Signed in, Last active, IP address and Browser; a missing IP or user agent shows "—". The `current` row is marked **This session**. `idleExpiresAt` is never used to count down.
+- **SQ-8** Revoke is offered exactly when the caller holds `session.revoke` **and** the row is not `current`: absent without the permission, and absent on the `current` row.
+- **SQ-9** The dialog requires a reason and sends nothing without one; it sends exactly `{ reason }` to `POST /api/sessions/{sessionId}/revoke`; it is busy while sending and sends once. On `204`: close, re-read the sessions, announce. A refusal is shown word for word, the dialog stays open, and the sessions are re-read too.
+- **SQ-10** After **Sign out everywhere** and after **Deactivate** succeed on the page, the sessions are re-read.
+- **SQ-11** (SS9) Against the seeded roles: **user administrator** — section, request and Revoke; **access reviewer** — section and request, no Revoke; **security administrator** — no section and **no request**.
+- **SQ-12** No accessibility violations with the section loaded, with the dialog open, and in the loading and error states.
+
+**Browser, in the dev stack (SQ-13),** each state change approved by the owner:
+
+1. As Ada, V R's page lists V R's live sessions.
+2. Revoke one with a reason: `SessionRevoked` is recorded with **`AdminRevoked`** in the session's After and **the reason preserved** as the audit Reason; after the re-read the row is gone; a request presenting that session's carrier receives the existing session-invalid response (`401`).
+3. On **Ada's own page**, her current session is marked **This session**, and **no Revoke is rendered for it**.
+4. After **Sign out everywhere** for V R, the section re-reads to *"No active sessions."*.
+
+### Implementation notes
+
+- **No new session semantics.** `UserSessionsQueryHandler` reads through `IUserSessionRepository.FindActiveForUserAsync` — the method SES-C4 already uses — with the effective `SessionIdleTimeout`, so the list and SES-C3 apply one test. It adds only the unknown-user refusal (a missing user or a non-human actor), the order (`LastActivityAt` descending, then session id), and the two derived fields.
+- **`current`** is `x.Id == query.CallerSessionId`. The endpoint passes `CurrentCarrier.SessionId`, exactly as the `/me` endpoint builds `MeQuery`. Nothing about sessions was added to the execution context or to `/me`.
+- **The page:** `UserSessionsSection` is mounted after Sign-in identities when `useCan(readSessions)`. **This session** sits in the Signed in cell. The Revoke column exists only for a `session.revoke` holder, so an access reviewer sees four columns, not an empty fifth. Each Revoke button is named *"Revoke session signed in {time}"*, so rows are distinguishable to assistive technology. The eligibility rule is `sessionActions.revokeOffered`.
+- **Re-reads (SS7, SS8):** `useRevokeSession` invalidates the sessions `onSettled`. Sign out everywhere invalidates them on success. Deactivate and Reactivate share one lifecycle mutation, so both re-read them; after a reactivation the re-read is simply unchanged.
+
+### Not included
+
+- The system-wide session list; SES-Q2 My sessions.
+- Any change to SES-C3, SES-C4, `/me` or the execution context.
+- User-agent parsing, IP geolocation, session history, an identity column.
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
