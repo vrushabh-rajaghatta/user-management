@@ -527,7 +527,7 @@ Unlock is identity-scoped by decision, not by accident. `UnlockAccountCommand` i
 
 `IUserIdentityRepository.FindLocalByUserIdAsync` exists, and CRD-C5 applies an *exactly one* rule to it — as its own eligibility rule. Carrying that rule over to unlock would be the identity selection CRD-C6 refused. Any path from a row to unlock is therefore a new identity-selection contract, however it is built: a `UserIdentityId` in the row, a lookup endpoint, or a client-side join.
 
-**`UserIdentityId` is not added to the row because unlock needs it.** That would design the read around a command whose contract says it is identity-scoped. Making unlock reachable from a user list needs its own decision.
+**`UserIdentityId` is not added to the row because unlock needs it.** That would design the read around a command whose contract says it is identity-scoped. Making unlock reachable from a user list needs its own decision. *(Later: unlock is reached from the **User detail page**, where the administrator chooses the identity from IDN-Q1's list. It is still not reached from a row. See* IDN-Q1 GetUserIdentities and Unlock on the User detail page*.)*
 
 ### Correlating a row with the caller
 
@@ -2232,6 +2232,144 @@ A section's request is **never made** when its permission is not held. The clien
 - `Location` on `POST /api/users`.
 - Agents and the System actor.
 - Deactivation time, actor type, created-at, or any other GetUser field.
+
+---
+
+## IDN-Q1 GetUserIdentities and Unlock on the User detail page (story 2)
+
+**Status:** Contract frozen 2026-09-19 by owner decision (I1–I9, the identity response, and the Unlock acceptance criteria, with the owner's two clarifications). This builds on story 1 (*USR-Q1 GetUser v2 and the User detail page*, #69) and on CRD-C6 `UnlockAccount` (`POST /api/identities/{identityId}/unlock`), which is unchanged.
+
+### Requirement
+
+On the User detail page, an administrator allowed to read identities sees how the user signs in, and whether each sign-in is locked. An administrator who may also unlock can clear a lock that is in force, with a reason, on any user but themselves.
+
+This gives CRD-C6 the identity-selection contract its own requirements asked for (*Unlock is not reachable from a row*). The administrator chooses the identity from the list, so the command never has to choose between identities.
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **I1** | **The read is `GET /api/users/{userId}/identities`**, under `identity.read`. Human users only: an unknown user and the System actor get *"The user does not exist."*, as GetUser does. It returns **every** identity of the user (local and external, active and inactive), **oldest first**. Not audited. |
+| **I2** | **The identity fields, from the catalogue:** `userIdentityId`, `type`, `provider`, `username`, `status`, `deactivatedAt`. **`subjectId` is deferred:** for a local identity it equals the identity's ID (UI5), and no external identity exists yet. |
+| **I3** | **The lock state, beyond the catalogue:** `locked` and `lockedUntil`, **decided by the server at read time** using CRD-C6's rule, *a lock currently in force* (`LockedUntil > now`). An expired lock reads as `locked: false`, `lockedUntil: null`, never as a stale lock. **`failedAttemptCount` is not exposed:** it is an internal security signal, not something an administrator's decision needs. |
+| **I4** | **Change control:** the IDN-Q1 amendment below. |
+| **I5** | **A "Sign-in identities" section below Roles**, gated **only** by `identity.read`. Without that permission the section is absent **and its request is never made** (story 1's G7 rule). |
+| **I6** | **Unlock is offered only when all of these hold:** the caller holds `user.unlock`; the identity is locked, local and active; the user is active; and the page is **not the caller's own**. Hidden, never disabled. **This is a UI affordance, not authorization:** see *Server authority*. |
+| **I7** | **The Unlock dialog** follows the existing confirmation-with-reason pattern, and the **reason is required**. After a success, or after an *"is not currently locked"* refusal, the identities are **re-read**. |
+| **I8** | **The seeded roles, proved:** a user administrator sees identities, with Unlock where eligible; a security administrator sees neither, and no request is made; an access reviewer sees identities without Unlock. |
+| **I9** | **Out of scope:** identity lifecycle (IDN-C3, IDN-C4), username changes (IDN-C2), external-identity behaviour, the failure count, sessions, Unlock from the Users table, and reconciling the permission names. |
+
+### IDN-Q1 amendment (I3, I4, change control)
+
+> **IDN-Q1 amendment:** GetUserIdentities returns, per identity, `userIdentityId`, `type`, `provider`, `username`, `status` and `deactivatedAt`, and the **lock state** `locked` and `lockedUntil`, derived by the server at read time as CRD-C6 decides it. `subjectId` is deferred until external identities exist. `failedAttemptCount` is not returned.
+
+**Outstanding change control, with no workbook edited:** the UM command catalogue's *Queries* sheet, IDN-Q1 row, *Returns* column. It gains the lock state and defers the subject.
+
+#### The evidence for the lock state (*Adding a field later*)
+
+| Field | 1. Concrete use | 2. Data exposure | 3. Necessity | 4. Removal cost | 5. Stable identity |
+| --- | --- | --- | --- | --- | --- |
+| `locked` | Decides whether Unlock is offered (I6), and shows the administrator why a person cannot sign in. | Whether sign-in is blocked right now, to holders of `identity.read`: the people who manage identities. There is no count and no history. | Without it the page must offer Unlock on every local identity and rely on *"This account is not currently locked."*: offer-and-refuse, the pattern the action matrix exists to avoid. | Unlock returns to offer-and-refuse. It is additive. | A boolean, not an identifier. |
+| `lockedUntil` | Tells the administrator how long the lock would last on its own, so they can choose to wait instead of unlocking. | One instant, present only while locked. | Without it the administrator cannot weigh waiting against unlocking. | The page loses the "until" text. It is additive. | An instant, not a key. |
+
+### The identity response
+
+```json
+{
+  "identities": [
+    {
+      "userIdentityId": "…",
+      "type": "Local",
+      "provider": "Application",
+      "username": "vr.ra",
+      "status": "Active",
+      "deactivatedAt": null,
+      "locked": true,
+      "lockedUntil": "2026-09-19T15:20:04Z"
+    }
+  ]
+}
+```
+
+- **`type`** is `"Local"` or `"External"`. **`provider`** is `"Application"` for local identities, or the provider's name.
+- **`username`** is a string for local identities and `null` for external ones.
+- **`status`** is `"Active"` or `"Inactive"`. **`deactivatedAt`** is set exactly when `status` is `"Inactive"` (`ck_user_identity_status_deactivation`).
+- **`locked` is a read-time projection, not persisted identity state.** No column holds it, on `user_identity` or anywhere else. It is computed at each read from the credential's `LockedUntil` and the server's clock. **`locked`** is `true` exactly when the identity has a credential whose `LockedUntil` is later than the server's clock at the read. **`lockedUntil`** is that instant when `locked`, and `null` otherwise. An identity with no credential (external, or pending activation) is `locked: false`.
+- **Ordered** by the identity's creation, oldest first; ties are broken by `userIdentityId`.
+- **Refusals:** `400 { error }` for an unknown user, the System actor, or a missing `identity.read`; `401` with no carrier.
+
+### Server authority (I6)
+
+**The client's self rule only hides the action. The server continues to enforce the prohibition.**
+
+- **The client** reads the caller's session `userIdentityId` from `/api/me`. When it is among the listed identities, the page is the caller's own, and Unlock is not offered on **any** of its identities.
+- **The server** keeps CRD-C6's rule unchanged: **an administrator cannot unlock any identity belonging to their own user**, whichever identity is named. The rule is user-level, not identity-level. It answers *"An administrator cannot unlock their own account."* whatever the client did, including when `/me` is stale or unavailable, or the client errs.
+- The same holds for every other condition in I6. The client's check is an affordance, and CRD-C6's refusals (*"This account cannot be unlocked."*, *"This account is not currently locked."*) remain authoritative. They are shown word for word.
+
+### The page (I5, I6, I7)
+
+- **The section:** **Sign-in identities**, below Roles, mounted only for `identity.read`. It has its own loading, error and **Try again**, independent of the page and of Roles.
+- **Columns:** **Type**, **Username** ("—" when null), **Status**, and **Lock**: *"Locked until {instant}"* when locked, *"Not locked"* otherwise. The instant uses the module's shared format.
+- **Unlock:** a button **"Unlock {username}"** on an eligible row (I6).
+- **The dialog:**
+  - Title *"Unlock {username}"*. The description says it clears the lock now, the person can sign in again, and nothing else changes: no password, session or token.
+  - It has a required **Reason**. The buttons are **Cancel** and **Unlock**, busy while sending, and sending once.
+- **On 204:** the dialog closes, the identities are **re-read**, and the page announces *"{username} was unlocked."*. The row then shows *"Not locked"* and no Unlock.
+- **On a refusal:** the dialog stays open with the message word for word. For *"This account is not currently locked."* the identities are **also re-read**, so the page stops offering an action that can no longer succeed.
+- **Nothing else is re-read:** unlocking changes nothing that GetUser, the list or Roles show.
+
+### Acceptance Criteria
+
+- **ID-1:** the read returns exactly the eight fields per identity, oldest first, for a user with **local and inactive** identities, and **an external** identity is represented too (seeded directly). An unknown user and the System actor are refused as unknown. A missing `identity.read` is `400`, and no carrier is `401`. There is no audit record.
+- **ID-2:** the lock state follows CRD-C6's rule at the read's instant:
+  - a lock in force gives `locked: true` and its `lockedUntil`;
+  - an **expired** lock gives `false` and `null`;
+  - failures without a lock give `false` and `null`;
+  - no credential gives `false` and `null`.
+
+  `failedAttemptCount` never appears.
+- **ID-3:** the section is shown only with `identity.read`. Without it the section is absent and **no identities request is made** (counted). It has its own loading, error and retry, and its failure leaves the page standing.
+- **ID-4:** Unlock is offered exactly when every I6 condition holds. It is **absent** in each of these cases:
+  - the caller lacks `user.unlock`;
+  - the identity is not locked;
+  - the identity is external;
+  - the identity is inactive;
+  - the user is inactive;
+  - **the page is the caller's own**, on any of its identities, including a locked one.
+- **ID-5:** the dialog requires a reason and sends nothing without one. It sends exactly `{ reason }` to `POST /api/identities/{identityId}/unlock`. It is busy while sending, and sends once. On `204`: close, re-read the identities, announce, and the row shows *"Not locked"* with no Unlock.
+- **ID-6:** refusals are shown word for word, and the dialog stays open. *"This account is not currently locked."* also re-reads the identities. *"An administrator cannot unlock their own account."* is shown as the server words it, whatever the client decided.
+- **ID-7, the server's authority:** over HTTP, independent of the client, an administrator is refused with *"An administrator cannot unlock their own account."*, and no `AccountUnlocked` is written, **in both forms of self-targeting**:
+  - naming **the caller's own session `userIdentityId`**;
+  - naming **any other identity belonging to the caller's own `userId`**.
+
+  CRD-C6's rule is **user-level**, not identity-level. This criterion is kept even though the existing rule may already satisfy it, so that this story's server-authority contract is explicit.
+- **ID-8 (I8), against the seeded roles:**
+  - **user administrator:** section and request, and Unlock on an eligible locked identity;
+  - **security administrator:** no section and **no request**;
+  - **access reviewer:** section and request, and no Unlock.
+- **ID-9:** no accessibility violations with the section loaded, with the Unlock dialog open, and in the loading and error states.
+- **ID-10, browser check in the dev stack**, each state change approved by the owner:
+  1. Lock a test account with five wrong sign-ins (the owner types them).
+  2. On its page, as Ada, see **Locked until {instant}** and Unlock.
+  3. Unlock with a reason: `204`, the identities re-read, *"Not locked"*, and Unlock gone.
+  4. `AccountUnlocked` is in the trail with the reason.
+  5. The unlocked user signs in.
+  6. On **Ada's own page**, no Unlock is offered.
+
+  Whether Unlock stays absent **while the caller's own identity is locked** is proved by **ID-4 (web) and ID-7 (server)**, not in the browser. A deliberate 15-minute lock on Ada would make the manual check fragile.
+
+### Implementation notes
+
+- **The lock state is decided in the reader.** It reads the credential's `LockedUntil` and compares it with the instant the handler takes **once** per read, so every identity in one response is judged at the same moment. Nothing about it is stored.
+- **The page re-reads the identities when an unlock *settles*, success or refusal.** I7 names a success and *"not currently locked"*. Re-reading on every refusal covers both without branching on a message's text, which §7 forbids, and is harmless for the others. Nothing else is invalidated.
+- **Unlock sits in the Lock cell**, keeping the four columns I5 names. The eligibility rule is `identityActions.unlockOffered`.
+- **The self check** compares `useCallerIdentityId()` (from `/me`) with the listed identities, so it works at the user level: any match means the page is the caller's own. ID-7 proves that the server enforces the rule regardless.
+
+### Not included
+
+- Identity lifecycle (IDN-C3, IDN-C4), username changes (IDN-C2), and external-identity behaviour.
+- The failure count, sessions (SES-Q1), and Unlock from the Users table.
+- The `credential.unlock` / `user.unlock` naming (see *The unlock permission disagrees between the Audit and UM specifications*).
 
 ---
 
