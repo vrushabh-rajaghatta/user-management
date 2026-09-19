@@ -3009,7 +3009,7 @@ refused ── any edit ─► unchecked
   - refuse every one of the 25 characters at the start and at the end, with *"A username cannot begin or end with whitespace."*;
   - accept each of them inside a username;
   - refuse a blank value with *"Username cannot be empty."*;
-  - accept `"​ada"` and `"﻿ada"` (WS9).
+  - accept `"\u200Bada"` and `"\uFEFFada"` (WS9).
   A refused `ChangeUsername` leaves the username unchanged.
 
 **The paths (WS5, WS6, WS8): one invariant**
