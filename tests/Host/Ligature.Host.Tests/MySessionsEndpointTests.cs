@@ -69,7 +69,7 @@ public sealed class MySessionsEndpointTests
         foreach (var row in asFirst)
             Assert.Equal(Fields.Order(), row.EnumerateObject().Select(x => x.Name).Order());
 
-        Assert.Equal([SessionOf(first), SessionOf(second)], Ids(asFirst).Order());
+        Assert.Equal(new[] { SessionOf(first), SessionOf(second) }.Order(), Ids(asFirst).Order());
         Assert.Equal([SessionOf(first)], CurrentOf(asFirst));
         Assert.Equal([SessionOf(second)], CurrentOf(asSecond));
         Assert.DoesNotContain(SessionOf(theirs), Ids(asFirst));
