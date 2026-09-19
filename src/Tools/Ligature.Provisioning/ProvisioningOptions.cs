@@ -1,3 +1,6 @@
+using Ligature.Platform.Domain.Users;
+using Ligature.SharedKernel.Exceptions;
+
 namespace Ligature.Provisioning;
 
 /// <summary>
@@ -121,6 +124,23 @@ internal sealed record ProvisioningOptions(
             return null;
         }
 
+        // The username is an identifier: refused, never trimmed ("Local
+        // usernames refuse surrounding whitespace", WS8). The domain rule is
+        // asked here, before any database is touched, so the operator gets its
+        // sentence as a usage error rather than a stack trace from PRV-C3.
+        var username = values[UsernameArgument];
+
+        try
+        {
+            UserIdentity.ValidateUsernameBoundary(username);
+        }
+        catch (DomainException refusal)
+        {
+            error = refusal.Message;
+
+            return null;
+        }
+
         error = null;
 
         return new ProvisioningOptions(
@@ -128,7 +148,7 @@ internal sealed record ProvisioningOptions(
             values[LastNameArgument].Trim(),
             values[DisplayNameArgument].Trim(),
             values[EmailArgument].Trim(),
-            values[UsernameArgument].Trim(),
+            username,
             values[TokenOutArgument]);
     }
 

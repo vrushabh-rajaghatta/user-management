@@ -70,6 +70,13 @@ public sealed class CreateUserCommandHandler
         var email =
             EmailAddress.Create(command.Email);
 
+        // The username rule before any lookup ("Local usernames refuse
+        // surrounding whitespace", WS5): an invalid username is refused for
+        // what it is, never queried, and never reported as "already exists".
+        // It also keeps a blank value away from ExistsWithUsernameAsync, whose
+        // argument guard would otherwise turn it into a 500.
+        UserIdentity.ValidateUsernameBoundary(command.InitialUsername);
+
         if (await _userRepository
                 .ExistsActiveHumanWithEmailAsync(
                     email,

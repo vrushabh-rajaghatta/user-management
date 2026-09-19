@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Domain.Users;
 using Ligature.SharedKernel.Abstractions;
 using Ligature.SharedKernel.Exceptions;
 
@@ -14,8 +15,9 @@ namespace Ligature.Platform.Application.Users.Queries.UsernameAvailability;
 /// <see cref="IUserIdentityRepository.ExistsWithUsernameAsync"/> — the check
 /// USR-C1 makes before it creates, in the UI7 index's own terms: PostgreSQL's
 /// lower(), local identities, every status (D2: absolute). The username is
-/// checked as given, untransformed, because that is what USR-C1 receives.
-/// Nothing about the holder is returned.
+/// checked as given, untransformed, because that is what USR-C1 receives, and
+/// only after UserIdentity.ValidateUsernameBoundary — USR-C1's own rule — has
+/// accepted it. Nothing about the holder is returned.
 /// </summary>
 public sealed class UsernameAvailabilityQueryHandler
     : IQueryHandler<UsernameAvailabilityQuery, UsernameAvailabilityResult>
@@ -67,9 +69,13 @@ public sealed class UsernameAvailabilityQueryHandler
                 "The current actor does not have permission to check usernames.");
         }
 
-        // ---- 3. Read, exactly as USR-C1 checks.
+        // ---- 3. Read, exactly as USR-C1 checks: its own rule first, so a
+        // value USR-C1 would refuse is refused here with the same sentence and
+        // never looked up ("Local usernames refuse surrounding whitespace", WS6).
         if (string.IsNullOrWhiteSpace(query.Username))
             throw new BusinessRuleViolationException("A username is required.");
+
+        UserIdentity.ValidateUsernameBoundary(query.Username);
 
         var taken = await _userIdentityRepository.ExistsWithUsernameAsync(query.Username, cancellationToken);
 

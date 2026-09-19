@@ -38,9 +38,13 @@ const USERNAME_AVAILABLE = "Username available.";
 
 /**
  * IDN-Q3's answer, and the one value it is about (UN6). "checking" blocks
- * nothing; "taken" blocks Create only while the field still holds that value.
+ * nothing; "taken" and "refused" block Create only while the field still holds
+ * that value. "refused" is a 400 from the check — the server's own username
+ * rule — and carries its sentence, shown word for word.
  */
-type Availability = { readonly username: string; readonly state: "checking" | "taken" | "available" };
+type Availability =
+  | { readonly username: string; readonly state: "checking" | "taken" | "available" }
+  | { readonly username: string; readonly state: "refused"; readonly message: string };
 
 const EMPTY = { firstName: "", lastName: "", displayName: "", email: "", initialUsername: "" };
 
@@ -49,6 +53,14 @@ interface Created {
   readonly displayName: string;
   readonly username: string;
   readonly email: string;
+}
+
+function usernameError(availability: Availability | undefined): string | undefined {
+  if (availability?.state === "taken") {
+    return USERNAME_IN_USE;
+  }
+
+  return availability?.state === "refused" ? availability.message : undefined;
 }
 
 function messageFor(failure: unknown): string {
@@ -69,7 +81,7 @@ export function CreateUserPage() {
   const check = useUsernameAvailability();
   const [availability, setAvailability] = useState<Availability | undefined>(undefined);
 
-  // What the field holds NOW, trimmed as it will be submitted — read when an
+  // What the field holds NOW, exactly as it will be submitted — read when an
   // answer arrives, so an answer about an earlier value is discarded.
   const currentUsername = useRef("");
 
@@ -85,16 +97,21 @@ export function CreateUserPage() {
 
     // Any edit makes the previous answer about something else (UN6).
     if (field === "initialUsername") {
-      currentUsername.current = value.trim();
+      currentUsername.current = value;
       setAvailability(undefined);
     }
   }
 
-  /** On blur: ask about exactly the value that would be submitted. */
+  /**
+   * On blur: ask about exactly the value that would be submitted — untrimmed,
+   * because the username is never trimmed. A field holding nothing but
+   * whitespace is not asked about: the answer could only be a refusal that
+   * submitting shows anyway.
+   */
   function checkUsername() {
-    const username = values.initialUsername.trim();
+    const username = values.initialUsername;
 
-    if (!canCheck || username === "" || availability?.username === username) {
+    if (!canCheck || username.trim() === "" || availability?.username === username) {
       return;
     }
 
@@ -108,9 +125,19 @@ export function CreateUserPage() {
 
         setAvailability({ username, state: result.available ? "available" : "taken" });
       },
-      onError: () => {
-        // UN7: a failed check blocks nothing and says nothing.
-        setAvailability((current) => (current?.username === username ? undefined : current));
+      onError: (failure: unknown) => {
+        if (currentUsername.current !== username) {
+          return;
+        }
+
+        // A 400 is the server refusing the value by its own rule, which USR-C1
+        // would apply too: shown, and blocking. Anything else is a failed
+        // check, which blocks nothing and says nothing (UN7).
+        setAvailability(
+          failure instanceof ApiError && failure.status === 400
+            ? { username, state: "refused", message: failure.message }
+            : undefined,
+        );
       },
     });
   }
@@ -128,11 +155,11 @@ export function CreateUserPage() {
 
     const request = parsed.data;
 
-    // UN6: the server has said this value is taken, and under D2 that cannot
-    // change. Only the current value can be "taken": every edit clears the
-    // answer, and a late answer about another value is discarded. No answer,
-    // or any other answer, goes to the server.
-    if (availability?.state === "taken") {
+    // UN6: the server has said this value is taken (and under D2 that cannot
+    // change) or refused it by the rule USR-C1 applies. Only the current value
+    // can be either: every edit clears the answer, and a late answer about
+    // another value is discarded. No answer, or any other, goes to the server.
+    if (availability?.state === "taken" || availability?.state === "refused") {
       return;
     }
 
@@ -232,7 +259,7 @@ export function CreateUserPage() {
           id="username"
           label="Username"
           description={availability?.state === "available" ? USERNAME_AVAILABLE : USERNAME_HELP}
-          error={availability?.state === "taken" ? USERNAME_IN_USE : undefined}
+          error={usernameError(availability)}
           required
         >
           {(control) => (

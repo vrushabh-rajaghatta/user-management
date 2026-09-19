@@ -116,6 +116,65 @@ public sealed class ProvisioningOptionsTests
         Assert.Contains("never printed", ProvisioningOptions.Usage);
     }
 
+    // ------------------------------------------------ the username rule (UW-10)
+
+    /// <summary>
+    /// "Local usernames refuse surrounding whitespace" (docs/requirements.md,
+    /// WS8): refused, never trimmed, with exactly the domain rule's sentence.
+    /// The same set the other paths are held to (UW-3).
+    /// </summary>
+    public static TheoryData<string> SpacedUsernames()
+    {
+        var data = new TheoryData<string>();
+
+        foreach (var whitespace in new[] { ' ', '\t', '\n', '\u00A0', '\u2028', '\u3000' })
+        {
+            data.Add($"{whitespace}ada.lovelace");
+            data.Add($"ada.lovelace{whitespace}");
+        }
+
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(SpacedUsernames))]
+    public void A_username_with_surrounding_whitespace_is_refused_not_trimmed(string username)
+    {
+        var arguments = Complete();
+        arguments[Array.IndexOf(arguments, "--username") + 1] = username;
+
+        Assert.Null(ProvisioningOptions.Parse(arguments, out var error));
+        Assert.Equal("A username cannot begin or end with whitespace.", error);
+    }
+
+    [Fact]
+    public void A_username_with_an_inner_space_is_kept_as_given()
+    {
+        var arguments = Complete();
+        arguments[Array.IndexOf(arguments, "--username") + 1] = "ada lovelace";
+
+        Assert.Equal("ada lovelace", ProvisioningOptions.Parse(arguments, out _)!.Username);
+    }
+
+    /// <summary>WS8 changes the username only: the other options are trimmed as before.</summary>
+    [Fact]
+    public void The_other_options_are_still_trimmed()
+    {
+        var arguments = Complete();
+        arguments[1] = " Ada ";
+        arguments[3] = " Lovelace ";
+        arguments[5] = " Ada Lovelace ";
+        arguments[7] = " ada@example.test ";
+
+        var options = ProvisioningOptions.Parse(arguments, out var error);
+
+        Assert.Null(error);
+        Assert.Equal("Ada", options!.FirstName);
+        Assert.Equal("Lovelace", options.LastName);
+        Assert.Equal("Ada Lovelace", options.DisplayName);
+        Assert.Equal("ada@example.test", options.Email);
+    }
+
     private static string[] Complete() =>
     [
         "--first-name", "Ada",

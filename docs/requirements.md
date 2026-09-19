@@ -2852,6 +2852,8 @@ Exactly SES-Q1's shape: `{ "sessions": [ … ] }` with `sessionId`, `createdAt`,
 
 **Status:** Contract frozen 2026-09-19 by owner decision (UN1–UN10, with the owner's clarification of UN6 and ruling on surrounding whitespace). Read-only: USR-C1, IDN-C2 and the username index are unchanged.
 
+**Amended 2026-09-19** by *Local usernames refuse surrounding whitespace* (UN2, UN5, UA-2, UA-5, and a `refused` state in UN6): the client sends the username exactly as typed, and a value the shared domain rule refuses is refused rather than looked up.
+
 ### Requirement
 
 On Create user, an administrator allowed to read identities learns, before submitting, whether the username they typed is already taken — and cannot submit one the server has already said is taken. USR-C1 stays the authority at submit.
@@ -2929,9 +2931,162 @@ taken / available ── any edit ─► unchecked
 
 ### Not included
 
-- **Surrounding whitespace in local usernames** — ruled a separate small story (see the Known Gap *Local usernames accept surrounding whitespace*). This story checks exactly the value the client submits.
+- **Surrounding whitespace in local usernames** — ruled a separate small story, since delivered as *Local usernames refuse surrounding whitespace*. This story checks exactly the value the client submits.
 - IDN-C2's UI, suggestions, format rules.
 - Any change to USR-C1, IDN-C2 or the UI7 index.
+
+---
+
+## Local usernames refuse surrounding whitespace (USR-C1, IDN-C2, IDN-Q3, PRV-C3)
+
+**Status:** Contract frozen 2026-09-19 by owner decision (WS1–WS10, with the owner's clarification of WS9). Closes the Known Gap *Local usernames accept surrounding whitespace* and the entities workbook's UI6. **Amends IDN-Q3** (UN2, UN5, UA-2, UA-5); see *IDN-Q3, as amended*.
+
+### Requirement
+
+A local username is an identifier. **Leading or trailing whitespace makes it invalid**: every path that creates or changes a local username refuses it, and nothing silently trims it. Case still does not distinguish usernames.
+
+```text
+"ada"                    → valid
+" Ada", "Ada ", " Ada "  → invalid: "A username cannot begin or end with whitespace."
+"ada" vs "ADA"           → the same identifier (UI7, unchanged)
+```
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **WS1** | **Whitespace is .NET's `char.IsWhiteSpace`.** A username is valid on this rule exactly when `username == username.Trim()`. The set is 25 characters: U+0009–U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000–U+200A, U+2028, U+2029, U+202F, U+205F and U+3000. Whitespace **inside** a username is not affected. |
+| **WS2** | **One domain rule, the single source of truth:** `UserIdentity.ValidateUsernameBoundary`. `CreateLocal` and `ChangeUsername` apply it; USR-C1, IDN-Q3 and provisioning call it rather than reproducing it. It refuses a blank username with the existing *"Username cannot be empty."*, then surrounding whitespace with *"A username cannot begin or end with whitespace."*, as a `DomainException`, so over HTTP it is `400 { "error": … }`. |
+| **WS3** | **A database CHECK is the backstop, not the definition.** `ck_user_identity_local_username_no_surrounding_whitespace` names the same 25 characters explicitly, as the email control-character CHECK does, rather than a locale-dependent class. A test proves the installed constraint and the domain rule agree on every character. |
+| **WS4** | **UI6 is closed in the same migration:** `ck_user_identity_local_username_required`, meaning a local identity's username is not NULL and not empty. External identities are unaffected by both constraints. **No data step:** the dev database (3 local identities) and the shared test database (438) hold no violating row, and a database that did would refuse the migration, which is the wanted outcome. |
+| **WS5** | **Validate before the lookup.** USR-C1 applies the rule after parsing the email address and **before** the username uniqueness lookup. An invalid username is refused with the rule's sentence and never queried, so `" v.r"` is refused for its whitespace, never as *already exists*. *Found while writing this contract:* today a blank username reaches `ExistsWithUsernameAsync`, whose argument guard throws, so `""` or `"   "` in USR-C1 is a `500`. Validating first makes it the domain's `400` *"Username cannot be empty."*. |
+| **WS6** | **IDN-Q3 uses the same rule before its lookup.** After authentication, authorisation and its own blank refusal (*"A username is required."*, UN3 unchanged), it applies the rule: a spaced value is `400` with the rule's sentence and is never looked up. IDN-Q3 and USR-C1 therefore agree on invalid values as well as on valid ones. |
+| **WS7** | **The Create user page stops trimming the username.** It sends exactly what was typed, to IDN-Q3 and to USR-C1. The username is checked for presence only, as the Edit profile form checks its fields. JavaScript's whitespace is not .NET's, so a client-side copy of the rule could refuse a value the server accepts. The other four fields keep today's trimming. |
+| **WS8** | **Provisioning stops trimming `--username`** and refuses a spaced value while parsing its arguments: a usage error with exactly the rule's sentence, before any database is touched, never a stack trace. The other options keep their trimming. |
+| **WS9** | **The rule is narrow and deterministic.** Invisible format characters such as U+200B and U+FEFF are not `char.IsWhiteSpace` characters, so **this rule accepts them**. Prohibiting them is a separate username-character policy that no specification defines. That is recorded as its own Known Gap, not treated as a whitespace defect. Also out of scope: whitespace inside a username, username length and format rules, the IDN-C2 command and UI, and `ChangeUsername`'s treatment of a case-only change. |
+| **WS10** | **No change control.** The catalogues say nothing about whitespace, audit shapes are unchanged, and `AuditEventCatalogue.Version` is not bumped. |
+
+### Every path applies the same rule
+
+```text
+UserIdentity
+ ├── CreateLocal ────┐
+ └── ChangeUsername ─┴── ValidateUsernameBoundary        database CHECKs: the backstop
+
+USR-C1        parse email → ValidateUsernameBoundary → lookups → CreateLocal
+IDN-Q3        authenticate → authorise → blank → ValidateUsernameBoundary → ExistsWithUsernameAsync
+PRV-C3 CLI    parse options → ValidateUsernameBoundary (usage error) → provision → CreateLocal
+IDN-C2        (not built) inherits it through ChangeUsername
+```
+
+- An **invalid** username is refused by the rule and **never reaches a uniqueness lookup**.
+- A **valid** one goes to `ExistsWithUsernameAsync` exactly as before: available or taken.
+
+### IDN-Q3, as amended
+
+- **UN2:** the value checked is still the value sent. The client now sends exactly what was typed, **not a trimmed value**, and a value the rule refuses is refused rather than looked up.
+- **UN5 and UA-5:** the page's blur check sends exactly the typed value. A field that is blank or holds only whitespace is still not checked, since sending it can only produce a refusal the submit will show anyway.
+- **UA-2:** agreement now covers invalid values too. For a spaced value, **both** refuse with *"A username cannot begin or end with whitespace."*.
+- **UN6 gains a state:** `refused`. See *The page*.
+
+### The page (WS7)
+
+```text
+checking ── 400 refusal ─► refused → the server's sentence on the field; Create blocked for that value
+refused ── any edit ─► unchecked
+```
+
+- **A `400` from the check is a refusal, not a failure.** Its sentence is shown word for word as the field's error, and Create sends nothing while the field holds that value. USR-C1 would refuse the same value with the same sentence, so blocking does not breach §12.
+- **Every other failure** (a `5xx`, a network failure, a contract violation) is still ignored, as UN7 says.
+- **Submit:** the username is sent untrimmed. A value holding only whitespace passes the presence check, is sent, and USR-C1's *"Username cannot be empty."* is shown word for word.
+
+### Acceptance Criteria
+
+**The rule (WS1, WS2, WS9)**
+
+- **UW-1** The characters the rule treats as whitespace are exactly the 25 listed in WS1. A test enumerates every UTF-16 code unit.
+- **UW-2** `CreateLocal` and `ChangeUsername` each:
+  - refuse every one of the 25 characters at the start and at the end, with *"A username cannot begin or end with whitespace."*;
+  - accept each of them inside a username;
+  - refuse a blank value with *"Username cannot be empty."*;
+  - accept `"\u200Bada"` and `"\uFEFFada"` (WS9).
+  A refused `ChangeUsername` leaves the username unchanged.
+
+**The paths (WS5, WS6, WS8): one invariant**
+
+- **UW-3** **Every path refuses with the same sentence.** For one shared set of spaced values (a space, a tab, a line feed, U+00A0, U+2028 and U+3000, each leading and each trailing):
+  - `UserIdentity.CreateLocal` and `ChangeUsername` refuse;
+  - **USR-C1** refuses, and writes nothing: no user, identity, token, audit record or notification;
+  - **IDN-Q3** refuses;
+  - the **PRV-C3** provisioner, on a fresh database, refuses and commits nothing;
+  - the **provisioning CLI** refuses the value as `--username`.
+- **UW-4** **USR-C1 and IDN-Q3 never look up an invalid username.** A recording repository sees no `ExistsWithUsernameAsync` call for a spaced value, from either path.
+- **UW-5** **USR-C1:**
+  - `" {held}"`, where `{held}` is a username in use, is refused for its whitespace, not as *already exists*;
+  - `""` and `"   "` are `400` *"Username cannot be empty."*, not `500`;
+  - a username with an inner space is accepted.
+- **UW-6** **IDN-Q3:** UA-2 as amended. Each candidate is available exactly when USR-C1 accepts it, taken exactly when USR-C1 refuses it as *already exists*, and refused with the rule's sentence exactly when USR-C1 refuses it with that sentence. The spaced candidates are among them.
+
+**The database (WS3, WS4)**
+
+- **UW-7** **Equivalence.** The installed `ck_user_identity_local_username_no_surrounding_whitespace` expression is evaluated for a local username starting with, and ending with, every UTF-16 code unit except NUL and the surrogates. It refuses **exactly** the values `ValidateUsernameBoundary` refuses.
+- **UW-8** **Enforcement:**
+  - A raw `INSERT` of a local identity with a spaced username fails with `23514` naming that constraint, and so does an `UPDATE` to one.
+  - A local identity with a NULL or empty username fails with `23514`, naming `ck_user_identity_local_username_required`.
+  - An **external** identity with a spaced or NULL username is accepted.
+
+**Over HTTP**
+
+- **UW-9** `POST /api/users` and `POST /api/identities/username-availability` answer a spaced username with `400 { "error": "A username cannot begin or end with whitespace." }`.
+
+**Provisioning (WS8)**
+
+- **UW-10** `--username " ada"` or `--username "ada "`:
+  - `Parse` returns no options and exactly the rule's sentence as its error;
+  - the CLI exits with the usage-error code, writes no stack trace, and never reads the connection setting.
+  - The other options are still trimmed.
+
+**The page (WS7)**
+
+- **UW-11** Create sends `initialUsername` exactly as typed: `"  ada.lovelace  "` is sent with its spaces, while the other four fields are still trimmed. A whitespace-only username is sent, and the server's sentence is shown word for word.
+- **UW-12** Leaving the field sends exactly the typed value to IDN-Q3. A blank or whitespace-only field sends nothing.
+- **UW-13** A `400` from the check shows its sentence on the field, and Create then sends nothing. An edit clears it, and the next Create is sent. A `5xx` is still ignored.
+- **UW-14** No accessibility violations with the refusal shown. The refusal is tied to the input by `aria-describedby`.
+
+**Browser, in the dev stack (UW-15),** after a fresh host restart, each state change approved by the owner. As Ada on Create user:
+
+1. Type `" v.r2"` and leave the field: *"A username cannot begin or end with whitespace."*, and Create is blocked.
+2. `"v.r2 "`: the same.
+3. `"v.r2"`: *"Username available."*
+
+Nothing is submitted, so no user is created.
+
+### Implementation notes
+
+- **The rule** is `UserIdentity.ValidateUsernameBoundary`. A blank value is refused with *"Username cannot be empty."*; then a value that `Trim()` would change (an ordinal comparison) is refused with the rule's sentence.
+  - `CreateLocal` and `ChangeUsername` call it in place of their own blank checks, so their blank message is unchanged.
+  - `ChangeUsername` applies it **before** its "only the case differs, so nothing changes" comparison.
+- **USR-C1** calls the rule immediately after parsing the email address, before either uniqueness lookup. `CreateLocal` applies it again later, harmlessly.
+- **IDN-Q3** calls the rule after its own blank refusal and before `ExistsWithUsernameAsync`.
+- **The constraints** are declared in `UserIdentityConfiguration` with `HasCheckConstraint`, so the model snapshot carries them, and created by the migration `AddLocalUsernameChecks`.
+  - The character class is one constant in that configuration, written with the regex engine's `\u` escapes.
+  - The shared test database was migrated out of band, as the migrator role, as for earlier migrations.
+- **Provisioning:** `ProvisioningOptions.Parse` calls the rule after its required-options check. A whitespace-only `--username` is therefore still reported as missing, and a spaced one is refused with the rule's sentence. The other options are trimmed as before.
+- **The page:**
+  - `Availability` gains `refused`, carrying the server's sentence.
+  - Only an `ApiError` with status `400` is a refusal. A `5xx`, a network failure and a contract violation are still ignored.
+  - An error that arrives after the field changed is discarded, like a late answer.
+  - The blur check skips a value that JavaScript's `trim()` leaves empty. That only suppresses a request and never blocks Create, so the difference between JavaScript's and .NET's whitespace cannot refuse anything the server accepts.
+- **Tests:**
+  - Before the rule existed, the HTTP test's spaced create succeeded. It hands any `201` to the harness's cleanup, so no red run can leave a spaced username in the shared database for the new constraint to refuse at migration.
+  - The CLI half of the UW-3 invariant lives in `Ligature.Provisioning.Tests`, which is a separate project.
+
+### Not included
+
+- **Invisible format characters** such as U+200B and U+FEFF (WS9, its own Known Gap).
+- Whitespace inside a username, length and format rules.
+- The IDN-C2 command and UI, and `ChangeUsername`'s treatment of a case-only change.
+- The other Create user fields' trimming, and the name rules (Known Gap *Name rules differ between USR-C1 and USR-C2*).
 
 ---
 
@@ -3881,16 +4036,8 @@ measurement must use the two-request worst case, not the cached-token case.
 Requirement ID → Story → Implementation plan → Branch → Commit(s) → Pull Request → Owner approval → Merge
 ```
 
-## Local usernames accept surrounding whitespace
+## Invisible format characters in local usernames are not prohibited
 
-**Found while gathering IDN-Q3's evidence (2026-09-19).** USR-C1 checks and stores the username exactly as sent: the domain refuses only a blank value, and nothing trims or refuses surrounding whitespace. The web form trims before sending, but any other API caller can create `" ada"`. PostgreSQL's `lower()` treats that as distinct from `"ada"`, so two near-identical usernames can coexist, and signing in as `ada` never reaches `" ada"`. No development data is affected.
+**Recorded by owner decision (WS9 of *Local usernames refuse surrounding whitespace*, 2026-09-19).** The surrounding-whitespace rule is deliberately `char.IsWhiteSpace` and nothing more. Invisible Unicode format characters such as U+200B ZERO WIDTH SPACE and U+FEFF are not whitespace to it, so `"\u200Bada"` is a valid username that looks like `ada` but never matches it.
 
-**Owner ruling:** leading and trailing whitespace is **invalid** for local usernames — refused, **never silently trimmed** (a username is an identifier, and silently transforming one creates surprising identity semantics). Case still does not distinguish usernames:
-
-```text
-"ada"          → valid
-" Ada", "Ada ", " Ada "  → invalid
-"ada" vs "ADA" → the same identifier
-```
-
-**Deferred to:** its own small story, applying the rule consistently to USR-C1 and IDN-C2, after which IDN-Q3 uses the same domain rule. IDN-Q3 deliberately does not change it.
+**This is not a whitespace defect.** Prohibiting such characters is a username-character policy, and no specification defines one. It is decided, if ever, with username format rules.
