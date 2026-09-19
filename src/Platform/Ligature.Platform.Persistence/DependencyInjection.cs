@@ -88,6 +88,7 @@ public static class DependencyInjection
         // AUT-Q2 — a user's role assignments.
         services.AddScoped<IUserRoleAssignmentReader, UserRoleAssignmentReader>();
         services.AddScoped<IUserProfileReader, UserProfileReader>();
+        services.AddScoped<IUserIdentitiesReader, UserIdentitiesReader>();
 
         // The grantable-role list (a Story 2 dependency; not AUT-Q5).
         services.AddScoped<IGrantableRoleReader, GrantableRoleReader>();
