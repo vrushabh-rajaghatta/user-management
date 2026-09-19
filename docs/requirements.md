@@ -2509,6 +2509,17 @@ request → host resolves the client address (B8)
 3. The `SignInFailed` records from step 1 carry the **browser's** address as resolved through Vite, not the web container's.
 4. Ada signs in normally throughout: her own bucket is untouched.
 
+### Implementation notes
+
+- **The behaviour** is `RateLimitBehavior`, registered first. It tests `IRateLimitedCommand`, normalises each declared value by its rule's kind (`RateLimitKeys`), reads `IClock` once, and asks `RateLimitStore` to admit. A refusal throws `RateLimitExceededException`, which carries the retry interval, the exhausted key kinds and the client address — never the typed value.
+- **The store** keeps each key's admission instants in a queue under one lock: judge every key, then count in all or none. A full sweep of quiet keys runs during admission, at most once a minute.
+- **The declarations** are explicit interface members on the four command records, so they do not appear in the records' equality or `ToString`. `RateLimitDeclarationTests` holds `IAnonymousCommand` and `IRateLimitedCommand` together in both directions.
+- **The client address is resolved by the Host's own `ClientAddressMiddleware`, outermost in the pipeline,** and written to `Connection.RemoteIpAddress`, which the endpoints already pass into the commands. ASP.NET's `ForwardedHeadersMiddleware` was not used: with empty trusted lists it believes every header, and with no connection address it believes the first entry unchecked — both the opposite of B8.
+- **`ASPNETCORE_FORWARDEDHEADERS_ENABLED=true` stops the host.** That framework switch installs a forwarded-headers filter that believes any peer, which would undo B8 beside this host's own list. Not in the frozen text; added as a guard, with a test.
+- **A shorthand IPv4 address in `LIGATURE_TRUSTED_PROXIES`** (`10.5`, `1`) is refused as malformed rather than parsed into an address nobody meant.
+- **The OpenAPI document** now lists `429` for the four endpoints, and their descriptions say they are rate limited.
+- **Dev:** `compose.dev.yaml` fixes the network at `172.31.211.0/24`, hands out dynamic addresses from the lower half only, pins the web container at `172.31.211.200`, and trusts exactly that address. Vite's proxy sets `xfwd`, which also adds `X-Forwarded-Proto`, `-Port` and `-Host`; the host reads none of them. **An existing dev stack must be recreated once** (`docker compose -f compose.yaml -f compose.dev.yaml down`, then `./up.sh`); volumes, and the database, are kept.
+
 ### Accepted consequences
 
 - **Anyone can make one username's sign-in wait**, by spending its 10 requests in 15 minutes. This is the same class of exposure as the existing lockout (five wrong passwords lock an account, as the #70 browser check showed), which this story does not change; it is noted, not solved.
@@ -2941,7 +2952,9 @@ closing `AUD-O11` changes one line.
 story.
 **Where recorded:** `AuditReleaseBaseline` class doc.
 
-## CRD-C2 is not first-tenant-ready: rate limiting is missing
+## CRD-C2 is not first-tenant-ready: rate limiting is missing — RESOLVED
+
+**State:** resolved by *Behaviour 11 — rate limiting the anonymous commands* (B1–B10). CRD-C2 is limited per address and per client address, and CRD-C3 per client address, before either handler runs; the client address is resolved behind trusted proxies only. What follows is the gap as it was recorded.
 
 **This is a blocking dependency, not an ordinary gap.** CRD-C2
 (`RequestPasswordReset`) is implemented, tested and merged. It must not be
