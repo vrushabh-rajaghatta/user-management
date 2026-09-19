@@ -1,6 +1,7 @@
 using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Users.Commands.UnlockAccount;
+using Ligature.Platform.Application.Users.Queries.UserIdentities;
 using Ligature.Platform.Domain.Users;
 
 namespace Ligature.Host.Api;
@@ -21,6 +22,27 @@ public static class IdentityEndpoints
     public static void MapIdentityEndpoints(this IEndpointRouteBuilder routes)
     {
         ArgumentNullException.ThrowIfNull(routes);
+
+        // IDN-Q1 GetUserIdentities, as amended: the user's identities with the
+        // lock state judged at read time. The lock state is a projection,
+        // never stored; the subject id and the failure count are not served.
+        routes.MapGet("/api/users/{userId:guid}/identities", ListAsync)
+            .WithTags("Identities")
+            .WithSummary("A user's sign-in identities, with their lock state.")
+            .WithDescription(
+                "Requires a carrier and the 'identity.read' permission. Returns "
+                + "{ identities }, oldest first, each with userIdentityId, type "
+                + "('Local' or 'External'), provider, username (null for "
+                + "external), status, deactivatedAt, locked and lockedUntil. "
+                + "'locked' is decided by the server at the moment of the read: "
+                + "true only while a lock is in force, when 'lockedUntil' is its "
+                + "end; otherwise false and null. Human users only: an unknown "
+                + "user, the System actor and a missing permission are 400. Not "
+                + "audited.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
 
         routes.MapPost("/api/identities/{identityId:guid}/unlock", UnlockAsync)
             .WithTags("Identities")
@@ -46,6 +68,31 @@ public static class IdentityEndpoints
     /// one is dispatched and refused by the command, so the rule lives in one
     /// place for every caller of the command.
     /// </summary>
+    private static async Task<IResult> ListAsync(
+        Guid userId,
+        IQueryDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var result = await dispatcher.SendAsync<UserIdentitiesQuery, UserIdentitiesResult>(
+            new UserIdentitiesQuery(new UserId(userId)),
+            cancellationToken);
+
+        return Results.Ok(new
+        {
+            Identities = result.Identities.Select(x => new
+            {
+                UserIdentityId = x.UserIdentityId.Value,
+                Type = x.Type.ToString(),
+                x.Provider,
+                x.Username,
+                Status = x.Status.ToString(),
+                x.DeactivatedAt,
+                x.Locked,
+                x.LockedUntil,
+            }),
+        });
+    }
+
     private static async Task<IResult> UnlockAsync(
         Guid identityId,
         UnlockRequest? request,

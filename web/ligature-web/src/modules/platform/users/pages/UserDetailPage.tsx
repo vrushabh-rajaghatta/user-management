@@ -11,14 +11,17 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/shared/api/errors";
 import { ErrorState } from "@/shared/components/ErrorState";
+import { useCan } from "@/shared/auth/useCan";
 import { Page } from "@/shared/components/Page";
 import { EditProfileDialog } from "../components/EditProfileDialog";
 import { ManageRolesDialog } from "../components/ManageRolesDialog";
 import { UserActionDialog, type UserAction } from "../components/UserActionDialog";
+import { UserIdentitiesSection } from "../components/UserIdentitiesSection";
 import { UserRolesSection } from "../components/UserRolesSection";
 import { ACTION_LABEL, getUserActions, type RowAction, useUserActionPermissions } from "../components/userActions";
 import { userKeys } from "../hooks/userKeys";
 import { useUserProfile } from "../hooks/useUserProfile";
+import { UserPermissions } from "../permissions";
 import type { UserProfile } from "../schemas/userProfile";
 import type { UserRow } from "../schemas/users";
 
@@ -74,6 +77,10 @@ type Open = { readonly action: RowAction; readonly open: boolean };
 function UserDetail({ detail }: { readonly detail: UserProfile }) {
   const client = useQueryClient();
   const can = useUserActionPermissions();
+
+  // IDN-Q1's section needs identity.read, and is not mounted without it — so
+  // its request is never made (I5).
+  const canReadIdentities = useCan(UserPermissions.readIdentities);
   const actions = getUserActions({ user: detail, can });
 
   const [opened, setOpened] = useState<Open | undefined>(undefined);
@@ -174,6 +181,8 @@ function UserDetail({ detail }: { readonly detail: UserProfile }) {
           }}
         />
       ) : null}
+
+      {canReadIdentities ? <UserIdentitiesSection userId={detail.userId} userStatus={detail.status} /> : null}
 
       {opened === undefined ? null : opened.action === "manage-roles" ? (
         <ManageRolesDialog
