@@ -59,8 +59,10 @@ public sealed class UsernameAvailabilityIntegrationTests : IClassFixture<Activat
 
     /// <summary>
     /// For each value: ask IDN-Q3 first, then let USR-C1 decide. Available
-    /// exactly when USR-C1 accepts; unavailable exactly when it refuses with
-    /// its username message.
+    /// exactly when USR-C1 accepts; taken exactly when it refuses with its
+    /// username message; refused by the shared domain rule exactly when USR-C1
+    /// refuses with that rule's sentence (UA-2 as amended by "Local usernames
+    /// refuse surrounding whitespace", UW-6).
     /// </summary>
     [Fact]
     public async Task IDN_Q3_answers_exactly_as_USR_C1_decides()
@@ -79,27 +81,40 @@ public sealed class UsernameAvailabilityIntegrationTests : IClassFixture<Activat
             external,
             $"unused-{Guid.NewGuid():N}",
 
-            // Checked exactly as sent (UN2): USR-C1 does not trim today, so a
-            // held name with surrounding spaces is a DIFFERENT username to both.
-            // The Known Gap "Local usernames accept surrounding whitespace"
-            // will make both refuse it, together.
+            // Invalid for the shared rule: refused by both, with its sentence,
+            // whether or not the name inside the whitespace is held.
             $" {active} ",
+            $"{active} ",
+            $"\u00A0{active}",
+            $" unused-{Guid.NewGuid():N}",
         };
+
+        var refused = 0;
 
         foreach (var username in candidates)
         {
-            var available = await AvailableAsync(administrator, username);
+            var answer = await AnswerAsync(administrator, username);
             var refusal = await CreateAsync(administrator, username);
 
-            if (available)
+            switch (answer)
             {
-                Assert.True(refusal is null, $"IDN-Q3 said '{username}' was available, but USR-C1 refused: {refusal}");
-            }
-            else
-            {
-                Assert.Equal("A user identity with this username already exists.", refusal);
+                case "available":
+                    Assert.True(refusal is null, $"IDN-Q3 said '{username}' was available, but USR-C1 refused: {refusal}");
+                    break;
+
+                case "taken":
+                    Assert.Equal("A user identity with this username already exists.", refusal);
+                    break;
+
+                default:
+                    Assert.Equal("A username cannot begin or end with whitespace.", answer);
+                    Assert.Equal(answer, refusal);
+                    refused++;
+                    break;
             }
         }
+
+        Assert.Equal(4, refused);
     }
 
     // ---------------------------------------------------------------- UA-3
@@ -201,6 +216,23 @@ public sealed class UsernameAvailabilityIntegrationTests : IClassFixture<Activat
             return null;
         }
         catch (BusinessRuleViolationException refusal)
+        {
+            return refusal.Message;
+        }
+        catch (DomainException refusal)
+        {
+            return refusal.Message;
+        }
+    }
+
+    /// <summary>IDN-Q3's answer: "available", "taken", or the refusal's sentence.</summary>
+    private async Task<string> AnswerAsync(UserId caller, string username)
+    {
+        try
+        {
+            return await AvailableAsync(caller, username) ? "available" : "taken";
+        }
+        catch (DomainException refusal)
         {
             return refusal.Message;
         }

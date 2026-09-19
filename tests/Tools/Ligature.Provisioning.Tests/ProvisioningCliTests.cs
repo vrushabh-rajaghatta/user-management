@@ -259,6 +259,31 @@ public sealed class ProvisioningCliTests : IDisposable
         Assert.Contains("dotnet ef database update", run.Error);
     }
 
+    /// <summary>
+    /// "Local usernames refuse surrounding whitespace" (UW-10): a usage error
+    /// carrying the domain rule's sentence — never a stack trace — decided
+    /// before the connection setting is even read. It is unset here, and its
+    /// complaint must not be what the operator sees.
+    /// </summary>
+    [Theory]
+    [InlineData(" ada.lovelace")]
+    [InlineData("ada.lovelace ")]
+    public async Task A_username_with_surrounding_whitespace_is_a_usage_error(string username)
+    {
+        Environment.SetEnvironmentVariable("LIGATURE_CONNECTION", null);
+
+        var arguments = Arguments(Path.Combine(_workspace, "t.token"));
+        arguments[Array.IndexOf(arguments, "--username") + 1] = username;
+
+        var run = await InvokeAsync(arguments);
+
+        Assert.Equal(Program.UsageError, run.ExitCode);
+        Assert.StartsWith("A username cannot begin or end with whitespace.", run.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain("is not set", run.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain("Exception", run.Error, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(_workspace, "t.token")));
+    }
+
     [Fact]
     public async Task Help_is_not_an_error()
     {

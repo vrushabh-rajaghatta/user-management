@@ -126,6 +126,12 @@ UserId createdBy,
             null);
     }
 
+    // Compile-only stub for the red tests of "Local usernames refuse
+    // surrounding whitespace" (docs/requirements.md). Not yet implemented.
+    public static void ValidateUsernameBoundary(string username)
+    {
+    }
+
     public bool ChangeUsername(string newUsername)
     {
         if (IdentityType != IdentityType.Local)

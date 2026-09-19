@@ -283,6 +283,37 @@ public sealed class CreateUserEndpointTests
     }
 
     /// <summary>
+    /// "Local usernames refuse surrounding whitespace" (docs/requirements.md,
+    /// UW-9): refused with the domain rule's sentence, never trimmed, and
+    /// nothing is created.
+    /// </summary>
+    [Theory]
+    [InlineData(" {0}")]
+    [InlineData("{0} ")]
+    [InlineData("\u00A0{0}")]
+    public async Task A_username_with_surrounding_whitespace_is_refused_with_the_rule(string shape)
+    {
+        await RunAsync(async (client, admin, _, cleanup) =>
+        {
+            var response = await PostAsync(
+                client, admin.Carrier, Payload(cleanup, username: string.Format(shape, cleanup.Username)));
+
+            // Before the rule exists this creates the user. Hand it to the
+            // harness's cleanup, so a red run never leaves a spaced username in
+            // the shared database for the new CHECK to refuse at migration.
+            if (response.StatusCode == HttpStatusCode.Created)
+                cleanup.Created.Add(await UserIdAsync(response));
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(
+                "A username cannot begin or end with whitespace.",
+                JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("error").GetString());
+
+            Assert.Equal(0, await CountUsersAsync(cleanup.Email));
+        });
+    }
+
+    /// <summary>
     /// AU6 — one active human per email address.
     /// </summary>
     [Fact]

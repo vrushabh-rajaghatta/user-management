@@ -102,14 +102,15 @@ async function create(user: User) {
 // ---------------------------------------------------------------- UA-5
 
 describe("checking a username", () => {
-  it("sends exactly the trimmed username, once, when the field is left", async () => {
+  // UA-5 as amended (UW-12): exactly what was typed — never trimmed.
+  it("sends exactly the typed username, spaces included, once, when the field is left", async () => {
     const state = backend();
     const { user } = render();
 
     await enterUsername(user, "  ada.lovelace  ");
 
     await waitFor(() => {
-      expect(state.checks).toStrictEqual([{ username: "ada.lovelace" }]);
+      expect(state.checks).toStrictEqual([{ username: "  ada.lovelace  " }]);
     });
   });
 
@@ -217,6 +218,67 @@ describe("a check that fails", () => {
     await waitFor(() => {
       expect(state.creates()).toBe(1);
     });
+  });
+});
+
+// ---------------------------------------------------------------- UW-13
+
+/**
+ * "Local usernames refuse surrounding whitespace" (docs/requirements.md): a 400
+ * from the check is a refusal, not a failure. Its sentence is the field's error
+ * and Create sends nothing for that value; USR-C1 would refuse it the same way.
+ */
+const REFUSED = "A username cannot begin or end with whitespace.";
+
+const refuseSpaced = (username: string) =>
+  username !== username.trim()
+    ? HttpResponse.json({ error: REFUSED }, { status: 400 })
+    : HttpResponse.json({ available: true });
+
+describe("a username the server refuses", () => {
+  it("shows the server's sentence on the field, and Create sends nothing", async () => {
+    const state = backend({ check: refuseSpaced });
+    const { user } = render();
+    await fillOthers(user);
+
+    await enterUsername(user, " ada.lovelace");
+    expect(await screen.findByText(REFUSED)).toBeInTheDocument();
+    expect(screen.queryByText(AVAILABLE)).toBeNull();
+
+    await create(user);
+    await delay(50);
+
+    expect(state.creates()).toBe(0);
+  });
+
+  it("stops blocking as soon as the field is edited, and the next Create goes to the server", async () => {
+    const state = backend({ check: refuseSpaced });
+    const { user } = render();
+    await fillOthers(user);
+
+    await enterUsername(user, "ada.lovelace ");
+    await screen.findByText(REFUSED);
+
+    await user.type(screen.getByLabelText("Username"), "x");
+
+    expect(screen.queryByText(REFUSED)).toBeNull();
+
+    await create(user);
+
+    await waitFor(() => {
+      expect(state.creates()).toBe(1);
+    });
+  });
+
+  it("ties the sentence to the field, with no accessibility violations", async () => {
+    backend({ check: refuseSpaced });
+    const { container, user } = render();
+
+    await enterUsername(user, " ada.lovelace");
+    const message = await screen.findByText(REFUSED);
+
+    expect(screen.getByLabelText("Username").getAttribute("aria-describedby")).toContain(message.id);
+    await expectNoAccessibilityViolations(container);
   });
 });
 

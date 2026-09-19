@@ -69,6 +69,27 @@ public sealed class UsernameAvailabilityEndpointTests
         });
     }
 
+    /// <summary>
+    /// "Local usernames refuse surrounding whitespace" (UW-9): the shared domain
+    /// rule's sentence, the same one USR-C1 gives.
+    /// </summary>
+    [Fact]
+    public async Task A_username_with_surrounding_whitespace_is_refused_with_the_rule()
+    {
+        await RunAsync(async (client, administrator, _) =>
+        {
+            foreach (var username in new[] { $" {AdministratorUsername}", $"{AdministratorUsername} ", "\u3000unused" })
+            {
+                var response = await CheckAsync(client, administrator, username);
+
+                Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+                Assert.Equal(
+                    "A username cannot begin or end with whitespace.",
+                    JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("error").GetString());
+            }
+        });
+    }
+
     /// <summary>UA-4: POST with a body only — never a query string.</summary>
     [Fact]
     public async Task A_query_string_is_not_a_way_to_ask()

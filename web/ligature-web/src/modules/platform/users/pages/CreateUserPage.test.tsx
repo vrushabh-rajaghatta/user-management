@@ -1,4 +1,4 @@
-import { act, screen } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import type { RouteObject } from "react-router";
@@ -96,6 +96,64 @@ describe("creating a user", () => {
     await fill(user, "ada+tagged@sub.domain.example");
 
     expect(await screen.findByText(SUCCESS)).toBeInTheDocument();
+    expect(requests).toBe(1);
+  });
+
+  /**
+   * "Local usernames refuse surrounding whitespace" (UW-11): the username is an
+   * identifier, sent exactly as typed and never trimmed; the server refuses a
+   * spaced one. The other four fields are trimmed as before.
+   */
+  it("sends the username exactly as typed, and still trims the other fields", async () => {
+    let body: unknown;
+
+    server.use(
+      http.post(USERS, async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json(CREATED, { status: 201 });
+      }),
+    );
+
+    const { user } = render();
+
+    await user.type(await screen.findByLabelText("First name"), " Ada ");
+    await user.type(screen.getByLabelText("Last name"), " Lovelace ");
+    await user.type(screen.getByLabelText("Display name"), " Ada Lovelace ");
+    await user.type(screen.getByLabelText("Email address"), " ada@example.test ");
+    await user.type(screen.getByLabelText("Username"), "  ada.lovelace  ");
+    await user.click(screen.getByRole("button", { name: "Create user" }));
+
+    await waitFor(() => {
+      expect(body).toEqual({
+        firstName: "Ada",
+        lastName: "Lovelace",
+        displayName: "Ada Lovelace",
+        email: "ada@example.test",
+        initialUsername: "  ada.lovelace  ",
+      });
+    });
+  });
+
+  it("sends a whitespace-only username, and shows the server's sentence word for word", async () => {
+    let requests = 0;
+
+    server.use(
+      http.post(USERS, () => {
+        requests += 1;
+        return HttpResponse.json({ error: "Username cannot be empty." }, { status: 400 });
+      }),
+    );
+
+    const { user } = render();
+
+    await user.type(await screen.findByLabelText("First name"), "Ada");
+    await user.type(screen.getByLabelText("Last name"), "Lovelace");
+    await user.type(screen.getByLabelText("Display name"), "Ada Lovelace");
+    await user.type(screen.getByLabelText("Email address"), "ada@example.test");
+    await user.type(screen.getByLabelText("Username"), "   ");
+    await user.click(screen.getByRole("button", { name: "Create user" }));
+
+    expect(await screen.findByText("Username cannot be empty.")).toBeInTheDocument();
     expect(requests).toBe(1);
   });
 
