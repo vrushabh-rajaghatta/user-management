@@ -2832,6 +2832,14 @@ Exactly SES-Q1's shape: `{ "sessions": [ … ] }` with `sessionId`, `createdAt`,
    - that row is marked **This session**.
 3. (Optional) With a second session open again, **change the password**: the list re-reads to one row.
 
+### Implementation notes
+
+- **`ActiveSessionListing`** (`Users/Queries/UserSessions`) is the shared service, registered scoped. `UserSessionsQueryHandler` now authenticates, authorises `session.read`, refuses a non-human target, and delegates. `MySessionsQueryHandler` authenticates and delegates with the execution context's `UserId`. Neither handler touches the repository or the security policy any more.
+- **SES-Q1's tests were not changed** and pass on the shared service. MS-2 compares the two reads' `UserSessionView` lists by record equality.
+- **`GET /api/account/sessions`** sits in `AccountEndpoints` and passes `CurrentCarrier.SessionId`, as the `/me` endpoint does.
+- **The page:** `MySessionsList` is rendered in the Sessions section above `SessionActions`. On success, **Sign out other sessions** calls `useRefreshMySessions` from the account module, because its mutation hook belongs to the auth module. `useChangePassword` invalidates the list on success itself.
+- **`formatInstant`** is now `src/shared/format/formatInstant.ts`, which is formatting only. The users module imports it from there.
+
 ### Not included
 
 - Ending one other session of one's own (MY4); any new command.
