@@ -78,6 +78,12 @@ public sealed class UsernameAvailabilityIntegrationTests : IClassFixture<Activat
             inactive.ToUpperInvariant(),
             external,
             $"unused-{Guid.NewGuid():N}",
+
+            // Checked exactly as sent (UN2): USR-C1 does not trim today, so a
+            // held name with surrounding spaces is a DIFFERENT username to both.
+            // The Known Gap "Local usernames accept surrounding whitespace"
+            // will make both refuse it, together.
+            $" {active} ",
         };
 
         foreach (var username in candidates)

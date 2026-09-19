@@ -128,9 +128,11 @@ export function CreateUserPage() {
 
     const request = parsed.data;
 
-    // UN6: the server has said this exact value is taken, and under D2 that
-    // cannot change. Any other value — or no answer — goes to the server.
-    if (availability?.state === "taken" && availability.username === request.initialUsername) {
+    // UN6: the server has said this value is taken, and under D2 that cannot
+    // change. Only the current value can be "taken": every edit clears the
+    // answer, and a late answer about another value is discarded. No answer,
+    // or any other answer, goes to the server.
+    if (availability?.state === "taken") {
       return;
     }
 
