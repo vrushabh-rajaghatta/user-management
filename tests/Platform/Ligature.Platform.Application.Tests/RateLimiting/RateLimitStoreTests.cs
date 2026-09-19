@@ -114,6 +114,54 @@ public sealed class RateLimitStoreTests
         Assert.False(store.TryAdmit([Client()], T0).Admitted);
     }
 
+    /// <summary>
+    /// RL-10 under sustained contention: many threads, many rounds, one bucket
+    /// and one shared second bucket. The admitted total is exactly the limit
+    /// every time — a check-then-count that was not atomic would overshoot, or
+    /// corrupt the buckets outright.
+    /// </summary>
+    [Fact]
+    public async Task Under_heavy_contention_a_bucket_admits_exactly_its_limit()
+    {
+        var wide = new RateLimitRule("contention", RateLimitKeyKind.Address, 50, TimeSpan.FromHours(1));
+        var shared = new RateLimitRule("contention", RateLimitKeyKind.ClientAddress, 50, TimeSpan.FromHours(1));
+
+        for (var round = 0; round < 20; round++)
+        {
+            var store = new RateLimitStore();
+            using var start = new ManualResetEventSlim(false);
+
+            var workers = Enumerable.Range(0, Environment.ProcessorCount * 2)
+                .Select(worker => Task.Factory.StartNew(
+                    () =>
+                    {
+                        start.Wait();
+                        var admitted = 0;
+
+                        for (var i = 0; i < 200; i++)
+                        {
+                            RateLimitKey[] keys =
+                            [
+                                new(wide, $"round-{round}"),
+                                new(shared, $"peer-{round}"),
+                                new(wide, $"noise-{worker}-{i}"),
+                            ];
+
+                            if (store.TryAdmit(keys, T0).Admitted)
+                                admitted++;
+                        }
+
+                        return admitted;
+                    },
+                    TaskCreationOptions.LongRunning))
+                .ToArray();
+
+            start.Set();
+
+            Assert.Equal(50, (await Task.WhenAll(workers)).Sum());
+        }
+    }
+
     /// <summary>RL-11: exactly one window after the oldest counted admission, not before.</summary>
     [Fact]
     public void The_window_slides_from_each_admission()
