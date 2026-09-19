@@ -2739,6 +2739,13 @@ No schema change, no new audit event, and SES-C3 is unchanged.
 3. On **Ada's own page**, her current session is marked **This session**, and **no Revoke is rendered for it**.
 4. After **Sign out everywhere** for V R, the section re-reads to *"No active sessions."*.
 
+### Implementation notes
+
+- **No new session semantics.** `UserSessionsQueryHandler` reads through `IUserSessionRepository.FindActiveForUserAsync` — the method SES-C4 already uses — with the effective `SessionIdleTimeout`, so the list and SES-C3 apply one test. It adds only the unknown-user refusal (a missing user or a non-human actor), the order (`LastActivityAt` descending, then session id), and the two derived fields.
+- **`current`** is `x.Id == query.CallerSessionId`. The endpoint passes `CurrentCarrier.SessionId`, exactly as the `/me` endpoint builds `MeQuery`. Nothing about sessions was added to the execution context or to `/me`.
+- **The page:** `UserSessionsSection` is mounted after Sign-in identities when `useCan(readSessions)`. **This session** sits in the Signed in cell. The Revoke column exists only for a `session.revoke` holder, so an access reviewer sees four columns, not an empty fifth. Each Revoke button is named *"Revoke session signed in {time}"*, so rows are distinguishable to assistive technology. The eligibility rule is `sessionActions.revokeOffered`.
+- **Re-reads (SS7, SS8):** `useRevokeSession` invalidates the sessions `onSettled`. Sign out everywhere invalidates them on success. Deactivate and Reactivate share one lifecycle mutation, so both re-read them; after a reactivation the re-read is simply unchanged.
+
 ### Not included
 
 - The system-wide session list; SES-Q2 My sessions.
