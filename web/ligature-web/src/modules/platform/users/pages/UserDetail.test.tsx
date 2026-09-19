@@ -271,6 +271,10 @@ describe("reaching the page", () => {
 
 // ---------------------------------------------------------------- DV-4
 
+// Failures are REFUSALS (4xx), as the Users-table tests use: the app retries a
+// 5xx before stating it (queryClient's shouldRetryQuery), which is its own
+// behaviour, tested there — not this page's.
+
 describe("loading and errors", () => {
   it("shows a skeleton while GetUser loads", async () => {
     backend({
@@ -291,7 +295,7 @@ describe("loading and errors", () => {
       getUser: () => {
         calls += 1;
         return calls === 1
-          ? HttpResponse.json({ error: "The request could not be completed." }, { status: 500 })
+          ? HttpResponse.json({ error: "The request could not be completed." }, { status: 400 })
           : HttpResponse.json(ADA);
       },
     });
@@ -505,7 +509,7 @@ describe("the Roles section", () => {
       roles: () => {
         calls += 1;
         return calls === 1
-          ? HttpResponse.json({ error: "The request could not be completed." }, { status: 500 })
+          ? HttpResponse.json({ error: "The request could not be completed." }, { status: 400 })
           : HttpResponse.json({ assignments: [ASSIGNMENT] });
       },
     });
@@ -612,7 +616,7 @@ describe("accessibility", () => {
     backend({
       getUser: async () => {
         await delay(100);
-        return HttpResponse.json({ error: "The request could not be completed." }, { status: 500 });
+        return HttpResponse.json({ error: "The request could not be completed." }, { status: 400 });
       },
     });
     await render([READ]);
