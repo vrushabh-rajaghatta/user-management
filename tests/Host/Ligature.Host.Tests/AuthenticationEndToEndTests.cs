@@ -36,8 +36,9 @@ namespace Ligature.Host.Tests;
 public sealed class AuthenticationEndToEndTests
 {
     /// <summary>
-    /// Comfortably over the baseline PasswordMinLength of 12, which is a floor
-    /// the effective policy can raise but never lower.
+    /// Comfortably over the baseline PasswordMinLength (SecurityBaseline), which
+    /// is a floor the effective policy can raise but never lower. Longer than
+    /// any stored policy the shared test database holds, too.
     /// </summary>
     private const string Password = "correct-horse-battery-staple";
 

@@ -15,11 +15,21 @@ namespace Ligature.Platform.Persistence.Tests;
 /// -infinity — round-trips and orders before every real timestamp. Neither is
 /// observable without PostgreSQL.
 ///
-/// Target database comes from LIGATURE_CONNECTION. These tests FAIL rather
-/// than skip when PostgreSQL is unreachable — see TestDatabase.
+/// Its own freshly provisioned database, not the shared one. The premise of
+/// these tests is "a provisioned database with no overrides", and the shared
+/// database cannot keep that premise: it was provisioned under an earlier
+/// release baseline, and security_policy is append-only, so its seeded row
+/// stays whatever that release seeded. When the baseline changed (the
+/// PasswordMinLength floor, 12 to 6, by owner decision), that row became a
+/// stored value above the new floor — a tenant override in effect. A fresh
+/// provision is seeded from the baseline this build carries.
 /// </summary>
-public sealed class SecurityPolicyResolverTests
+public sealed class SecurityPolicyResolverTests : IClassFixture<ActivationDatabase>
 {
+    private readonly ActivationDatabase _database;
+
+    public SecurityPolicyResolverTests(ActivationDatabase database)
+        => _database = database;
 
     private static readonly DateTimeOffset Now =
         new(2026, 9, 7, 10, 30, 0, TimeSpan.Zero);
@@ -33,8 +43,6 @@ public sealed class SecurityPolicyResolverTests
     [Fact]
     public async Task A_provisioned_database_resolves_to_the_seeded_baseline()
     {
-        await TestDatabase.EnsureProvisionedAsync();
-
         await using var context = CreateContext();
         var resolver = new SecurityPolicyResolver(context);
 
@@ -72,8 +80,6 @@ public sealed class SecurityPolicyResolverTests
     [Fact]
     public async Task The_seeded_sentinel_orders_before_every_real_timestamp()
     {
-        await TestDatabase.EnsureProvisionedAsync();
-
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
 
@@ -105,8 +111,6 @@ public sealed class SecurityPolicyResolverTests
     [Fact]
     public async Task The_newest_version_whose_date_has_passed_wins()
     {
-        await TestDatabase.EnsureProvisionedAsync();
-
         await using var context = CreateContext();
         var resolver = new SecurityPolicyResolver(context);
 
@@ -149,8 +153,6 @@ public sealed class SecurityPolicyResolverTests
     [Fact]
     public async Task A_stored_value_weaker_than_the_baseline_is_clamped_without_being_rewritten()
     {
-        await TestDatabase.EnsureProvisionedAsync();
-
         await using var context = CreateContext();
         var resolver = new SecurityPolicyResolver(context);
 
@@ -196,14 +198,12 @@ public sealed class SecurityPolicyResolverTests
     /// nothing sorts before that, which is itself worth knowing.
     ///
     /// The delete runs inside a transaction that is always rolled back, so the
-    /// shared database is never actually altered; the resolver reads the
+    /// database is never actually altered; the resolver reads the
     /// uncommitted state through the same context.
     /// </summary>
     [Fact]
     public async Task An_unprovisioned_database_fails_loudly()
     {
-        await TestDatabase.EnsureProvisionedAsync();
-
         await using var context = CreateContext();
         var resolver = new SecurityPolicyResolver(context);
 
@@ -228,7 +228,7 @@ public sealed class SecurityPolicyResolverTests
             "The test emptied security_policy without restoring it.");
     }
 
-    private static async Task<SecurityPolicyId> InsertVersionAsync(
+    private async Task<SecurityPolicyId> InsertVersionAsync(
         LigatureDbContext context,
         SecurityPolicySettings settings,
         DateTimeOffset effectiveFrom)
@@ -249,7 +249,7 @@ public sealed class SecurityPolicyResolverTests
         return policy.Id;
     }
 
-    private static async Task<int> NextPolicyVersionAsync()
+    private async Task<int> NextPolicyVersionAsync()
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
@@ -261,7 +261,7 @@ public sealed class SecurityPolicyResolverTests
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
-    private static async Task<(int MinLength, TimeSpan Idle)> ReadStoredAsync(
+    private async Task<(int MinLength, TimeSpan Idle)> ReadStoredAsync(
         SecurityPolicyId id)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
@@ -286,7 +286,7 @@ public sealed class SecurityPolicyResolverTests
     /// SP2 makes security_policy append-only for the application role; these
     /// rows are test residue and the test connection is not that role.
     /// </summary>
-    private static async Task DeleteVersionAsync(SecurityPolicyId id)
+    private async Task DeleteVersionAsync(SecurityPolicyId id)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
@@ -299,7 +299,7 @@ public sealed class SecurityPolicyResolverTests
         await command.ExecuteNonQueryAsync();
     }
 
-    private static async Task<bool> IsProvisionedAsync()
+    private async Task<bool> IsProvisionedAsync()
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
@@ -310,7 +310,7 @@ public sealed class SecurityPolicyResolverTests
         return Convert.ToInt32(await command.ExecuteScalarAsync()) > 0;
     }
 
-    private static LigatureDbContext CreateContext()
+    private LigatureDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<LigatureDbContext>()
             .UseNpgsql(ConnectionString)
@@ -323,7 +323,7 @@ public sealed class SecurityPolicyResolverTests
         return new LigatureDbContext(options);
     }
 
-    private static string ConnectionString => TestDatabase.ConnectionString;
+    private string ConnectionString => _database.ConnectionString;
 
 
     private sealed class FixedClock : IClock

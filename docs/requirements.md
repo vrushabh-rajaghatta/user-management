@@ -2080,6 +2080,25 @@ No workbook is edited. The following are outstanding against the frozen document
 
 ---
 
+## Release security baseline — PasswordMinLength floor lowered to 6 (owner decision)
+
+**Decision (owner, 2026-09-19).** The release baseline's `PasswordMinLength` floor goes from **12 to 6** (`SecurityBaseline`, commit `c5625d6`). It was committed by the owner on the CRD-C4 attempt-limit branch, and the owner chose to ship it in that PR.
+
+**What the specification says.** The UM design specification and entity model define `PasswordMinLength` as a **floor**, with effective value = max(tenant, baseline). They fix **no number**. The earlier 12 was this repository's choice when the baseline was added (`c23e379`), and no decision record fixed it. So no workbook conflicts and no change control is outstanding.
+
+**What changes, and what does not:**
+
+- **Newly provisioned tenants** are seeded at 6.
+- **Any tenant** may now configure 6 to 11, which the floor previously raised to 12.
+- **Existing tenants keep 12**, because their stored policy (seeded at 12) is above the new floor and the effective value is the maximum. This covers the development database and the shared test database. Lowering an existing tenant needs a new policy version, which POL-C1 does not yet provide.
+- **The minimum-length checks in CRD-C1, CRD-C3 and CRD-C4** read the effective policy. No handler hard-codes a length.
+
+**For the record.** 6 is below the minimum of 8 that common guidance (NIST SP 800-63B) sets for user-chosen passwords. This was raised with the owner before the decision was confirmed.
+
+**Tests.** `SecurityPolicyResolverTests` now runs on its own freshly provisioned database. Its premise is "a provisioned database with no overrides", and the shared test database, seeded at 12 under the earlier baseline, no longer meets it.
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
