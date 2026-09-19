@@ -1427,7 +1427,7 @@ All of it is written by the command's own transaction. The audit actor of every 
 
 **Restores nothing.** No role assignment, session or token is recreated. Revoked assignments stay revoked. Access is granted afresh through AUT-C1, and a password or activation link through CRD-C5 or CRD-C7. Credentials are untouched throughout, as §11.8 specifies.
 
-**The email refusal has no remedy yet.** The holder's email can only change through USR-C3, which is blocked on decision A3. The refusal message says what is wrong, and the record is not reactivated.
+**The email refusal has no remedy yet.** The holder's email can only change through USR-C3, which is blocked on decision A3. The refusal message says what is wrong, and the record is not reactivated. *Since USR-C3 (2026-09-19):* the remedy is to change the returning user's address with USR-C3, which allows an inactive target (CE8), and then reactivate; CE-A9 proves it.
 
 ### Concurrency: one lock, three commands (D6)
 
@@ -3204,6 +3204,22 @@ USR-C3 — an administrator changes a human user's email
 1. As Ada, change V R's email. The list shows the new address, and one `UserEmailChanged` record is written.
 2. Try an address another active user holds. The refusal is shown word for word.
 3. Change V R back.
+
+### Implementation notes
+
+- **The handler** is `ChangeUserEmailCommandHandler`, in the contract's order of work.
+  - **Refusals:** the address is parsed with `EmailAddress.Create` before the transaction opens, so an invalid address never takes the lock. Its refusal is the domain's, `400` like every other.
+  - **The no-op** is `EmailAddress` equality, which ignores case. It returns before the uniqueness check and before the tokens.
+  - **The record** is declared only after the change and the invalidation, so a refusal or a no-op declares nothing.
+- **Uniqueness:** `IUserRepository.ExistsOtherActiveHumanWithEmailAsync` is a new method with the existing pre-check's predicate, the index's own terms, plus `id <> target`. The existing method is unchanged, and so are its callers, USR-C1 and USR-C5.
+- **Tokens:** `InvalidateOutstandingForUserAsync`, the USR-C4 method, stamped with the clock read after the lock.
+- **Audit:** `ChangeUserEmailCommand` is registered in `AuditDeclarations` with `UserEmailChanged` only, and the declaration test's list of every declared code gains it.
+- **The route** sits in `UserEndpoints`. A missing `email` is refused before dispatch, *"email is required."*, as the other routes treat missing inputs.
+- **The page:**
+  - **Wiring:** `ChangeEmailDialog` is built as Edit profile is. The action is `change-email` in the shared matrix, with its own `changeEmail` permission flag (`user.update`), after Edit profile.
+  - **The address field is text with `inputMode="email"`, not `type="email"`.** *Found during implementation:* the browser sanitises an email input's value, stripping surrounding whitespace, so what was sent differed from what was typed. That breaks CE12's "sent exactly as typed" and hides the server's own trimming.
+  - **The reason** is omitted from the request when the field is empty.
+  - **The current address** comes from the row or GetUser the dialog was opened from, and is not re-read.
 
 ### Not included
 
