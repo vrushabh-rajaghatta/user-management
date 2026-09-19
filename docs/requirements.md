@@ -2536,6 +2536,114 @@ request → host resolves the client address (B8)
 
 ---
 
+## SES-C1 — enforcing MustChangePassword at sign-in
+
+**Status:** Contract frozen 2026-09-19 by owner decision (MC1–MC9, with the owner's refinements to MC4 and MC5). It closes the Known Gap *MustChangePassword is recorded but not enforced*, and with it SES-C1 for local credentials.
+
+### Requirement
+
+After an administrator resets a user's password (CRD-C5), **the old password must no longer establish a session.** Only proof of mailbox control — a reset link, completed through CRD-C3 — replaces it. Until then the flag is outstanding, and sign-in with the old password is refused exactly as a wrong password is.
+
+```text
+administrator reset (CRD-C5)
+    → MustChangePassword = true
+    → the old password cannot establish a session
+    → a reset token is required (the administrator's link, or Forgot password)
+    → a new password is chosen (CRD-C3)
+    → MustChangePassword = false
+    → normal sign-in
+```
+
+**Why not a restricted session.** An administrator reset commonly follows a suspected compromise. A session that could only change the password would let whoever holds the old password — including the person it was compromised to — choose the new one and clear the flag, bypassing the very reset the administrator issued. Refusing sign-in needs no new session concept, and matches CRD-C5's rule that *"issuing a token is the only permitted mechanism."*
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **MC1** | **Sign-in is refused while `MustChangePassword` is outstanding.** No restricted session. |
+| **MC2** | **The refusal is the same generic `401`** as every other sign-in failure: the same status, body and absence of a cookie. A distinct message would confirm to the caller that the old password was correct. |
+| **MC3** | **The check runs after the lock check and after the password verifies, and before the caller is established.** A wrong password therefore gets exactly today's outcome, and a refusal is recorded with an Anonymous origin (EO5), as every `SignInFailed` is. |
+| **MC4** | **A correct password with the flag outstanding is not a failed attempt,** and it is not a successful one either. See *What a refused sign-in changes*. |
+| **MC5** | **CRD-C5 does not revoke existing sessions,** and this story does not change CRD-C5. Sessions established before the reset remain valid until they end or are revoked (for example with *Sign out everywhere*). |
+| **MC6** | **What clears the flag is unchanged:** CRD-C3 (any reset link, administrator-issued or self-service) and CRD-C4 (from a session that already exists). CRD-C6 `UnlockAccount` does not. Already proved by `ResetPasswordIntegrationTests`, `ChangePasswordIntegrationTests` and `UnlockAccountIntegrationTests`. |
+| **MC7** | **No client change is required.** The sign-in page already shows its fixed rejection for any `401`. |
+| **MC8** | **Change control**, recorded below. No schema change, no new audit event, no `AuditEventCatalogue.Version` bump. |
+| **MC9** | **SES-C1 is Done for local credentials** when this lands. External identity-provider sign-in is deliberately deferred to IDN-C1 / IDN-Q2. |
+
+### What a refused sign-in changes (MC4)
+
+```text
+password correct
+    → MustChangePassword = true
+    → SignInFailed, failureCategory = PasswordChangeRequired
+    → generic 401
+```
+
+- **Written:** one `SignInFailed` (Autonomous, Anonymous origin, no actor), with the identity as primary entity and `FailureCategory = "PasswordChangeRequired"`.
+- **Not written:** no session, no `SignInSucceeded`, no `AccountLocked`.
+- **The credential is untouched by the refusal:** `FailedAttemptCount` is **not** incremented, and is **not** cleared either; `LockedUntil` is not set; no rehash happens even if the stored algorithm is stale; `PasswordHash`, `PasswordAlgorithm`, `PasswordChangedAt` and `MustChangePassword` itself are unchanged. A correct password must not make the attempt behave partly like a successful sign-in.
+- **Repeated refusals never lock the account**, however many there are.
+- **Unchanged, and independent of the flag:** an **expired** lock is still cleared before the password is checked (SES-C1's existing rule: the window it belonged to has ended). That happens whether the password is right or wrong, so it is not a side effect of correctness.
+
+**The order, in full:**
+
+1. Resolve the local identity (unusable → `IdentityNotUsable`, decoy derivation).
+2. A live lock → `AccountLocked`, decoy derivation. An expired lock is cleared.
+3. Verify the password (wrong → `CredentialsRejected`, counted; may lock).
+4. **New:** `MustChangePassword` outstanding → `PasswordChangeRequired`, refused. Nothing else changes.
+5. Establish the caller; rehash if needed; clear the counters; create the session; `SignInSucceeded`.
+
+**The timing difference is accepted.** A refused correct password writes no counter, as a live lock writes none today, while a wrong password does. The difference is one row update inside a transaction; behaviour 11 limits each username to 10 attempts in 15 minutes.
+
+### Change control (MC8)
+
+1. **SES-C1's catalogue precondition** reads *"Identity active, user active, credential exists and not locked, password verifies."* It gains: **"and no password change required by an administrator reset is outstanding (MustChangePassword)."** The workbook is not edited here.
+2. **`SignInFailed.failureCategory`** gains the value **`PasswordChangeRequired`**. It is an internal payload value — the response stays generic — so the event type, its version and the payload's shape are unchanged. (The catalogue's list of categories already differs from the values the code records: `IdentityNotUsable`, `AccountLocked`, `CredentialsRejected`. That reconciliation is outstanding change control too, and not changed here.)
+3. **The entity model's `credential.MustChangePassword`** — *"Set after an administrator-initiated reset"* — gains its meaning: **"While true, the password on file cannot establish a session; it is cleared when a new password is set through a reset link (CRD-C3) or a password change (CRD-C4)."**
+
+### UI guidance (not part of the security contract)
+
+Optional, and not built in this story unless the owner asks:
+
+- A fixed help sentence under **every** sign-in failure, such as *"If an administrator reset your password, use the link in their email."* It is shown whatever the cause, so it reveals nothing.
+- In the Reset password dialog: *"This doesn't sign the person out. Use Sign out everywhere if the account may be compromised."*
+
+Neither is coupled to the authentication behaviour.
+
+### Acceptance Criteria
+
+**The refusal (MC1–MC4)**
+
+- **MP-1** A correct password with `MustChangePassword` outstanding is refused: `Succeeded = false`, no session, no `SignInSucceeded`.
+- **MP-2** Exactly one `SignInFailed` is recorded, with `FailureCategory = "PasswordChangeRequired"`, the identity as primary entity, Anonymous origin and no actor.
+- **MP-3** The credential is unchanged by the refusal: a seeded `FailedAttemptCount` of 2 stays 2; `LockedUntil` stays null; `PasswordHash`, `PasswordAlgorithm`, `PasswordChangedAt` and `MustChangePassword` are unchanged — including when the stored algorithm is stale, so no rehash happens.
+- **MP-4** Six refused sign-ins in a row (more than the baseline `MaxFailedLoginAttempts`) never lock the account and write no `AccountLocked`; the counter is unchanged.
+- **MP-5** A **wrong** password with the flag outstanding is exactly today's `CredentialsRejected`: the counter increments.
+- **MP-6** A **live lock** with the flag outstanding is exactly today's `AccountLocked` refusal: the lock check comes first.
+- **MP-7** Over HTTP, the refusal is **byte-identical** to a wrong password's: `401`, the same body, and no carrier cookie set.
+
+**Recovery (MC5, MC6)**
+
+- **MP-8** **Through a reset link:** with the flag outstanding, the old password is refused; CRD-C3 with a reset token succeeds; the flag is then false; the new password signs in (`204`), and `SignInSucceeded` is recorded.
+- **MP-9** **From an existing session:** a session established before the flag was set still authenticates (`/api/me` answers `200`); CRD-C4 through it clears the flag; the new password then signs in.
+
+**Browser, in the dev stack (MP-10),** each state change approved by the owner:
+
+1. As Ada, **Reset password** for V R, with a reason.
+2. V R's **old password** is refused with *"Invalid username or password."* — and V R's account is **not locked**, and its failed-attempt counter has **not** increased.
+3. V R opens the link from `.secrets/mail/` and sets a new password.
+4. The credential shows `MustChangePassword = false`; the new password signs in normally, `SignInSucceeded` is recorded, and V R's normal access works.
+
+### Not included
+
+- A restricted, change-password-only session.
+- Revoking sessions at CRD-C5 (MC5), and any change to CRD-C5 or its email.
+- Password expiry (`PasswordChangedAt` *"supports any future expiry policy"*).
+- External identity-provider sign-in (IDN-C1, IDN-Q2), deferred by MC9.
+- The optional UI guidance above.
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
