@@ -2101,7 +2101,7 @@ No workbook is edited. The following are outstanding against the frozen document
 
 ## USR-Q1 GetUser v2 and the User detail page (story 1)
 
-**Status:** Draft, 2026-09-19. The owner has decided G1–G8. The **field and permission matrix** below is open for review before freezing. This builds on USR-Q1 v1 (*USR-C2 — Update User Profile, and USR-Q1 GetUser (narrow v1)*), on AUT-Q2 (#60), and on the Users-table actions (USR-C4/C5, USR-C2 UI).
+**Status:** Contract frozen 2026-09-19 by owner decision (G1–G8, and the field and permission matrix with its six confirmed choices). This builds on USR-Q1 v1 (*USR-C2 — Update User Profile, and USR-Q1 GetUser (narrow v1)*), on AUT-Q2 (#60), and on the Users-table actions (USR-C4/C5, USR-C2 UI).
 
 ### Requirement
 
@@ -2138,7 +2138,7 @@ Bundling the data under `user.read` would stop `role.read` controlling access to
 
 **Outstanding change control, with no workbook edited:** the UM command catalogue's *Queries* sheet, USR-Q1 row, *Returns* column. It should list the core fields only, and name AUT-Q2 and IDN-Q1 as where assignments and identities come from.
 
-### The field and permission matrix (for review)
+### The field and permission matrix
 
 | Page part | Data | Source | Permission | If not held |
 | --- | --- | --- | --- | --- |
@@ -2148,7 +2148,14 @@ Bundling the data under `user.read` would stop `role.read` controlling access to
 | **Manage roles** | opens the existing dialog | AUT-C1 and AUT-C2 | `role.grant` or `role.revoke`, as the table offers it | hidden |
 | *Identities (story 2)* | — | IDN-Q1 | `identity.read` | hidden |
 
-A section's request is **not made** when its permission is not held, so no refusal is fetched only to be hidden.
+**A missing page permission and a missing section permission are different things:**
+
+- **Missing `user.read`:** the explicit **denied state**, because the route itself is permission-gated (`RequirePermission`, as every users route is). That is the page-level contract.
+- **Missing `role.read`:** the Roles section is **hidden, and its request is not made**.
+- **Missing an action's permission:** that action is **hidden**.
+- **Missing `identity.read`** (story 2): the Identities section is **hidden, and its request is not made**.
+
+A section's request is **never made** when its permission is not held. The client does not fetch a refusal only to hide it, and creates no needless authorization failures in the network layer.
 
 ### GetUser v2 (G3)
 
@@ -2198,9 +2205,11 @@ A section's request is **not made** when its permission is not held, so no refus
 - **DV-3:** a Users-table display name links to `/admin/users/{userId}`. The page renders the header from GetUser alone, including on a direct load with no list read.
 - **DV-4:** loading shows a skeleton, and a refusal shows its message with Try again. An unknown user shows *"The user does not exist."*.
 - **DV-5:** the page offers exactly the row's actions for each permission, status and `activationPending` combination. The same matrix test is applied to the page.
-- **DV-6:** after each action succeeds, GetUser is re-read, the list is invalidated, and (for Manage roles) AUT-Q2 is re-read. The page reflects the server's new state, and nothing changes locally before the re-read.
-- **DV-7:** Roles is shown with `role.read` and **absent, with no request made**, without it. It lists AUT-Q2's current assignments with the server's state as sent, and shows *"No current roles."* when there are none. Its error does not break the page.
-- **DV-8:** a user administrator (no `role.read`) sees the page without Roles, and a security administrator sees it with Roles. Both are proved against the seeded roles.
+- **DV-6:** after each action succeeds, GetUser is re-read and the list is invalidated. After Manage roles, AUT-Q2 is re-read as well. The page reflects the server's new state, and nothing changes locally before the re-read.
+- **DV-7:** Roles is shown with `role.read`. Without it, the section is absent **and the test proves that no AUT-Q2 request was made**, not merely that nothing rendered. It lists AUT-Q2's current assignments with the server's state as sent, and shows *"No current roles."* when there are none. Its error does not break the page.
+- **DV-8:** the permission split, against the **seeded** role compositions. This protects the G2 change control:
+  - **User administrator** (`user.read` ✓, `role.read` ✗): user detail visible, **no Roles request**, Roles section absent.
+  - **Security administrator** (`user.read` ✓, `role.read` ✓): user detail visible, **Roles request made**, Roles section visible.
 - **DV-9:** no accessibility violations on the page, with a dialog open, and in the loading and error states.
 - **DV-10:** browser check in the dev stack, each state change approved by the owner:
   - open a user from the table and by direct URL;
