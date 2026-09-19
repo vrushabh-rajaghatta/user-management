@@ -2848,6 +2848,80 @@ Exactly SES-Q1's shape: `{ "sessions": [ … ] }` with `sessionId`, `createdAt`,
 
 ---
 
+## IDN-Q3 CheckUsernameAvailable on Create user
+
+**Status:** Contract frozen 2026-09-19 by owner decision (UN1–UN10, with the owner's clarification of UN6 and ruling on surrounding whitespace). Read-only: USR-C1, IDN-C2 and the username index are unchanged.
+
+### Requirement
+
+On Create user, an administrator allowed to read identities learns, before submitting, whether the username they typed is already taken — and cannot submit one the server has already said is taken. USR-C1 stays the authority at submit.
+
+**IDN-Q3 and USR-C1 answer the same question the same way:** `IUserIdentityRepository.ExistsWithUsernameAsync` is the compatibility seam between them, proved by a contract test, not merely shared for convenience.
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **UN1** | **`POST /api/identities/username-availability` with `{ "username": "…" }`.** A read with no side effects, carried in the body so the typed value never reaches request URLs — access logs, proxies or browser history — as a query string would. |
+| **UN2** | **Exactly `ExistsWithUsernameAsync`**: PostgreSQL's `lower()`, local identities, **every status** — the UI7 index's own terms. The value checked is the value sent, untransformed, as USR-C1 receives it; the client sends the trimmed value it would also submit. |
+| **UN3** | **`{ "available": true \| false }` and nothing else** — never who holds it, nor whether the holder is active (D2 makes that irrelevant). A blank username is `400` *"A username is required."*. |
+| **UN4** | **`identity.read`**, refused otherwise with the usual `400`. Not audited. Not rate limited (behaviour 11 covers anonymous commands; this caller is an authenticated administrator). |
+| **UN5** | **The page checks when focus leaves the Username field**, only for a caller holding `identity.read` — without it there is no check **and no request**, and USR-C1's refusal at submit still applies. Not on every keystroke. A blank field is not checked. |
+| **UN6** | **Taken blocks Create; the block belongs to the value it was about.** See *The availability states*. |
+| **UN7** | **A failed check is ignored:** no message, and submit proceeds for the server to decide. |
+| **UN8** | **The result is carried by `FormField`** — the in-use message as the field's error, the available message as its description — tied to the input with `aria-describedby`, and announced politely. |
+| **UN9** | **Out of scope:** IDN-C2's UI, suggesting alternatives, username format rules, and **surrounding whitespace** (see *Not included*). |
+| **UN10** | **No change control:** the catalogue's Boolean is served as `{ available }`; POST is an HTTP detail. |
+
+### The availability states (UN6, as clarified by the owner)
+
+```text
+value edited ─────────────────────────────► unchecked (no message; nothing blocked)
+unchecked ── blur, non-blank, identity.read ─► checking (nothing blocked)
+checking ── failed ─► unchecked (UN7: ignored)
+checking ── { available: false } ─► taken     → "This username is already in use."; Create blocked
+checking ── { available: true }  ─► available → "Username available."; Create allowed
+taken / available ── any edit ─► unchecked
+```
+
+- **Any edit clears the previous result**, so a taken result never blocks a different value, and the form is never left permanently invalid.
+- **A result that arrives for a value the field no longer holds is discarded.** An answer about `v.r` never applies to `v.r2`.
+- **"Available" is not a promise.** Someone else may take the name between the check and the submit; the server's refusal is then shown word for word, as today.
+- Blocking on *taken* does not breach §12's "a schema never rejects input the server would accept": under D2 a taken username can never become available, and USR-C1 refuses it.
+
+### Acceptance Criteria
+
+**The read (UN1–UN4)**
+
+- **UA-1** `available` is `false` for a username held by an **active** local identity, by an **inactive** local identity, and for **case variants** of either; `true` for an unused username; and `true` for a value held only as an **external** identity's username, which the local-only index does not constrain.
+- **UA-2** **IDN-Q3 and USR-C1 agree**: for the same set of values — active, inactive, case variants, unused, external-held — IDN-Q3 answers `available: true` exactly when USR-C1 accepts that username, and `false` exactly when USR-C1 refuses it with *"A user identity with this username already exists."*.
+- **UA-3** Without `identity.read` the read is refused (`400`); without a caller, `401`; a blank username is `400` *"A username is required."*. No audit record is written.
+- **UA-4** Over HTTP the response is exactly `{ "available": … }`; the route accepts only POST with a body; and the typed username appears in **no log line** the host writes for the request.
+
+**The page (UN5–UN8)**
+
+- **UA-5** With `identity.read`, leaving the Username field sends exactly `{ username }` — the trimmed value — once. A blank field sends nothing.
+- **UA-6** **Taken:** *"This username is already in use."* is shown on the field and Create sends nothing. **Editing the field** clears the message and the block; the next Create is sent to the server.
+- **UA-7** **Available:** *"Username available."* is shown; Create is sent. A server refusal at submit is still shown word for word.
+- **UA-8** **A failed check** (a `5xx`, a network failure or a contract violation) shows nothing and does not block Create.
+- **UA-9** **A late result is discarded:** when the field changes while a check is in flight, that result neither shows a message nor blocks.
+- **UA-10** **Without `identity.read`, no availability request is ever made** — on blur or on submit — and Create works as before.
+- **UA-11** No accessibility violations with the in-use message and with the available message shown.
+
+**Browser, in the dev stack (UA-12),** after a fresh host restart, each state change approved by the owner:
+
+1. As Ada on Create user, type `v.r` and leave the field: *"This username is already in use."*, and Create is blocked.
+2. `V.R`: in use too.
+3. An unused name: *"Username available."*.
+
+### Not included
+
+- **Surrounding whitespace in local usernames** — ruled a separate small story (see the Known Gap *Local usernames accept surrounding whitespace*). This story checks exactly the value the client submits.
+- IDN-C2's UI, suggestions, format rules.
+- Any change to USR-C1, IDN-C2 or the UI7 index.
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
@@ -3793,3 +3867,17 @@ measurement must use the two-request worst case, not the cached-token case.
 ```text
 Requirement ID → Story → Implementation plan → Branch → Commit(s) → Pull Request → Owner approval → Merge
 ```
+
+## Local usernames accept surrounding whitespace
+
+**Found while gathering IDN-Q3's evidence (2026-09-19).** USR-C1 checks and stores the username exactly as sent: the domain refuses only a blank value, and nothing trims or refuses surrounding whitespace. The web form trims before sending, but any other API caller can create `" ada"`. PostgreSQL's `lower()` treats that as distinct from `"ada"`, so two near-identical usernames can coexist, and signing in as `ada` never reaches `" ada"`. No development data is affected.
+
+**Owner ruling:** leading and trailing whitespace is **invalid** for local usernames — refused, **never silently trimmed** (a username is an identifier, and silently transforming one creates surprising identity semantics). Case still does not distinguish usernames:
+
+```text
+"ada"          → valid
+" Ada", "Ada ", " Ada "  → invalid
+"ada" vs "ADA" → the same identifier
+```
+
+**Deferred to:** its own small story, applying the rule consistently to USR-C1 and IDN-C2, after which IDN-Q3 uses the same domain rule. IDN-Q3 deliberately does not change it.
