@@ -180,6 +180,26 @@ describe("the sign-in page", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("A username and password are required.");
   });
 
+  /**
+   * RL-17 (behaviour 11). A 429 is not a rejected sign-in, so it is not
+   * rewritten as "Invalid username or password.": the host's sentence is shown.
+   */
+  it("shows the rate-limit refusal word for word", async () => {
+    server.use(
+      http.post(SIGN_OUT, () => new HttpResponse(null, { status: 204 })),
+      http.post(SIGN_IN, () =>
+        HttpResponse.json({ error: "Too many attempts. Try again later." }, { status: 429, headers: { "Retry-After": "60" } }),
+      ),
+    );
+
+    const { user } = renderWithApp(routes, { path: "/sign-in" });
+
+    await signIn(user);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Too many attempts. Try again later.");
+    expect(screen.queryByText("Invalid username or password.")).toBeNull();
+  });
+
   it("stays on the page after a rejection, so the credentials can be corrected", async () => {
     server.use(
       http.post(SIGN_OUT, () => new HttpResponse(null, { status: 204 })),

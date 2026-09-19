@@ -203,6 +203,14 @@ public sealed class DependencyInjectionTests
 
         Assert.Collection(
             behaviors,
+            // Behaviour 11 is FIRST (B1): a refused request reaches no later
+            // behaviour — not authentication, not the transaction, and no
+            // password derivation.
+            behavior =>
+                Assert.IsType<
+                    RateLimitBehavior<TestCommand, TestResult>>(
+                    behavior),
+
             behavior =>
                 Assert.IsType<
                     AuthenticationBehavior<TestCommand, TestResult>>(

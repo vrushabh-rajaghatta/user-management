@@ -50,10 +50,13 @@ public static class AuthEndpoints
                 + "password, locked, inactive, or a request that already "
                 + "presents a live session — returns the same 401 with the same "
                 + "message and sets no cookie, and the attempt is recorded "
-                + "either way.")
+                + "either way. Rate limited per username and per client "
+                + "address: over the limit, 429 with Retry-After, and the "
+                + "attempt is neither judged nor recorded.")
             .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status400BadRequest)
-            .Produces(StatusCodes.Status401Unauthorized);
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status429TooManyRequests);
 
         routes.MapPost("/api/auth/sign-out", SignOutAsync)
             .WithTags("Authentication")

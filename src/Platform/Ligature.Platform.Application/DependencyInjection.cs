@@ -1,6 +1,7 @@
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Behaviors;
+using Ligature.Platform.Application.RateLimiting;
 using Ligature.Platform.Application.Dispatching;
 using Ligature.Platform.Application.Execution;
 using Ligature.Platform.Application.Notifications;
@@ -69,6 +70,16 @@ public static class DependencyInjection
         // pipeline, and nothing is copied onto queries by symmetry with
         // commands.
         services.AddScoped<IQueryDispatcher, QueryDispatcher>();
+
+        // Behaviour 11, FIRST: a refused request reaches nothing after it —
+        // not authentication, not the transaction, not the handler, and so no
+        // password derivation (docs/requirements.md, "Behaviour 11"). The
+        // store is a singleton: the buckets belong to the process, not to a
+        // request.
+        services.AddSingleton<RateLimitStore>();
+
+        services.AddScoped(typeof(ICommandBehavior<,>),
+            typeof(RateLimitBehavior<,>));
 
         services.AddScoped(typeof(ICommandBehavior<,>),
             typeof(AuthenticationBehavior<,>));

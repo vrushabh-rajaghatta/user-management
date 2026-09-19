@@ -212,11 +212,11 @@ public sealed class CommandHandlerRegistrationTests
             .GetServices<ICommandBehavior<CreateUserCommand, CreateUserResult>>()
             .ToList();
 
-        // Three authorisation-side behaviours, then notification's post-commit
-        // scope, the audit command scope inside it, the transaction scope
-        // inside that, and — within the transaction — notification emission
-        // and audit emission.
-        Assert.Equal(8, behaviors.Count);
+        // Rate limiting (behaviour 11) first, then three authorisation-side
+        // behaviours, then notification's post-commit scope, the audit
+        // command scope inside it, the transaction scope inside that, and —
+        // within the transaction — notification emission and audit emission.
+        Assert.Equal(9, behaviors.Count);
 
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<IExecutionContext>());
         Assert.NotNull(

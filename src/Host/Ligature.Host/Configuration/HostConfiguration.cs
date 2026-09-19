@@ -20,6 +20,13 @@ public static class HostConfiguration
     public const string ApiDocumentationSetting = "LIGATURE_API_DOCUMENTATION";
 
     /// <summary>
+    /// The proxies whose X-Forwarded-For is believed (behaviour 11, B8): a
+    /// comma-separated list of IP addresses and CIDR ranges. Absent or empty
+    /// means none — loopback included.
+    /// </summary>
+    public const string TrustedProxiesSetting = "LIGATURE_TRUSTED_PROXIES";
+
+    /// <summary>
     /// The externally reachable origin the activation link is built from — the
     /// FRONTEND's origin, not the API's. The emailed link is a browser GET and
     /// the activation endpoint needs a token and a password together, so the

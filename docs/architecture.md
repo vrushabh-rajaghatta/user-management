@@ -245,9 +245,11 @@ These are decisions already made in code. Follow them; do not introduce a parall
 `ICommandDispatcher` resolves the handler and the registered `ICommandBehavior<,>` instances and runs them through `CommandPipeline`, which executes behaviors in **registration order**:
 
 ```text
-AuthenticationBehavior → HumanActorBehavior → AuthorizationBehavior
+RateLimitBehavior → AuthenticationBehavior → HumanActorBehavior → AuthorizationBehavior
     → TransactionScopeBehavior → AuditEmissionBehavior → handler
 ```
+
+`RateLimitBehavior` (behaviour 11) is first, so a refused request reaches nothing after it: no authentication, no transaction, no password derivation, and no change to authentication state. It applies only to commands that declare `IRateLimitedCommand`, which every `IAnonymousCommand` must, and it keeps its buckets in a process-wide in-memory store. The contract is `docs/requirements.md`, *Behaviour 11 — rate limiting the anonymous commands*.
 
 The last two are the audit pipeline, and their position is the design: a command refused by authorisation never opens a transaction, and everything a permitted command records is written before that transaction commits.
 

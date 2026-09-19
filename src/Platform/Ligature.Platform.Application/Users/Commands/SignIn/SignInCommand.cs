@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.RateLimiting;
 
 namespace Ligature.Platform.Application.Users.Commands.SignIn;
 
@@ -19,4 +20,12 @@ public sealed record SignInCommand(
     string Password,
     string? IpAddress,
     string? UserAgent)
-    : IBearerAuthenticatedCommand<SignInResult>;
+    : IBearerAuthenticatedCommand<SignInResult>, IRateLimitedCommand
+{
+    /// <summary>Behaviour 11: per username and per client address.</summary>
+    IReadOnlyList<RateLimitSubject> IRateLimitedCommand.RateLimitSubjects =>
+    [
+        new(RateLimitRules.SignInByUsername, Username),
+        new(RateLimitRules.SignInByClientAddress, IpAddress),
+    ];
+}

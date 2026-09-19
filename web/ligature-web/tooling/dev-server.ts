@@ -108,15 +108,21 @@ export function resolveApiOrigin(environment: Record<string, string | undefined>
  * longer match it, and every state-changing request that reaches the Origin
  * rule would be refused.
  *
- * Nothing else is rewritten either: no forwarded headers, which the host does
- * not read, and no cookie rewriting, so the carrier cookie reaches the browser
- * exactly as the host set it.
+ * X-Forwarded-For IS sent (xfwd), for behaviour 11: it tells the host which
+ * browser is calling, so the per-address rate limit sees the browser rather
+ * than this dev server. The host believes it only from a proxy it is
+ * configured to trust — in the dev stack, exactly the web container
+ * (compose.dev.yaml) — and ignores it everywhere else. xfwd also adds
+ * X-Forwarded-Proto, -Port and -Host, which the host deliberately never reads.
+ * Nothing is rewritten: not the Host, and not the cookie, so the carrier
+ * cookie reaches the browser exactly as the host set it.
  */
 export function apiProxy(apiOrigin: string): Record<string, ProxyOptions> {
   return {
     "/api": {
       target: apiOrigin,
       changeOrigin: false,
+      xfwd: true,
     },
   };
 }

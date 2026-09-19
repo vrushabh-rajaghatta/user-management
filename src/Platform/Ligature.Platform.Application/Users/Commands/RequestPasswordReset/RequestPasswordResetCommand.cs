@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.RateLimiting;
 
 namespace Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 
@@ -22,11 +23,23 @@ namespace Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 /// (Payload.RequestIp). Optional: an unknown origin is recorded as absent
 /// rather than invented.
 ///
-/// It is NOT used for rate limiting, which does not exist yet — see the
-/// blocking dependency recorded against this command in
-/// docs/requirements.md.
+/// Also the client-address key for rate limiting (behaviour 11): the Host
+/// resolves it, behind trusted proxies only, and passes null when there is
+/// none — never an invented value.
 /// </param>
 public sealed record RequestPasswordResetCommand(
     string EmailOrUsername,
     string? IpAddress)
-    : IAnonymousCommand<RequestPasswordResetResult>;
+    : IAnonymousCommand<RequestPasswordResetResult>, IRateLimitedCommand
+{
+    /// <summary>
+    /// Behaviour 11: per typed address and per client address. Every request
+    /// counts, whether or not it names an account, so the limit reveals
+    /// nothing about which accounts exist.
+    /// </summary>
+    IReadOnlyList<RateLimitSubject> IRateLimitedCommand.RateLimitSubjects =>
+    [
+        new(RateLimitRules.PasswordResetRequestByAddress, EmailOrUsername),
+        new(RateLimitRules.PasswordResetRequestByClientAddress, IpAddress),
+    ];
+}

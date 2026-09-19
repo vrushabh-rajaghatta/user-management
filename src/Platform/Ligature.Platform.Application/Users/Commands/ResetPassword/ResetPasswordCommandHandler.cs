@@ -27,8 +27,9 @@ namespace Ligature.Platform.Application.Users.Commands.ResetPassword;
 /// the token has proven itself and the free checks have passed. A request
 /// without a live token never reaches a derivation.
 ///
-/// NOT FIRST-TENANT-READY, for the same reason as CRD-C2: pipeline behaviour 11
-/// (rate limiting) does not exist. See docs/requirements.md.
+/// Rate limited per client address by behaviour 11, before this handler runs,
+/// which bounds the derivations a stream of requests can buy. See
+/// docs/requirements.md, "Behaviour 11".
 /// </summary>
 public sealed class ResetPasswordCommandHandler
     : ICommandHandler<ResetPasswordCommand, ResetPasswordResult>

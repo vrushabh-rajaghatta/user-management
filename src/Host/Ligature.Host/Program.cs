@@ -87,6 +87,12 @@ if (apiDocumentationEnabled)
     builder.Services.AddOpenApi(options => options.AddCarrierSecurity());
 }
 
+// Behaviour 11 (B8). Loaded and validated here, at startup, like the signing
+// key: a malformed proxy list stops the process rather than quietly putting
+// every caller behind the proxy into one rate-limit bucket.
+builder.Services.AddSingleton(
+    new ClientAddressMiddleware(TrustedProxies.Load(builder.Configuration)));
+
 builder.Services.AddScoped<CurrentCarrier>();
 builder.Services.AddScoped<CallerMiddleware>();
 builder.Services.AddScoped<CrossSiteMiddleware>();
@@ -125,9 +131,14 @@ QueryAuthorizationVerification.Verify(builder.Services);
 // caller must be established on the request scope before any command is
 // dispatched under it.
 //
+// ClientAddressMiddleware is outermost of all: the client address it resolves
+// is what every later layer — the logs, the rate limit, the recorded evidence
+// — must see.
+//
 // No developer exception page is registered in any environment. One would turn
 // the deliberate no-detail 500 into a stack trace the moment somebody ran the
 // host with ASPNETCORE_ENVIRONMENT=Development.
+app.UseMiddleware<ClientAddressMiddleware>();
 app.UseMiddleware<ProblemMiddleware>();
 app.UseMiddleware<CrossSiteMiddleware>();
 app.UseMiddleware<CallerMiddleware>();
