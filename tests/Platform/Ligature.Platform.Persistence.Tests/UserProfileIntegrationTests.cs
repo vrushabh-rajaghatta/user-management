@@ -164,8 +164,67 @@ public sealed class UserProfileIntegrationTests : IClassFixture<ActivationDataba
 
         var profile = await ReadAsync(reviewer, target);
 
-        Assert.Equal(new UserProfileResult(target, "John", "Leaver", "John Leaver"), profile);
+        // v2 (USR-Q1 GetUser v2, DV-1): the three list fields added, exactly.
+        // Seeded Active, with a local identity and no credential: pending.
+        Assert.Equal(
+            new UserProfileResult(
+                target, "John", "Leaver", "John Leaver",
+                await ScalarAsync<string>("SELECT email FROM app_user WHERE id = @id", target.Value),
+                UserStatus.Active,
+                ActivationPending: true),
+            profile);
         Assert.Equal(records, await ScalarAsync<long>("SELECT count(*) FROM audit.audit_record WHERE @id::text IS NOT NULL", "x"));
+    }
+
+    /// <summary>
+    /// DV-1 — v2's added fields mean exactly what the list row means by them
+    /// (USR-Q2 amendments 1 and 2): all four status/activationPending
+    /// combinations, and a null email, read by GetUser and by the list for the
+    /// same users, must agree field for field.
+    /// </summary>
+    [Fact]
+    public async Task GetUser_v2_agrees_with_the_list_row_for_every_lifecycle_combination()
+    {
+        var reviewer = await CallerAsync("access-reviewer");
+
+        var users = new[]
+        {
+            await SeedAsync(inactive: false, withCredential: true),
+            await SeedAsync(inactive: false, withCredential: false),
+            await SeedAsync(inactive: true, withCredential: true),
+            await SeedAsync(inactive: true, withCredential: false),
+            await SeedAsync(noEmail: true),
+        };
+
+        var rows = await ListRowsAsync();
+
+        foreach (var user in users)
+        {
+            var detail = await ReadAsync(reviewer, user);
+            var row = Assert.Single(rows, x => x.UserId == user);
+
+            Assert.Equal(
+                (row.Email, row.Status, row.ActivationPending),
+                (detail.Email, detail.Status, detail.ActivationPending));
+        }
+
+        // The combinations really are all present, so agreement is not vacuous.
+        var seen = users.Select(u => rows.Single(x => x.UserId == u)).ToList();
+        Assert.Contains(seen, x => x.Status == UserStatus.Active && !x.ActivationPending);
+        Assert.Contains(seen, x => x.Status == UserStatus.Active && x.ActivationPending);
+        Assert.Contains(seen, x => x.Status == UserStatus.Inactive && !x.ActivationPending);
+        Assert.Contains(seen, x => x.Status == UserStatus.Inactive && x.ActivationPending);
+        Assert.Contains(seen, x => x.Email is null);
+    }
+
+    private async Task<IReadOnlyList<Ligature.Platform.Application.Users.Queries.UserList.UserListRow>> ListRowsAsync()
+    {
+        await using var provider = Provider();
+        using var scope = provider.CreateScope();
+
+        return await scope.ServiceProvider
+            .GetRequiredService<IUserListReader>()
+            .ReadAsync(0, 10_000, CancellationToken.None);
     }
 
     /// <summary>G-A3 — the System actor is unknown to this read, as is a missing user; G-A2, the permission.</summary>
@@ -238,7 +297,7 @@ public sealed class UserProfileIntegrationTests : IClassFixture<ActivationDataba
         Assert.Equal(message, refusal.Message);
     }
 
-    private async Task<UserId> SeedAsync(bool inactive = false)
+    private async Task<UserId> SeedAsync(bool inactive = false, bool withCredential = false, bool noEmail = false)
     {
         var id = Guid.NewGuid();
         var identity = Guid.NewGuid();
@@ -250,7 +309,7 @@ public sealed class UserProfileIntegrationTests : IClassFixture<ActivationDataba
             $"""
              INSERT INTO app_user (id, actor_type, first_name, last_name, display_name, email, status,
                                    created_at, created_by, updated_at, updated_by, deactivated_at, deactivated_by)
-             VALUES ('{id}', 'Human', 'John', 'Leaver', 'John Leaver', 'profile-{unique}@example.test',
+             VALUES ('{id}', 'Human', 'John', 'Leaver', 'John Leaver', {(noEmail ? "NULL" : $"'profile-{unique}@example.test'")},
                      '{(inactive ? "Inactive" : "Active")}', now() - interval '1 year', '{system}',
                      now() - interval '1 day', '{system}',
                      {(inactive ? "now() - interval '1 day'" : "NULL")}, {(inactive ? $"'{system}'" : "NULL")});
@@ -264,6 +323,22 @@ public sealed class UserProfileIntegrationTests : IClassFixture<ActivationDataba
              """, connection);
 
         await command.ExecuteNonQueryAsync();
+
+        if (withCredential)
+        {
+            var hashed = new Ligature.Platform.Persistence.Services.PasswordHasher().Hash("a-password-for-the-detail-test");
+
+            await using var credential = new NpgsqlCommand(
+                $"""
+                 INSERT INTO credential (id, user_identity_id, identity_type, password_hash, password_algorithm,
+                                         password_changed_at, must_change_password, failed_attempt_count,
+                                         locked_until, created_at, created_by)
+                 VALUES ('{Guid.NewGuid()}', '{identity}', 'Local', '{hashed.Hash}', '{hashed.Algorithm}',
+                         now() - interval '1 day', false, 0, NULL, now() - interval '1 day', '{system}')
+                 """, connection);
+
+            await credential.ExecuteNonQueryAsync();
+        }
 
         return new UserId(id);
     }

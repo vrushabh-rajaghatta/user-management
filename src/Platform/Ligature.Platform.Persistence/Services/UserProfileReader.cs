@@ -36,6 +36,7 @@ public sealed class UserProfileReader : IUserProfileReader
         // First and last name are non-null for humans (ck_app_user_human_names).
         return row is null
             ? null
-            : new UserProfileResult(row.Id, row.FirstName!, row.LastName!, row.DisplayName);
+            // COMPILE-ONLY STUB (red tests): v2's fields are not read yet.
+            : new UserProfileResult(row.Id, row.FirstName!, row.LastName!, row.DisplayName, null, UserStatus.Active, false);
     }
 }

@@ -28,9 +28,17 @@ public sealed class UserProfileEndpointTests
     private static readonly (Guid User, Guid Identity) AccessReviewer =
         (Guid.Parse("9e000000-0000-4000-8000-000000000011"), Guid.Parse("9e000000-0000-4000-8000-000000000012"));
 
-    /// <summary>GetUser: exactly four members, to any user.read holder.</summary>
+    /// <summary>User detail DV-8: holds user.read and role.read, and not identity.read.</summary>
+    private static readonly (Guid User, Guid Identity) SecurityAdministrator =
+        (Guid.Parse("9e000000-0000-4000-8000-000000000021"), Guid.Parse("9e000000-0000-4000-8000-000000000022"));
+
+    /// <summary>
+    /// GetUser v2 (USR-Q1 GetUser v2, DV-1): exactly seven members, to any
+    /// user.read holder. The target is Active, with a local identity and no
+    /// credential, so it is pending activation.
+    /// </summary>
     [Fact]
-    public async Task GetUser_answers_exactly_the_four_profile_fields()
+    public async Task GetUser_answers_exactly_the_seven_detail_fields()
     {
         await RunAsync(async (client, admin, reviewer, target) =>
         {
@@ -43,12 +51,48 @@ public sealed class UserProfileEndpointTests
                 using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
                 Assert.Equal(
-                    ["displayName", "firstName", "lastName", "userId"],
+                    ["activationPending", "displayName", "email", "firstName", "lastName", "status", "userId"],
                     body.RootElement.EnumerateObject().Select(x => x.Name).Order(StringComparer.Ordinal));
                 Assert.Equal(target, body.RootElement.GetProperty("userId").GetGuid());
                 Assert.Equal("Life", body.RootElement.GetProperty("firstName").GetString());
                 Assert.Equal("Cycle", body.RootElement.GetProperty("lastName").GetString());
+                Assert.Equal($"life-cycle-{target:N}@example.test", body.RootElement.GetProperty("email").GetString());
+                Assert.Equal("Active", body.RootElement.GetProperty("status").GetString());
+                Assert.True(body.RootElement.GetProperty("activationPending").GetBoolean());
             }
+        });
+    }
+
+    /// <summary>
+    /// User detail DV-8, the server's half of the G2 change control, against
+    /// the SEEDED role compositions. Both administrators read the user; only
+    /// the one holding role.read reads the user's role assignments. GetUser
+    /// carries no assignments, so user.read alone never reveals them.
+    /// </summary>
+    [Fact]
+    public async Task The_detail_is_composed_of_separately_authorised_reads()
+    {
+        await RunAsync(async (client, userAdministrator, _, target) =>
+        {
+            var securityAdministrator = await EnsureCallerAsync(
+                client, SecurityAdministrator, "user-detail-security-administrator", "security-administrator");
+
+            foreach (var caller in new[] { userAdministrator, securityAdministrator })
+                Assert.Equal(HttpStatusCode.OK, (await GetAsync(client, caller, $"/api/users/{target}")).StatusCode);
+
+            Assert.Equal(
+                HttpStatusCode.BadRequest,
+                (await GetAsync(client, userAdministrator, $"/api/users/{target}/role-assignments")).StatusCode);
+            Assert.Equal(
+                HttpStatusCode.OK,
+                (await GetAsync(client, securityAdministrator, $"/api/users/{target}/role-assignments")).StatusCode);
+
+            using var body = JsonDocument.Parse(
+                await (await GetAsync(client, userAdministrator, $"/api/users/{target}")).Content.ReadAsStringAsync());
+
+            Assert.False(body.RootElement.TryGetProperty("assignments", out JsonElement _));
+            Assert.False(body.RootElement.TryGetProperty("roles", out JsonElement _));
+            Assert.False(body.RootElement.TryGetProperty("identities", out JsonElement _));
         });
     }
 
