@@ -223,6 +223,33 @@ public sealed class TrustedProxyTests
         Assert.ThrowsAny<Exception>(() => factory.CreateClient());
     }
 
+    /// <summary>
+    /// ASP.NET's own forwarded-headers switch believes X-Forwarded-For from any
+    /// peer, which would undo B8 beside this host's list. It stops the host.
+    /// </summary>
+    [Fact]
+    public async Task The_frameworks_trust_everyone_switch_stops_the_host()
+    {
+        await TestDatabase.EnsureProvisionedAsync();
+        await using var factory = new HostFactory(settings: new Dictionary<string, string>
+        {
+            [TrustedProxies.FrameworkForwardedHeadersSetting] = "true",
+        });
+
+        Assert.ThrowsAny<Exception>(() => factory.CreateClient());
+    }
+
+    [Theory]
+    [InlineData("10.5")]
+    [InlineData("1")]
+    public async Task A_shorthand_address_is_refused_rather_than_trusted(string proxies)
+    {
+        await TestDatabase.EnsureProvisionedAsync();
+        await using var factory = Trusting(proxies);
+
+        Assert.ThrowsAny<Exception>(() => factory.CreateClient());
+    }
+
     [Fact]
     public void The_loader_parses_addresses_and_ranges()
     {

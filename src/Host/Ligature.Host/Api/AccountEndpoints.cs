@@ -43,9 +43,11 @@ public static class AccountEndpoints
                 "Anonymous: the emailed token is the authorisation, because "
                 + "holding it proves control of the mailbox. An invalid, "
                 + "expired, consumed or unparseable token all return the same "
-                + "400.")
+                + "400. Rate limited per client address: over the limit, 429 "
+                + "with Retry-After.")
             .Produces(StatusCodes.Status200OK)
-            .Produces(StatusCodes.Status400BadRequest);
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status429TooManyRequests);
 
         // CRD-C2. ONE outcome, deliberately: there is no 400 here and no 404,
         // because a status code that varied with what was typed would be the
@@ -64,8 +66,11 @@ public static class AccountEndpoints
                 + "not an account matches, so that the response cannot be used "
                 + "to discover which addresses or usernames are registered. "
                 + "If a single eligible local account matches, a single-use "
-                + "link is emailed to it and any previous link stops working.")
-            .Produces(StatusCodes.Status200OK);
+                + "link is emailed to it and any previous link stops working. "
+                + "Rate limited per address and per client address: over the "
+                + "limit, 429 with Retry-After, whatever was typed.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status429TooManyRequests);
 
         // CRD-C3. The counterpart of /activate: the emailed reset link lands
         // on the /reset-password page, which reads the token from the URL
@@ -77,9 +82,11 @@ public static class AccountEndpoints
                 "Anonymous: the emailed token is the authorisation. An invalid, "
                 + "expired, consumed or unparseable token all return the same "
                 + "400. A password the policy refuses also returns 400, and "
-                + "leaves the token usable.")
+                + "leaves the token usable. Rate limited per client address: "
+                + "over the limit, 429 with Retry-After.")
             .Produces(StatusCodes.Status200OK)
-            .Produces(StatusCodes.Status400BadRequest);
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status429TooManyRequests);
 
         // CRD-C4. As with sign-in, the description must not enumerate why a
         // change was refused beyond what the caller already knows.
@@ -218,14 +225,14 @@ public static class AccountEndpoints
     private sealed record ChangePasswordRequest(string? CurrentPassword, string? NewPassword);
 
     /// <summary>
-    /// Returns 200 on every path, including a missing body.
+    /// Returns 200 on every path the command runs, including a missing body.
     ///
-    /// NOTE FOR WHOEVER ADDS RATE LIMITING (pipeline behaviour 11, not yet
-    /// implemented): it belongs in front of this endpoint, per address and per
-    /// IP. The catalogue makes it a precondition of CRD-C2, and D-NOTIF-03
-    /// relies on it to compensate for the timing difference between the
-    /// matching and non-matching branches. Until then this endpoint is
-    /// unthrottled — see docs/requirements.md.
+    /// Rate limited per typed address and per client address (behaviour 11):
+    /// the catalogue makes that a precondition of CRD-C2, and D-NOTIF-03 relies
+    /// on it to compensate for the timing difference between the matching and
+    /// non-matching branches. A refused request is 429 with the same sentence
+    /// whether or not the address names an account, and never reaches the
+    /// command — see docs/requirements.md, "Behaviour 11".
     /// </summary>
     private static async Task<IResult> RequestPasswordResetAsync(
         PasswordResetRequest? request,
@@ -253,6 +260,7 @@ public static class AccountEndpoints
     private static async Task<IResult> ActivateAsync(
         ActivateRequest? request,
         ICommandDispatcher dispatcher,
+        HttpContext context,
         CancellationToken cancellationToken)
     {
         if (request?.Token is null || request.NewPassword is null)
@@ -263,7 +271,12 @@ public static class AccountEndpoints
 
         var result = await dispatcher
             .SendAsync<ActivateAccountCommand, ActivateAccountResult>(
-                new ActivateAccountCommand(request.Token, request.NewPassword),
+                new ActivateAccountCommand(
+                    request.Token,
+                    request.NewPassword,
+
+                    // For rate limiting only (behaviour 11); recorded nowhere.
+                    context.Connection.RemoteIpAddress?.ToString()),
                 cancellationToken);
 
         // An invalid, expired, consumed or unparseable token all arrive here as
@@ -294,6 +307,7 @@ public static class AccountEndpoints
     private static async Task<IResult> ResetPasswordAsync(
         ResetPasswordRequest? request,
         ICommandDispatcher dispatcher,
+        HttpContext context,
         CancellationToken cancellationToken)
     {
         if (request?.Token is null || request.NewPassword is null)
@@ -304,7 +318,12 @@ public static class AccountEndpoints
 
         var result = await dispatcher
             .SendAsync<ResetPasswordCommand, ResetPasswordResult>(
-                new ResetPasswordCommand(request.Token, request.NewPassword),
+                new ResetPasswordCommand(
+                    request.Token,
+                    request.NewPassword,
+
+                    // For rate limiting only (behaviour 11); recorded nowhere.
+                    context.Connection.RemoteIpAddress?.ToString()),
                 cancellationToken);
 
         return Results.Ok(new { UserIdentityId = result.UserIdentityId.Value });

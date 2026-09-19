@@ -21,8 +21,9 @@ namespace Ligature.Host.Tests;
 /// contributor adds.
 ///
 /// WHAT THIS CANNOT ASSERT: timing. D-NOTIF-03 accepts a residual timing
-/// difference between the branches because rate limiting compensates for it,
-/// and rate limiting is not implemented (docs/requirements.md). No test here
+/// difference between the branches because rate limiting (behaviour 11)
+/// compensates for it; RateLimitEndpointTests proves that control, and the
+/// timing measurement itself is a separate validation item. No test here
 /// pretends otherwise.
 ///
 /// Fixed identifiers, seeded idempotently, for the reason CreateUserEndpointTests

@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.RateLimiting;
 
 namespace Ligature.Platform.Application.Users.Commands.ActivateAccount;
 
@@ -20,4 +21,12 @@ public sealed record ActivateAccountCommand(
     string TokenPlainText,
     string NewPassword,
     string? IpAddress = null)
-    : IBearerAuthenticatedCommand<ActivateAccountResult>;
+    : IBearerAuthenticatedCommand<ActivateAccountResult>, IRateLimitedCommand
+{
+    /// <summary>
+    /// Behaviour 11: per client address only. The token is the authorization
+    /// boundary; the limit bounds the cost of the derivations it buys.
+    /// </summary>
+    IReadOnlyList<RateLimitSubject> IRateLimitedCommand.RateLimitSubjects =>
+        [new(RateLimitRules.ActivateAccountByClientAddress, IpAddress)];
+}

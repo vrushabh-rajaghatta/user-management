@@ -1,4 +1,5 @@
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.RateLimiting;
 
 namespace Ligature.Platform.Application.Users.Commands.ResetPassword;
 
@@ -18,4 +19,12 @@ public sealed record ResetPasswordCommand(
     string TokenPlainText,
     string NewPassword,
     string? IpAddress = null)
-    : IBearerAuthenticatedCommand<ResetPasswordResult>;
+    : IBearerAuthenticatedCommand<ResetPasswordResult>, IRateLimitedCommand
+{
+    /// <summary>
+    /// Behaviour 11: per client address only. The token is the authorization
+    /// boundary; the limit bounds the cost of the derivations it buys.
+    /// </summary>
+    IReadOnlyList<RateLimitSubject> IRateLimitedCommand.RateLimitSubjects =>
+        [new(RateLimitRules.ResetPasswordByClientAddress, IpAddress)];
+}

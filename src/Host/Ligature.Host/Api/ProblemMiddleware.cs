@@ -4,10 +4,11 @@ using Ligature.SharedKernel.Exceptions;
 namespace Ligature.Host.Api;
 
 /// <summary>
-/// Maps the three exceptions the platform throws onto HTTP, and everything
+/// Maps the four exceptions the platform throws onto HTTP, and everything
 /// else onto a 500 that says nothing.
 ///
 /// <code>
+/// RateLimitExceededException      -> 429, a fixed sentence and Retry-After
 /// AuthenticationFailedException   -> 401, a fixed generic message
 /// BusinessRuleViolationException  -> 400, the exception's message
 /// DomainException                 -> 400, the exception's message
@@ -33,6 +34,13 @@ public sealed class ProblemMiddleware : IMiddleware
 
     private const string Unexpected =
         "The request could not be completed.";
+
+    /// <summary>
+    /// Behaviour 11 (B6): one sentence for every command and every exhausted
+    /// key, so the response never says which key was responsible.
+    /// </summary>
+    private const string TooManyAttempts =
+        "Too many attempts. Try again later.";
 
     /// <summary>
     /// Minimal APIs serialise results with the web defaults, which camel-case
@@ -62,6 +70,25 @@ public sealed class ProblemMiddleware : IMiddleware
         try
         {
             await next(context);
+        }
+        catch (RateLimitExceededException refusal)
+        {
+            // Behaviour 11 (B7): an operational warning, not an audit record.
+            // The address and the exhausted key kinds are what an operator
+            // needs; the typed username or address is not on the exception
+            // and is never logged (AUD-O15, AUD-D41).
+            _logger.LogWarning(
+                "Rate limiting refused {Method} {Path} from {ClientAddress}: "
+                + "exhausted {ExhaustedKeys}; retry after {RetryAfterSeconds}s.",
+                context.Request.Method,
+                context.Request.Path,
+                refusal.ClientAddress ?? "unknown",
+                string.Join(",", refusal.ExhaustedKeyKinds),
+                RetryAfterSeconds(refusal.RetryAfter));
+
+            await WriteAsync(
+                context, StatusCodes.Status429TooManyRequests, TooManyAttempts,
+                RetryAfterSeconds(refusal.RetryAfter));
         }
         catch (AuthenticationFailedException failure)
         {
@@ -138,8 +165,12 @@ public sealed class ProblemMiddleware : IMiddleware
     /// the client already received, so the exception is left to abort the
     /// response instead.
     /// </summary>
+    /// <summary>Whole seconds, rounded up, and never less than one.</summary>
+    private static int RetryAfterSeconds(TimeSpan retryAfter)
+        => Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds));
+
     private static async Task WriteAsync(
-        HttpContext context, int statusCode, string message)
+        HttpContext context, int statusCode, string message, int? retryAfterSeconds = null)
     {
         if (context.Response.HasStarted)
             return;
@@ -147,6 +178,9 @@ public sealed class ProblemMiddleware : IMiddleware
         context.Response.Clear();
         context.Response.StatusCode = statusCode;
         context.Response.ContentType = "application/json; charset=utf-8";
+
+        if (retryAfterSeconds is { } seconds)
+            context.Response.Headers.RetryAfter = seconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         await context.Response.WriteAsync(
             JsonSerializer.Serialize(new ErrorBody(message), Options));

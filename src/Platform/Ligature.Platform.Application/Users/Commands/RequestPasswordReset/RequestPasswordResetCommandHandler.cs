@@ -25,16 +25,14 @@ namespace Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 /// notification row. A request naming an unknown account therefore leaves no
 /// trace anywhere.
 ///
-/// BLOCKING DEPENDENCY — RATE LIMITING IS NOT IMPLEMENTED. The command
+/// RATE LIMITED BY BEHAVIOUR 11, before this handler runs. The command
 /// catalogue makes "rate limited per address and per IP" a PRECONDITION of
-/// this command, and Notification's D-NOTIF-03 names pipeline behaviour 11 as
-/// the compensating control for the residual timing difference between these
-/// two branches — a difference that design knowingly accepts BECAUSE rate
-/// limiting compensates for it. Behaviour 11 does not exist. This command is
-/// therefore implemented but NOT first-tenant-ready, and the silent branch
-/// above is currently the only thing standing between an attacker and an
-/// enumeration attempt they can make as often as they like. Recorded in
-/// docs/requirements.md; it must land before any tenant sees this.
+/// this command, and Notification's D-NOTIF-03 names behaviour 11 as the
+/// compensating control for the residual timing difference between these two
+/// branches — a difference that design knowingly accepts BECAUSE rate limiting
+/// compensates for it. Every request counts, whether or not it names an
+/// account, so the limit itself reveals nothing. See docs/requirements.md,
+/// "Behaviour 11 — rate limiting the anonymous commands".
 ///
 /// Account lockout (FailedAttemptCount/LockedUntil) does not help here: it
 /// guards password attempts against one credential, not repeated reset
