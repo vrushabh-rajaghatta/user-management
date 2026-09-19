@@ -225,8 +225,16 @@ public sealed class ChangeUserEmailIntegrationTests : IClassFixture<ActivationDa
 
     // ---------------------------------------------------------------- CE-A7
 
+    /// <summary>
+    /// The lock is taken BEFORE anything about the user is read (CE9). Another
+    /// transaction holds it and, while the command waits, sets the very address
+    /// the command is about to send. A command that read first would see the
+    /// old address and write a change — and a record whose Before is stale. One
+    /// that locked first sees its own address already there: no change, no
+    /// record, no token touched (CE6).
+    /// </summary>
     [Fact]
-    public async Task The_change_waits_for_the_users_row_lock()
+    public async Task The_change_waits_for_the_users_row_lock_and_then_reads()
     {
         var admin = await AdminAsync();
         var target = await SeedAsync();
@@ -246,10 +254,54 @@ public sealed class ChangeUserEmailIntegrationTests : IClassFixture<ActivationDa
         await Task.Delay(TimeSpan.FromMilliseconds(750));
         Assert.False(change.IsCompleted, "the change did not wait for the user's row lock");
 
+        await using (var command = new NpgsqlCommand("UPDATE app_user SET email = @email WHERE id = @id", holder, transaction))
+        {
+            command.Parameters.AddWithValue("email", address);
+            command.Parameters.AddWithValue("id", target.UserId.Value);
+            await command.ExecuteNonQueryAsync();
+        }
+
         await transaction.CommitAsync();
         await change;
 
-        Assert.Equal(address, await EmailAsync(target.UserId));
+        Assert.Equal(0L, await RecordsAsync(target.UserId));
+        Assert.Null(await InvalidatedAtAsync(target.ResetToken));
+    }
+
+    /// <summary>
+    /// The clock is read AFTER the lock (CE9): the instant stamped on the
+    /// invalidated tokens is this command's turn, not the moment it began to
+    /// wait. Both instants are the application's clock.
+    /// </summary>
+    [Fact]
+    public async Task The_tokens_are_stamped_after_the_wait_not_before_it()
+    {
+        var admin = await AdminAsync();
+        var target = await SeedAsync();
+
+        await using var holder = await _database.OpenAsync();
+        await using var transaction = await holder.BeginTransactionAsync();
+
+        await using (var command = new NpgsqlCommand("SELECT 1 FROM app_user WHERE id = @id FOR UPDATE", holder, transaction))
+        {
+            command.Parameters.AddWithValue("id", target.UserId.Value);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var change = Task.Run(() => ChangeAsync(admin, target.UserId, $"late-{Guid.NewGuid():N}@example.test", Reason));
+
+        await Task.Delay(TimeSpan.FromMilliseconds(750));
+
+        var released = DateTime.UtcNow;
+        await transaction.CommitAsync();
+        await change;
+
+        var stamped = await InvalidatedAtAsync(target.ResetToken);
+
+        Assert.NotNull(stamped);
+        Assert.True(
+            stamped.Value.ToUniversalTime() >= released.AddMilliseconds(-100),
+            $"the tokens were stamped at {stamped:O}, before the lock was released at {released:O}");
     }
 
     // ---------------------------------------------------------------- CE-A8

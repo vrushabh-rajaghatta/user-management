@@ -178,6 +178,9 @@ public sealed class UserProfileEndpointTests
             using var body = JsonDocument.Parse(await (await GetAsync(client, admin, $"/api/users/{target}")).Content.ReadAsStringAsync());
             Assert.Equal(address, body.RootElement.GetProperty("email").GetString());
 
+            // The reason travels from the body to the record.
+            Assert.Equal("Corrected at the user's request.", await RecordedReasonAsync(target));
+
             var again = await PostAsync(client, admin, $"/api/users/{target}/email", new { Email = address.ToUpperInvariant() });
             Assert.Equal(HttpStatusCode.NoContent, again.StatusCode);
         });
@@ -191,7 +194,9 @@ public sealed class UserProfileEndpointTests
         {
             var path = $"/api/users/{target}/email";
 
-            Assert.Equal(HttpStatusCode.BadRequest, (await PostAsync(client, admin, path, new { Reason = "No address." })).StatusCode);
+            // Refused by the route itself, before dispatch (the implementation
+            // notes' sentence), not by the domain's address rule.
+            await AssertErrorAsync(await PostAsync(client, admin, path, new { Reason = "No address." }), "email is required.");
 
             await AssertErrorAsync(await PostAsync(client, admin, path, new { Email = "not-an-address" }), "Email address has an invalid format.");
 
@@ -361,6 +366,17 @@ public sealed class UserProfileEndpointTests
         await command.ExecuteNonQueryAsync();
 
         return userId;
+    }
+
+    private static async Task<string?> RecordedReasonAsync(Guid userId)
+    {
+        await using var connection = await TestDatabase.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT reason FROM audit.audit_record WHERE event_type = 'UserEmailChanged' AND entity_id = @id",
+            connection);
+        command.Parameters.AddWithValue("id", userId);
+
+        return await command.ExecuteScalarAsync() as string;
     }
 
     private static LigatureDbContext CreateContext()
