@@ -2182,7 +2182,7 @@ A section's request is **never made** when its permission is not held. The clien
 - **Header:**
   - **Title:** the display name.
   - Below it, the full name (first and last) and the email address, or *"No email address"* when null.
-  - The **Inactive** and **Pending activation** markers, as the table shows them.
+  - The **Inactive** marker, as the table shows it, and a **Pending activation** marker. *(Corrected before the red tests: the table shows no pending marker. The page's Pending activation marker, which the owner confirmed, is new here.)*
 - **Loading and errors:**
   - While GetUser loads, a skeleton.
   - A refusal of GetUser shows its message word for word in the shared `ErrorState`, with **Try again**.
