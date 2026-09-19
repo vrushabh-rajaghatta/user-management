@@ -1,14 +1,24 @@
 import { z } from "zod";
 
 /**
- * USR-Q1 GetUser v1's response (docs/requirements.md, "USR-C2 — Update User
- * Profile, and USR-Q1 GetUser (narrow v1)"): exactly these four fields.
+ * USR-Q1 GetUser v2's response (docs/requirements.md, "USR-Q1 GetUser v2 and
+ * the User detail page"): exactly these seven fields. email, status and
+ * activationPending mean exactly what they mean on the list row (USR-Q2):
+ * email is nullable because the column is; status is the stored lifecycle
+ * status, and any other value is a contract error, not a guess;
+ * activationPending false means only "not pending".
+ *
+ * No identities and no role assignments: those are other reads, under their
+ * own permissions (the USR-Q1 composition amendment).
  */
 export const userProfileSchema = z.object({
   userId: z.string().min(1),
   firstName: z.string(),
   lastName: z.string(),
   displayName: z.string(),
+  email: z.string().nullable(),
+  status: z.enum(["Active", "Inactive"]),
+  activationPending: z.boolean(),
 });
 
 export type UserProfile = z.infer<typeof userProfileSchema>;

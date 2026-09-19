@@ -16,13 +16,12 @@ import { FormField } from "@/shared/forms/FormField";
 import { useGrantRole, useGrantableRoles, useRevokeRole, useRoleAssignments } from "../hooks/useRoleAssignments";
 import { UserPermissions } from "../permissions";
 import { grantFormSchema, type RoleAssignment } from "../schemas/roleAssignments";
+import { formatInstant } from "./formatInstant";
 import { reasonSchema, type UserRow } from "../schemas/users";
 
 const UNKNOWN = "The action could not be completed. Try again.";
 
-const format = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
-
-const when = (instant: string) => format.format(new Date(instant));
+const when = formatInstant;
 
 /**
  * A browser-local "YYYY-MM-DDTHH:mm" as a UTC instant, or undefined when
@@ -42,6 +41,14 @@ interface ManageRolesDialogProps {
   readonly returnFocus: RefObject<HTMLElement | null>;
   readonly onClose: () => void;
   readonly onClosed: () => void;
+
+  /**
+   * Called once a grant or a revocation has succeeded, for a host that shows
+   * more of the user than this dialog does (the User detail page re-reads
+   * GetUser and the list). Optional: the Users table needs nothing more than
+   * the assignments this dialog already re-reads.
+   */
+  readonly onChanged?: () => void;
 }
 
 /**
@@ -61,7 +68,7 @@ interface ManageRolesDialogProps {
  * here derives one from the dates. After a grant or a revocation the
  * assignments are read again — nothing is manufactured client-side.
  */
-export function ManageRolesDialog({ open, user, returnFocus, onClose, onClosed }: ManageRolesDialogProps) {
+export function ManageRolesDialog({ open, user, returnFocus, onClose, onClosed, onChanged }: ManageRolesDialogProps) {
   const canGrant = useCan(UserPermissions.grantRoles);
   const canRevoke = useCan(UserPermissions.revokeRoles);
 
@@ -213,7 +220,7 @@ export function ManageRolesDialog({ open, user, returnFocus, onClose, onClosed }
           />
         )}
 
-        {canGrant && user.status === "Active" ? <GrantRoleForm user={user} /> : null}
+        {canGrant && user.status === "Active" ? <GrantRoleForm user={user} onGranted={onChanged} /> : null}
 
         {revoking === undefined ? null : (
           <RevokeRoleConfirmation
@@ -227,6 +234,7 @@ export function ManageRolesDialog({ open, user, returnFocus, onClose, onClosed }
               // read again, so focus returns to this dialog's title rather than
               // falling to the page behind the modal.
               revokeFocus.current = title.current;
+              onChanged?.();
             }}
             onClose={() => {
               setRevoking({ ...revoking, open: false });
@@ -246,7 +254,7 @@ export function ManageRolesDialog({ open, user, returnFocus, onClose, onClosed }
  * empty period are refused there, and the refusal is shown word for word.
  * Nothing about overlap is checked here.
  */
-function GrantRoleForm({ user }: { readonly user: UserRow }) {
+function GrantRoleForm({ user, onGranted }: { readonly user: UserRow; readonly onGranted?: () => void }) {
   const roles = useGrantableRoles(true);
   const grant = useGrantRole(user.userId);
 
@@ -288,6 +296,7 @@ function GrantRoleForm({ user }: { readonly user: UserRow }) {
           setStarts("");
           setEnds("");
           setReason("");
+          onGranted?.();
         },
         onError: (failure: unknown) => {
           setRefusal(failure instanceof ApiError ? failure.message : UNKNOWN);

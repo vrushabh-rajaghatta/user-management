@@ -32,6 +32,24 @@ export const userRoutes: RouteObject[] = [
     },
   },
 
+  // USR-Q1 GetUser v2: the User detail page, linked from the table's display
+  // name. The route needs user.read; each section guards its own read (G2).
+  {
+    path: "users/:userId",
+    lazy: async () => {
+      const { UserDetailPage } = await import("./pages/UserDetailPage");
+      return {
+        Component: function GuardedUserDetailPage() {
+          return (
+            <RequirePermission permission={UserPermissions.read}>
+              <UserDetailPage />
+            </RequirePermission>
+          );
+        },
+      };
+    },
+  },
+
   // USR-C1. Moved from /users/new; nothing linked to the old path.
   {
     path: "users/new",

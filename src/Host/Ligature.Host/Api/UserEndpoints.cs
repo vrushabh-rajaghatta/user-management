@@ -132,15 +132,22 @@ public static class UserEndpoints
             .Produces(StatusCodes.Status401Unauthorized)
             .WithMetadata(new RequiresCarrier());
 
-        // USR-Q1 GetUser, narrow v1: the four profile fields an edit needs.
+        // USR-Q1 GetUser v2: the names, and the list row's email, status and
+        // activationPending. Identities and assignments are NOT here (the
+        // USR-Q1 composition amendment): they are IDN-Q1's and AUT-Q2's, each
+        // under its own permission.
         routes.MapGet("/api/users/{userId:guid}", GetAsync)
             .WithTags("Users")
-            .WithSummary("A user's profile names (for editing them).")
+            .WithSummary("One user's detail.")
             .WithDescription(
                 "Requires a carrier and the 'user.read' permission. Returns "
-                + "exactly userId, firstName, lastName and displayName, and "
-                + "nothing else about the user. Human users only: an unknown user, "
-                + "the System actor and a missing permission are 400. Not audited.")
+                + "exactly userId, firstName, lastName, displayName, email "
+                + "(nullable), status ('Active' or 'Inactive') and "
+                + "activationPending, each meaning exactly what it means on the "
+                + "user list. Role assignments are not included: they are read "
+                + "from /api/users/{userId}/role-assignments under 'role.read'. "
+                + "Human users only: an unknown user, the System actor and a "
+                + "missing permission are 400. Not audited.")
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
@@ -432,6 +439,11 @@ public static class UserEndpoints
             profile.FirstName,
             profile.LastName,
             profile.DisplayName,
+            profile.Email,
+
+            // Serialised as the list serialises it (USR-Q2 amendment 2).
+            Status = profile.Status.ToString(),
+            profile.ActivationPending,
         });
     }
 

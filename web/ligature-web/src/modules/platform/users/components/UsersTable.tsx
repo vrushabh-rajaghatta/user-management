@@ -11,16 +11,22 @@ import {
 import { Pagination, PaginationContent, PaginationItem } from "@/components/ui/pagination";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/shared/api/errors";
-import { useCan } from "@/shared/auth/useCan";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { useUsers } from "../hooks/useUsers";
-import { UserPermissions } from "../permissions";
 import type { UserRow } from "../schemas/users";
 import { EditProfileDialog } from "./EditProfileDialog";
 import { ManageRolesDialog } from "./ManageRolesDialog";
 import { UserActionDialog, type UserAction } from "./UserActionDialog";
+import {
+  ACTION_LABEL,
+  getUserActions,
+  holdsAnyAction,
+  type RowAction,
+  type UserActionPermissions,
+  useUserActionPermissions,
+} from "./userActions";
 
 /** The largest page the server can accept: its page parameter is an int (USR-Q2). */
 const MAX_PAGE = 2_147_483_647;
@@ -47,91 +53,6 @@ function pageFrom(value: string | null): number | undefined {
 /** Page 1 carries no parameter, so the plain /admin/users is page 1's one URL. */
 function searchFor(page: number): string {
   return page === 1 ? "" : `?page=${String(page)}`;
-}
-
-interface Allowed {
-  readonly resend: boolean;
-  readonly reset: boolean;
-  readonly revoke: boolean;
-
-  /** user.deactivate and user.reactivate (USR-C4, USR-C5). */
-  readonly deactivate: boolean;
-  readonly reactivate: boolean;
-
-  /** role.read (AUT-Q2): whether the caller may see a user's role assignments. */
-  readonly manageRoles: boolean;
-
-  /** user.update (USR-C2): whether the caller may edit a user's names. */
-  readonly editProfile: boolean;
-}
-
-/** A row action: a confirmed command, or Manage roles or Edit profile, which open their own dialogs. */
-type RowAction = UserAction | "manage-roles" | "edit-profile";
-
-const LABEL: Record<RowAction, string> = {
-  "resend-activation": "Resend activation link",
-  "reset-password": "Reset password",
-  "sign-out-everywhere": "Sign out everywhere",
-  deactivate: "Deactivate",
-  reactivate: "Reactivate",
-  "manage-roles": "Manage roles",
-  "edit-profile": "Edit profile",
-};
-
-/**
- * What a row offers: the client's whole rule, and nothing broader (USR-Q2
- * amendments 1 and 2; USR-C4/C5 UI, the action matrix).
- *
- * AN AFFORDANCE, NOT AUTHORIZATION. It is derived from the row's status and
- * activationPending and the caller's permissions; the API decides what is
- * accepted, and a row may be stale. activationPending decides between Resend
- * and Reset and is never read as anything more.
- *
- * An inactive row offers only Reactivate and Manage roles: Resend and Reset
- * would be refused, and Sign out everywhere would change nothing, since
- * deactivation already revoked every session. Whether a row is the caller is
- * not known here and not guessed (U4): Deactivate follows the matrix on every
- * active row, and the server refuses the caller's own.
- */
-function actionsFor(user: UserRow, can: Allowed): RowAction[] {
-  const actions: RowAction[] = [];
-
-  if (user.status === "Inactive") {
-    if (can.reactivate) {
-      actions.push("reactivate");
-    }
-  } else {
-    if (user.activationPending && can.resend) {
-      actions.push("resend-activation");
-    }
-
-    if (!user.activationPending && can.reset) {
-      actions.push("reset-password");
-    }
-
-    if (can.revoke) {
-      actions.push("sign-out-everywhere");
-    }
-  }
-
-  // Offered on every row to a role.read holder: which roles a user holds is
-  // not a question the row can answer without asking.
-  if (can.manageRoles) {
-    actions.push("manage-roles");
-  }
-
-  // Every row, active or inactive (USR-C2 G7; the USR-C2 UI amends the
-  // USR-C4/C5 matrix, U4): a departed person's name may still need correcting.
-  if (can.editProfile) {
-    actions.push("edit-profile");
-  }
-
-  // Last, apart from the everyday actions: it ends the person's access.
-  if (user.status === "Active" && can.deactivate) {
-    actions.push("deactivate");
-  }
-
-  return actions;
 }
 
 function actionsLabel(user: UserRow): string {
@@ -165,15 +86,7 @@ export function UsersTable() {
 
   const requested = pageFrom(searchParams.get("page"));
 
-  const can: Allowed = {
-    resend: useCan(UserPermissions.create),
-    reset: useCan(UserPermissions.resetPassword),
-    revoke: useCan(UserPermissions.revokeSessions),
-    deactivate: useCan(UserPermissions.deactivate),
-    reactivate: useCan(UserPermissions.reactivate),
-    manageRoles: useCan(UserPermissions.readRoles),
-    editProfile: useCan(UserPermissions.update),
-  };
+  const can = useUserActionPermissions();
 
   const [pending, setPending] = useState<Pending | undefined>(undefined);
   const [managing, setManaging] = useState<{ user: UserRow; open: boolean } | undefined>(undefined);
@@ -285,7 +198,7 @@ export function UsersTable() {
 interface UsersRegionProps {
   readonly query: ReturnType<typeof useUsers>;
   readonly pathname: string;
-  readonly can: Allowed;
+  readonly can: UserActionPermissions;
   readonly triggers: RefObject<Map<string, HTMLButtonElement>>;
   readonly onAction: (user: UserRow, action: RowAction) => void;
 }
@@ -343,7 +256,10 @@ function UsersRegion({ query, pathname, can, triggers, onAction }: UsersRegionPr
       cell: (user) => (
         <div className="flex flex-col">
           <span className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">{user.displayName}</span>
+            {/* The User detail page (USR-Q1 GetUser v2, G4), relative to this route. */}
+            <Link to={user.userId} className="font-medium underline-offset-4 hover:underline">
+              {user.displayName}
+            </Link>
             {/* U2: inactive rows only, in words — never colour alone. */}
             {user.status === "Inactive" ? (
               <span className="rounded-sm border px-1.5 py-0.5 text-xs text-muted-foreground">Inactive</span>
@@ -358,12 +274,12 @@ function UsersRegion({ query, pathname, can, triggers, onAction }: UsersRegionPr
   // Offered per permission and, for Resend and Reset, per row: hidden, never
   // disabled. With no permission at all there is no Actions column, and a row
   // with nothing to offer has no button rather than an empty menu.
-  if (can.resend || can.reset || can.revoke || can.deactivate || can.reactivate || can.manageRoles || can.editProfile) {
+  if (holdsAnyAction(can)) {
     columns.push({
       header: "Actions",
       className: "w-12 text-right",
       cell: (user) => {
-        const actions = actionsFor(user, can);
+        const actions = getUserActions({ user, can });
 
         if (actions.length === 0) {
           return null;
@@ -391,7 +307,7 @@ function UsersRegion({ query, pathname, can, triggers, onAction }: UsersRegionPr
                     onAction(user, action);
                   }}
                 >
-                  {LABEL[action]}
+                  {ACTION_LABEL[action]}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>

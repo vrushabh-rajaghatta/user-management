@@ -31,7 +31,16 @@ const ADA = {
   status: "Active" as const,
 };
 
-const PROFILE = { userId: ADA.userId, firstName: "Ada", lastName: "Lovelace", displayName: "Ada L." };
+/** GetUser v2 (USR-Q1 GetUser v2): the three list fields beside the names. */
+const PROFILE = {
+  userId: ADA.userId,
+  firstName: "Ada",
+  lastName: "Lovelace",
+  displayName: "Ada L.",
+  email: ADA.email,
+  status: ADA.status,
+  activationPending: ADA.activationPending,
+};
 
 interface Backend {
   readonly profileReads: () => number;
