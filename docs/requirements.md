@@ -2145,8 +2145,10 @@ Bundling the data under `user.read` would stop `role.read` controlling access to
 | **The page** | `userId`, `firstName`, `lastName`, `displayName`, `email`, `status`, `activationPending` | USR-Q1 GetUser v2, `GET /api/users/{userId}` | `user.read` | The route shows the established denied state, as other permission-gated routes do. The Users-table link is not offered without `user.read`, because the table itself needs it. |
 | **Actions** | the row's actions | the existing commands | each action's own permission, as in the table | that action is hidden |
 | **Roles** | current assignments: role name, effective from, effective to, state | AUT-Q2, `GET /api/users/{userId}/role-assignments` (default: Active and Future) | `role.read` | the section is hidden |
-| **Manage roles** | opens the existing dialog | AUT-C1 and AUT-C2 | `role.grant` or `role.revoke`, as the table offers it | hidden |
+| **Manage roles** | opens the existing dialog | AUT-Q2, and AUT-C1 and AUT-C2 inside the dialog | `role.read`, as the table offers it *(corrected; see below)* | hidden |
 | *Identities (story 2)* | — | IDN-Q1 | `identity.read` | hidden |
+
+> **Corrected before the red tests (2026-09-19).** The frozen matrix named `role.grant` or `role.revoke` for Manage roles "as the table offers it". The table offers Manage roles to **`role.read`** holders: the dialog lists assignments (AUT-Q2) and shows Grant only with `role.grant`, and Revoke only with `role.revoke`. The governing rule is "as the table offers it", so the permission in brackets was wrong, and is now `role.read`. Nothing else changes.
 
 **A missing page permission and a missing section permission are different things:**
 
