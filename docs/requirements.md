@@ -2218,6 +2218,13 @@ A section's request is **never made** when its permission is not held. The clien
   - perform one action and see the page re-read;
   - compare the page as a user administrator and as a security administrator.
 
+### Implementation notes
+
+- **One projection for list and detail.** `UserLifecycleProjection` (Persistence) defines what a user is: the names, email, status and `activationPending`. Both the list reader (USR-Q2) and GetUser use it, so the two views cannot disagree. DV-1 seeds a user where the two clauses of `activationPending` part: an external-only identity with no credential. The list keeps its page-first query shape.
+- **One action matrix.** `getUserActions({ user, can })` and `useUserActionPermissions()` (`users/components/userActions.ts`) are used by both the Users table and the detail page. Neither holds a rule of its own.
+- **The page's actions** sit behind one **Actions** menu in the header. After a command dialog succeeds, the page invalidates GetUser for this user and the list. Edit profile's own save already did both. `ManageRolesDialog` gained an optional `onChanged`, called after a grant or a revocation, so the page re-reads GetUser and the list, while AUT-Q2 is re-read by the dialog's own hooks. The Users table does not use it.
+- **Roles is not mounted without `role.read`**, which is how its request is never made. Dates are formatted by `formatInstant`, shared with Manage roles, so an assignment reads the same in both.
+
 ### Not included
 
 - Identities and lock state, and the unlock UI (story 2).
