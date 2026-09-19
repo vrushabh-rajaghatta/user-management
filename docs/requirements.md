@@ -2931,7 +2931,7 @@ taken / available ── any edit ─► unchecked
 
 ### Not included
 
-- **Surrounding whitespace in local usernames** — ruled a separate small story (see the Known Gap *Local usernames accept surrounding whitespace*). This story checks exactly the value the client submits.
+- **Surrounding whitespace in local usernames** — ruled a separate small story, since delivered as *Local usernames refuse surrounding whitespace*. This story checks exactly the value the client submits.
 - IDN-C2's UI, suggestions, format rules.
 - Any change to USR-C1, IDN-C2 or the UI7 index.
 
@@ -3060,6 +3060,26 @@ refused ── any edit ─► unchecked
 3. `"v.r2"`: *"Username available."*
 
 Nothing is submitted, so no user is created.
+
+### Implementation notes
+
+- **The rule** is `UserIdentity.ValidateUsernameBoundary`. A blank value is refused with *"Username cannot be empty."*; then a value that `Trim()` would change (an ordinal comparison) is refused with the rule's sentence.
+  - `CreateLocal` and `ChangeUsername` call it in place of their own blank checks, so their blank message is unchanged.
+  - `ChangeUsername` applies it **before** its "only the case differs, so nothing changes" comparison.
+- **USR-C1** calls the rule immediately after parsing the email address, before either uniqueness lookup. `CreateLocal` applies it again later, harmlessly.
+- **IDN-Q3** calls the rule after its own blank refusal and before `ExistsWithUsernameAsync`.
+- **The constraints** are declared in `UserIdentityConfiguration` with `HasCheckConstraint`, so the model snapshot carries them, and created by the migration `AddLocalUsernameChecks`.
+  - The character class is one constant in that configuration, written with the regex engine's `\u` escapes.
+  - The shared test database was migrated out of band, as the migrator role, as for earlier migrations.
+- **Provisioning:** `ProvisioningOptions.Parse` calls the rule after its required-options check. A whitespace-only `--username` is therefore still reported as missing, and a spaced one is refused with the rule's sentence. The other options are trimmed as before.
+- **The page:**
+  - `Availability` gains `refused`, carrying the server's sentence.
+  - Only an `ApiError` with status `400` is a refusal. A `5xx`, a network failure and a contract violation are still ignored.
+  - An error that arrives after the field changed is discarded, like a late answer.
+  - The blur check skips a value that JavaScript's `trim()` leaves empty. That only suppresses a request and never blocks Create, so the difference between JavaScript's and .NET's whitespace cannot refuse anything the server accepts.
+- **Tests:**
+  - Before the rule existed, the HTTP test's spaced create succeeded. It hands any `201` to the harness's cleanup, so no red run can leave a spaced username in the shared database for the new constraint to refuse at migration.
+  - The CLI half of the UW-3 invariant lives in `Ligature.Provisioning.Tests`, which is a separate project.
 
 ### Not included
 
@@ -4015,20 +4035,6 @@ measurement must use the two-request worst case, not the cached-token case.
 ```text
 Requirement ID → Story → Implementation plan → Branch → Commit(s) → Pull Request → Owner approval → Merge
 ```
-
-## Local usernames accept surrounding whitespace
-
-**Found while gathering IDN-Q3's evidence (2026-09-19).** USR-C1 checks and stores the username exactly as sent: the domain refuses only a blank value, and nothing trims or refuses surrounding whitespace. The web form trims before sending, but any other API caller can create `" ada"`. PostgreSQL's `lower()` treats that as distinct from `"ada"`, so two near-identical usernames can coexist, and signing in as `ada` never reaches `" ada"`. No development data is affected.
-
-**Owner ruling:** leading and trailing whitespace is **invalid** for local usernames — refused, **never silently trimmed** (a username is an identifier, and silently transforming one creates surprising identity semantics). Case still does not distinguish usernames:
-
-```text
-"ada"          → valid
-" Ada", "Ada ", " Ada "  → invalid
-"ada" vs "ADA" → the same identifier
-```
-
-**Deferred to:** its own small story, applying the rule consistently to USR-C1 and IDN-C2, after which IDN-Q3 uses the same domain rule. IDN-Q3 deliberately does not change it.
 
 ## Invisible format characters in local usernames are not prohibited
 
