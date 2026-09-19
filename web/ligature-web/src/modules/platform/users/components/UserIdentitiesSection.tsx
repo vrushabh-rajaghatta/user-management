@@ -7,10 +7,10 @@ import { useCan } from "@/shared/auth/useCan";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { ErrorState } from "@/shared/components/ErrorState";
+import { formatInstant } from "@/shared/format/formatInstant";
 import { useUserIdentities } from "../hooks/useUserIdentities";
 import { UserPermissions } from "../permissions";
 import type { UserIdentity } from "../schemas/identities";
-import { formatInstant } from "./formatInstant";
 import { unlockOffered } from "./identityActions";
 import { UnlockIdentityDialog } from "./UnlockIdentityDialog";
 

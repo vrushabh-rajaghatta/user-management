@@ -4,9 +4,9 @@ import { ApiError } from "@/shared/api/errors";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { ErrorState } from "@/shared/components/ErrorState";
+import { formatInstant } from "@/shared/format/formatInstant";
 import { useRoleAssignments } from "../hooks/useRoleAssignments";
 import type { RoleAssignment } from "../schemas/roleAssignments";
-import { formatInstant } from "./formatInstant";
 
 interface UserRolesSectionProps {
   readonly userId: string;

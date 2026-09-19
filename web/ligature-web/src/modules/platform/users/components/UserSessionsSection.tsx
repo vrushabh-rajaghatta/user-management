@@ -6,10 +6,10 @@ import { useCan } from "@/shared/auth/useCan";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { ErrorState } from "@/shared/components/ErrorState";
+import { formatInstant } from "@/shared/format/formatInstant";
 import { useUserSessions } from "../hooks/useUserSessions";
 import { UserPermissions } from "../permissions";
 import type { UserSession } from "../schemas/sessions";
-import { formatInstant } from "./formatInstant";
 import { RevokeSessionDialog } from "./RevokeSessionDialog";
 import { revokeOffered } from "./sessionActions";
 
