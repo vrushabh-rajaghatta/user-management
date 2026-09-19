@@ -2601,6 +2601,13 @@ password correct
 2. **`SignInFailed.failureCategory`** gains the value **`PasswordChangeRequired`**. It is an internal payload value — the response stays generic — so the event type, its version and the payload's shape are unchanged. (The catalogue's list of categories already differs from the values the code records: `IdentityNotUsable`, `AccountLocked`, `CredentialsRejected`. That reconciliation is outstanding change control too, and not changed here.)
 3. **The entity model's `credential.MustChangePassword`** — *"Set after an administrator-initiated reset"* — gains its meaning: **"While true, the password on file cannot establish a session; it is cleared when a new password is set through a reset link (CRD-C3) or a password change (CRD-C4)."**
 
+### Implementation notes
+
+- **One branch in `SignInCommandHandler`**, directly after the failed-verification branch and before `IBearerActorEstablisher.EstablishAsync`. It calls only `DeclareFailure` — the same Anonymous `SignInFailed` helper every refusal uses — and returns `SignInResult.Failure()`. Everything that belongs to a completed sign-in sits below it and is never reached: caller establishment, the rehash, `Credential.Unlock()`, the session and `SignInSucceeded`.
+- **Before it, unchanged:** identity resolution, the live-lock check, the expired-lock clearing, and `IPasswordHasher.Verify`, which compares and writes nothing.
+- **The endpoint needed no change:** `AuthEndpoints` already maps every `SignInResult.Failure()` to the one `401` body, so MP-7's byte-for-byte equality holds by construction, and the test keeps it.
+- **CRD-C5's class note** now says SES-C1 enforces the state it records.
+
 ### UI guidance (not part of the security contract)
 
 Optional, and not built in this story unless the owner asks:
@@ -3268,7 +3275,9 @@ rather than reported as killed.
 **Deferred to:** the release that introduces a second hashing scheme — which
 must add the test this cannot have yet.
 
-## MustChangePassword is recorded but not enforced
+## MustChangePassword is recorded but not enforced — RESOLVED
+
+**State:** resolved by *SES-C1 — enforcing MustChangePassword at sign-in* (MC1–MC9). While the flag is outstanding, the password on file cannot establish a session; a reset link (CRD-C3), or a change from a session that already existed (CRD-C4), clears it. What follows is the gap as it was recorded.
 
 **Rule (entity model):** `credential.MustChangePassword` is *"Set after an
 administrator-initiated reset."*

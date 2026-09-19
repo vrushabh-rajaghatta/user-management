@@ -36,8 +36,10 @@ namespace Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 ///   - Unlock the account. Issuing a reset is not completing one; CRD-C3's
 ///     password change clears the lockout, and CRD-C6 exists for unlocking.
 ///   - Revoke sessions. The catalogue's write set excludes user_session.
-///   - Enforce MustChangePassword. This records the state; what the state
-///     means at sign-in is a later story (docs/requirements.md).
+///   - Enforce MustChangePassword. This records the state; SES-C1 enforces
+///     it, refusing the old password until a reset link replaces it
+///     (docs/requirements.md, "SES-C1 — enforcing MustChangePassword at
+///     sign-in").
 /// </summary>
 public sealed class AdminResetPasswordCommandHandler
     : ICommandHandler<AdminResetPasswordCommand, AdminResetPasswordResult>
