@@ -194,6 +194,13 @@ public sealed class UserProfileIntegrationTests : IClassFixture<ActivationDataba
             await SeedAsync(inactive: true, withCredential: true),
             await SeedAsync(inactive: true, withCredential: false),
             await SeedAsync(noEmail: true),
+
+            // Where the two clauses of activationPending part: no local
+            // identity and no credential. The list says NOT pending (there is
+            // nothing local to activate); a derivation that only asked "is
+            // there no credential?" would say pending. One projection means
+            // both views say the same.
+            await SeedAsync(externalOnly: true),
         };
 
         var rows = await ListRowsAsync();
@@ -215,6 +222,7 @@ public sealed class UserProfileIntegrationTests : IClassFixture<ActivationDataba
         Assert.Contains(seen, x => x.Status == UserStatus.Inactive && !x.ActivationPending);
         Assert.Contains(seen, x => x.Status == UserStatus.Inactive && x.ActivationPending);
         Assert.Contains(seen, x => x.Email is null);
+        Assert.False(rows.Single(x => x.UserId == users[^1]).ActivationPending);
     }
 
     private async Task<IReadOnlyList<Ligature.Platform.Application.Users.Queries.UserList.UserListRow>> ListRowsAsync()
@@ -297,7 +305,8 @@ public sealed class UserProfileIntegrationTests : IClassFixture<ActivationDataba
         Assert.Equal(message, refusal.Message);
     }
 
-    private async Task<UserId> SeedAsync(bool inactive = false, bool withCredential = false, bool noEmail = false)
+    private async Task<UserId> SeedAsync(
+        bool inactive = false, bool withCredential = false, bool noEmail = false, bool externalOnly = false)
     {
         var id = Guid.NewGuid();
         var identity = Guid.NewGuid();
@@ -317,7 +326,7 @@ public sealed class UserProfileIntegrationTests : IClassFixture<ActivationDataba
              INSERT INTO user_identity (id, user_id, actor_type, identity_type, identity_provider,
                                         subject_id, username, status, created_at, created_by,
                                         deactivated_at, deactivated_by)
-             VALUES ('{identity}', '{id}', 'Human', 'Local', 'Application', '{identity}', 'profile-{unique[..20]}',
+             VALUES ('{identity}', '{id}', 'Human', {(externalOnly ? "'External', 'EntraId', 'external-" + unique + "', NULL" : $"'Local', 'Application', '{identity}', 'profile-{unique[..20]}'")},
                      '{(inactive ? "Inactive" : "Active")}', now() - interval '1 year', '{system}',
                      {(inactive ? "now() - interval '1 day'" : "NULL")}, {(inactive ? $"'{system}'" : "NULL")});
              """, connection);
