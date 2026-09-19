@@ -108,6 +108,23 @@ describe("the forgot password page", () => {
     expect(router.state.location.pathname).toBe("/forgot-password");
   });
 
+  /** RL-17 (behaviour 11): the only refusal this page can meet, shown as the host words it. */
+  it("shows the rate-limit refusal word for word and stays on the form", async () => {
+    server.use(
+      http.post(REQUEST, () =>
+        HttpResponse.json({ error: "Too many attempts. Try again later." }, { status: 429, headers: { "Retry-After": "3600" } }),
+      ),
+    );
+
+    const { user } = renderWithApp(routes, { path: "/forgot-password" });
+
+    await ask(user, "ada@example.test");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Too many attempts. Try again later.");
+    expect(screen.queryByText(ANSWER)).toBeNull();
+    expect(screen.getByRole("button", { name: "Send reset link" })).toBeInTheDocument();
+  });
+
   it("never repeats what was typed, which would confirm it to whoever typed it", async () => {
     record();
 

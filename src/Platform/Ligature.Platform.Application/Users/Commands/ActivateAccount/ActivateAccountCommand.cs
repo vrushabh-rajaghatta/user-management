@@ -12,7 +12,12 @@ namespace Ligature.Platform.Application.Users.Commands.ActivateAccount;
 /// <param name="TokenPlainText">
 /// The delivered token, "{tokenId}.{secret}". Never persisted.
 /// </param>
+/// <param name="IpAddress">
+/// The client address the Host resolved, for rate limiting (behaviour 11)
+/// only. Recorded nowhere. Null when no address was resolvable.
+/// </param>
 public sealed record ActivateAccountCommand(
     string TokenPlainText,
-    string NewPassword)
+    string NewPassword,
+    string? IpAddress = null)
     : IBearerAuthenticatedCommand<ActivateAccountResult>;

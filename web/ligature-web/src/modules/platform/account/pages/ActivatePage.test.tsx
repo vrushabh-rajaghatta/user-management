@@ -237,6 +237,18 @@ describe("the activation page", () => {
     expect(screen.getByRole("button", { name: "Activate account" })).toBeInTheDocument();
   });
 
+  /** RL-17 (behaviour 11): the refusal is the host's, word for word, and the form stays. */
+  it("shows the rate-limit refusal word for word and keeps the form open", async () => {
+    record(() => HttpResponse.json({ error: "Too many attempts. Try again later." }, { status: 429, headers: { "Retry-After": "900" } }));
+
+    const { user } = open("#token=abc.def");
+
+    await submit(user);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Too many attempts. Try again later.");
+    expect(screen.getByLabelText("New password")).toBeInTheDocument();
+  });
+
   it("offers a link to sign in on success, and does not navigate on its own", async () => {
     record();
 

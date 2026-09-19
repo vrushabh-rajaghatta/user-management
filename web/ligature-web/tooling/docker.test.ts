@@ -35,8 +35,13 @@ interface ComposeDependency {
   readonly condition?: string;
 }
 
+interface ComposeServiceNetwork {
+  readonly ipv4_address?: string;
+}
+
 interface ComposeService {
   readonly build?: { readonly target?: string };
+  readonly networks?: Readonly<Record<string, ComposeServiceNetwork | null>>;
   readonly depends_on?: Readonly<Record<string, ComposeDependency>>;
   readonly ports?: readonly string[];
   readonly volumes?: readonly string[];
@@ -44,9 +49,23 @@ interface ComposeService {
   readonly healthcheck?: ComposeHealthcheck;
 }
 
+interface ComposeNetwork {
+  readonly ipam?: { readonly config?: readonly { readonly subnet?: string }[] };
+}
+
 interface ComposeFile {
   readonly services?: Readonly<Record<string, ComposeService>>;
+  readonly networks?: Readonly<Record<string, ComposeNetwork>>;
   readonly volumes?: Readonly<Record<string, unknown>>;
+}
+
+/** Whether an IPv4 address lies inside an IPv4 CIDR range. */
+function inSubnet(address: string, cidr: string): boolean {
+  const [network, bits] = cidr.split("/");
+  const toNumber = (value: string) => value.split(".").reduce((sum, octet) => sum * 256 + Number(octet), 0);
+  const size = 2 ** (32 - Number(bits));
+
+  return Math.floor(toNumber(address) / size) === Math.floor(toNumber(network ?? "") / size);
 }
 
 function read(file: string): ComposeFile {
@@ -106,6 +125,14 @@ describe("the base Compose file", () => {
    */
   it("declares no web service, because development is an overlay", () => {
     expect(Object.keys(read(BASE).services ?? {})).not.toContain("web");
+  });
+
+  /**
+   * Behaviour 11 (B8): which proxies to trust is a deployment's decision, and
+   * absent means none. The base file must not decide it for every deployment.
+   */
+  it("trusts no proxy, leaving that to each deployment", () => {
+    expect(read(BASE).services?.host?.environment?.LIGATURE_TRUSTED_PROXIES).toBeUndefined();
   });
 });
 
@@ -231,6 +258,29 @@ describe("the development overlay", () => {
     const mounts = web?.volumes ?? [];
 
     expect(mounts.some((mount) => mount.endsWith(":/app/node_modules"))).toBe(true);
+  });
+
+  /**
+   * Behaviour 11 (B9): the host believes X-Forwarded-For only from the web
+   * container, so that container's address is pinned and trusted — exactly
+   * it, not the network, so nothing else on the network can claim an address.
+   */
+  it("pins the web container's address on the development network", () => {
+    const address = web?.networks?.default?.ipv4_address;
+
+    expect(address).toMatch(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/);
+
+    const subnet = overlay.networks?.default?.ipam?.config?.[0]?.subnet;
+
+    expect(subnet).toBeDefined();
+    expect(inSubnet(address ?? "", subnet ?? "")).toBe(true);
+  });
+
+  it("trusts exactly the web container as a proxy", () => {
+    const trusted = host?.environment?.LIGATURE_TRUSTED_PROXIES;
+
+    expect(trusted).toBeDefined();
+    expect(trusted).toBe(web?.networks?.default?.ipv4_address);
   });
 
   it("runs the API from its development target rather than the production image", () => {

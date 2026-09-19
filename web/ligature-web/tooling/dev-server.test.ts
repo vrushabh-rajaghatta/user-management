@@ -68,6 +68,21 @@ describe("the API proxy", () => {
     expect(response.headers["set-cookie"]).toEqual([CARRIER_COOKIE]);
   });
 
+  /**
+   * Behaviour 11 (B9). The host believes this header only from a proxy it is
+   * configured to trust — in the dev stack, exactly this container — so the
+   * per-IP limit sees the browser rather than the dev server. Outside that
+   * configuration the host ignores it, which is the safe default.
+   */
+  it("tells the API who the browser is, in X-Forwarded-For", async () => {
+    const upstream = await startUpstream(cleanups);
+    const proxy = await startProxy(cleanups, apiProxy(upstream.origin));
+
+    await send(proxy.port, "/api/auth/sign-in");
+
+    expect(upstream.received()?.["x-forwarded-for"]).toMatch(/^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/);
+  });
+
   it("does not proxy paths outside /api", async () => {
     const upstream = await startUpstream(cleanups);
     const proxy = await startProxy(cleanups, apiProxy(upstream.origin));
