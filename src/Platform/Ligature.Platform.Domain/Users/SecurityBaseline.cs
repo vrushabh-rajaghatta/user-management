@@ -37,7 +37,7 @@ public static class SecurityBaseline
     public static SecurityPolicySettings Current { get; } =
         new(
             // Floor — a tenant may demand longer passwords, never shorter.
-            PasswordMinLength: 12,
+            PasswordMinLength: 6,
 
             // Floor — a tenant may bar more previous passwords, never fewer.
             PasswordHistoryDepth: 10,

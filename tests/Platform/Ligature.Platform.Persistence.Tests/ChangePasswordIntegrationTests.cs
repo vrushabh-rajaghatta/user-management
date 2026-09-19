@@ -158,8 +158,9 @@ public sealed class ChangePasswordIntegrationTests
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// D2 — refused, and NOTHING moves: not the counter, not the lock, even
-    /// past the sign-in threshold.
+    /// D2 — refused, and the CREDENTIAL never moves: not its counter, not its
+    /// lock. Below the session threshold nothing else commits either, except
+    /// the session's own counter (see "The attempt limit" below).
     /// </summary>
     [Fact]
     public async Task A_wrong_current_password_is_refused_and_never_counts_toward_lockout()
@@ -168,13 +169,14 @@ public sealed class ChangePasswordIntegrationTests
         var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
         await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
 
-        var attempts = SecurityBaseline.Current.MaxFailedLoginAttempts + 2;
+        var attempts = SecurityBaseline.Current.MaxFailedLoginAttempts - 1;
         var before = await FootprintAsync(subject);
 
         for (var i = 0; i < attempts; i++)
         {
-            await Assert.ThrowsAsync<BusinessRuleViolationException>(
-                () => DispatchAsync(subject.UserId, current, "not-the-password-9", Fresh));
+            var result = await DispatchAsync(subject.UserId, current, "not-the-password-9", Fresh);
+
+            Assert.Equal(ChangePasswordOutcome.Refused, result.Outcome);
         }
 
         Assert.Equal(before, await FootprintAsync(subject));
@@ -197,10 +199,12 @@ public sealed class ChangePasswordIntegrationTests
         var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
         var before = await FootprintAsync(subject);
 
-        var locked = await Assert.ThrowsAsync<BusinessRuleViolationException>(
-            () => DispatchAsync(subject.UserId, current, Current, Fresh));
+        var locked = await DispatchAsync(subject.UserId, current, Current, Fresh);
 
-        Assert.Equal(await GenericMessageAsync(), locked.Message);
+        // The endpoint answers Refused with the one generic message (L8: a
+        // counted refusal, alike in every way to a wrong password).
+        Assert.Equal(ChangePasswordOutcome.Refused, locked.Outcome);
+        Assert.Equal(await GenericMessageAsync(), ChangePasswordResult.NotChanged);
         Assert.Equal(before, await FootprintAsync(subject));
         Assert.True((await ReadCredentialAsync(subject.IdentityId)).IsLocked);
     }
@@ -219,10 +223,9 @@ public sealed class ChangePasswordIntegrationTests
         var subject = await SeedAsync();
         var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
 
-        var failure = await Assert.ThrowsAsync<BusinessRuleViolationException>(
-            () => DispatchAsync(subject.UserId, current, "not-the-password-9", newPassword));
+        var failure = await DispatchAsync(subject.UserId, current, "not-the-password-9", newPassword);
 
-        Assert.Equal(await GenericMessageAsync(), failure.Message);
+        Assert.Equal(ChangePasswordOutcome.Refused, failure.Outcome);
     }
 
     // ------------------------------------------------------------------
@@ -456,6 +459,362 @@ public sealed class ChangePasswordIntegrationTests
         ExpiredRecentlyActive,
     }
 
+    // ------------------------------------------------------------------
+    // The attempt limit (docs/requirements.md, "CRD-C4 — limiting
+    // current-password attempts per session", L1–L8)
+    // ------------------------------------------------------------------
+
+    private const string Wrong = "not-the-password-9";
+
+    private const string LimitExplanation = "Too many incorrect current passwords while changing the password";
+
+    private static readonly int N = SecurityBaseline.Current.MaxFailedLoginAttempts;
+
+    /// <summary>
+    /// AC-1 — below N each wrong attempt is the uniform refusal, and the count
+    /// COMMITS although the command refused: read back from a fresh
+    /// connection every time. Nothing else moves and nothing is audited.
+    /// </summary>
+    [Fact]
+    public async Task Below_the_threshold_each_wrong_attempt_is_refused_and_its_count_commits()
+    {
+        var subject = await SeedAsync();
+        var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
+        var before = await FootprintAsync(subject);
+
+        for (var attempt = 1; attempt < N; attempt++)
+        {
+            var result = await DispatchAsync(subject.UserId, current, Wrong, Fresh);
+
+            Assert.Equal(ChangePasswordOutcome.Refused, result.Outcome);
+            Assert.Equal(attempt, await ReadAttemptsAsync(current));
+        }
+
+        Assert.Equal(before, await FootprintAsync(subject));
+        Assert.False((await ReadSessionAsync(current)).IsRevoked);
+    }
+
+    /// <summary>
+    /// AC-2 — the Nth wrong attempt ends THIS session: revoked by the account
+    /// holder with the controlled code, recorded once as SessionRevoked with
+    /// the explanation, and the code in After (R1). Once ended, a further
+    /// attempt on it changes nothing and counts nothing.
+    /// </summary>
+    [Fact]
+    public async Task The_Nth_wrong_attempt_ends_this_session_and_records_it_once()
+    {
+        var subject = await SeedAsync();
+        var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
+
+        for (var attempt = 1; attempt < N; attempt++)
+            await DispatchAsync(subject.UserId, current, Wrong, Fresh);
+
+        var last = await DispatchAsync(subject.UserId, current, Wrong, Fresh);
+
+        Assert.Equal(ChangePasswordOutcome.SessionEnded, last.Outcome);
+
+        var session = await ReadSessionAsync(current);
+        Assert.True(session.IsRevoked);
+        Assert.Equal(subject.UserId.Value, session.RevokedBy);
+        Assert.Equal("PasswordChangeAttemptsExceeded", session.Reason);
+        Assert.Equal(N, await ReadAttemptsAsync(current));
+
+        var record = Assert.Single(await ReadRevocationRecordsAsync(current));
+        Assert.Equal("Authenticated", record.OriginKind);
+        Assert.Equal(subject.UserId.Value, record.ActorUserId);
+        Assert.Equal(LimitExplanation, record.Reason);
+        Assert.Equal("PasswordChangeAttemptsExceeded", await ReadAfterReasonAsync(current));
+
+        var again = await DispatchAsync(subject.UserId, current, Wrong, Fresh);
+
+        Assert.Equal(ChangePasswordOutcome.SessionEnded, again.Outcome);
+        Assert.Equal(N, await ReadAttemptsAsync(current));
+        Assert.Single(await ReadRevocationRecordsAsync(current));
+    }
+
+    /// <summary>
+    /// AC-3 — the blast radius is this session. The account's other session
+    /// stays active, the credential is neither counted nor locked, and CRD-C4
+    /// never produces AccountLocked (SES-C1 remains its only producer).
+    /// </summary>
+    [Fact]
+    public async Task Ending_the_session_touches_nothing_else()
+    {
+        var subject = await SeedAsync();
+        var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
+        var other = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
+
+        for (var attempt = 1; attempt <= N; attempt++)
+            await DispatchAsync(subject.UserId, current, Wrong, Fresh);
+
+        Assert.True((await ReadSessionAsync(current)).IsRevoked);
+        Assert.False((await ReadSessionAsync(other)).IsRevoked);
+        Assert.Equal(0, await ReadAttemptsAsync(other));
+
+        var credential = await ReadCredentialAsync(subject.IdentityId);
+        Assert.Equal(0, credential.FailedAttemptCount);
+        Assert.False(credential.IsLocked);
+        Assert.Equal(0, await CountRecordsAsync("AccountLocked", subject.IdentityId));
+    }
+
+    /// <summary>
+    /// AC-5 (L3) — a successful change resets the count, so N−1 more wrong
+    /// attempts after it do not end the session.
+    /// </summary>
+    [Fact]
+    public async Task A_successful_change_resets_the_count()
+    {
+        var subject = await SeedAsync();
+        var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
+
+        for (var attempt = 1; attempt < N; attempt++)
+            await DispatchAsync(subject.UserId, current, Wrong, Fresh);
+
+        var changed = await DispatchAsync(subject.UserId, current, Current, Fresh);
+
+        Assert.Equal(ChangePasswordOutcome.Changed, changed.Outcome);
+        Assert.Equal(0, await ReadAttemptsAsync(current));
+
+        for (var attempt = 1; attempt < N; attempt++)
+        {
+            var result = await DispatchAsync(subject.UserId, current, Wrong, "yet-another-password-3");
+
+            Assert.Equal(ChangePasswordOutcome.Refused, result.Outcome);
+        }
+
+        Assert.False((await ReadSessionAsync(current)).IsRevoked);
+        Assert.Equal(N - 1, await ReadAttemptsAsync(current));
+    }
+
+    /// <summary>
+    /// AC-6 — the current password was RIGHT; only the new one was refused.
+    /// That is neither a failed attempt nor a success: the count stays.
+    /// </summary>
+    [Theory]
+    [InlineData("short")]
+    [InlineData(Current)]
+    public async Task A_refused_new_password_neither_counts_nor_resets(string newPassword)
+    {
+        var subject = await SeedAsync();
+        var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
+
+        await DispatchAsync(subject.UserId, current, Wrong, Fresh);
+        await DispatchAsync(subject.UserId, current, Wrong, Fresh);
+
+        await Assert.ThrowsAsync<BusinessRuleViolationException>(
+            () => DispatchAsync(subject.UserId, current, Current, newPassword));
+
+        Assert.Equal(2, await ReadAttemptsAsync(current));
+    }
+
+    /// <summary>
+    /// AC-7 (L8) — a refusal because the credential is locked counts exactly
+    /// as a wrong password does, and the Nth ends the session.
+    /// </summary>
+    [Fact]
+    public async Task Refusals_of_a_locked_credential_count_and_the_Nth_ends_the_session()
+    {
+        var subject = await SeedAsync(lockedOut: true);
+        var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
+
+        for (var attempt = 1; attempt < N; attempt++)
+        {
+            var result = await DispatchAsync(subject.UserId, current, Current, Fresh);
+
+            Assert.Equal(ChangePasswordOutcome.Refused, result.Outcome);
+            Assert.Equal(attempt, await ReadAttemptsAsync(current));
+        }
+
+        var last = await DispatchAsync(subject.UserId, current, Current, Fresh);
+
+        Assert.Equal(ChangePasswordOutcome.SessionEnded, last.Outcome);
+        Assert.Equal("PasswordChangeAttemptsExceeded", (await ReadSessionAsync(current)).Reason);
+    }
+
+    // ---- AC-8: concurrency, proved with real transactions
+
+    /// <summary>
+    /// The lock is HELD for the whole decision. Another transaction holds the
+    /// user's row lock and moves the count to N−1; the attempt must wait, then
+    /// decide on what committed — crossing N. An attempt that read the session
+    /// before (or without) the lock would have counted from 0 and refused.
+    /// </summary>
+    [Fact]
+    public async Task An_attempt_waits_for_the_users_lock_and_decides_on_what_committed_meanwhile()
+    {
+        var subject = await SeedAsync();
+        var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
+
+        await using var holder = await _database.OpenAsync();
+        await using var transaction = await holder.BeginTransactionAsync();
+
+        await HolderExecuteAsync(holder, transaction, $"SELECT 1 FROM app_user WHERE id = '{subject.UserId.Value}' FOR UPDATE");
+
+        var attempt = Task.Run(() => DispatchAsync(subject.UserId, current, Wrong, Fresh));
+
+        await Task.Delay(TimeSpan.FromMilliseconds(750));
+        Assert.False(attempt.IsCompleted, "the attempt did not wait for the user's row lock");
+
+        await HolderExecuteAsync(holder, transaction,
+            $"UPDATE user_session SET failed_password_change_attempts = {N - 1} WHERE id = '{current}'");
+
+        await transaction.CommitAsync();
+
+        Assert.Equal(ChangePasswordOutcome.SessionEnded, (await attempt).Outcome);
+        Assert.Equal(N, await ReadAttemptsAsync(current));
+        Assert.Single(await ReadRevocationRecordsAsync(current));
+    }
+
+    /// <summary>
+    /// The clock is read AFTER the lock (docs/architecture.md, "Read the clock
+    /// after the lock"). While the attempt waits at N−1, activity is recorded
+    /// on the session at the real moment of the write — clock_timestamp(), as
+    /// the deactivation test does. The revocation that follows must not be
+    /// dated before it: a clock read before the wait would record the session
+    /// as ended earlier than activity it went on to have.
+    /// </summary>
+    [Fact]
+    public async Task The_revocation_is_dated_after_everything_that_committed_while_the_attempt_waited()
+    {
+        var subject = await SeedAsync();
+        var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
+
+        await ExecuteAsync($"UPDATE user_session SET failed_password_change_attempts = {N - 1} WHERE id = '{current}'");
+
+        await using var holder = await _database.OpenAsync();
+        await using var transaction = await holder.BeginTransactionAsync();
+
+        await HolderExecuteAsync(holder, transaction, $"SELECT 1 FROM app_user WHERE id = '{subject.UserId.Value}' FOR UPDATE");
+
+        var attempt = Task.Run(() => DispatchAsync(subject.UserId, current, Wrong, Fresh));
+
+        await Task.Delay(TimeSpan.FromMilliseconds(750));
+        Assert.False(attempt.IsCompleted, "the attempt did not wait for the user's row lock");
+
+        await HolderExecuteAsync(holder, transaction,
+            $"UPDATE user_session SET last_activity_at = clock_timestamp() WHERE id = '{current}'");
+
+        await transaction.CommitAsync();
+
+        Assert.Equal(ChangePasswordOutcome.SessionEnded, (await attempt).Outcome);
+        Assert.True(
+            await ScalarAsync<bool>($"SELECT revoked_at >= last_activity_at FROM user_session WHERE id = '{current}'"),
+            "the revocation is dated before activity that committed while the attempt waited");
+    }
+
+    /// <summary>
+    /// The session is re-checked UNDER the lock. It is revoked while the
+    /// attempt waits; the attempt must then answer SessionEnded and count
+    /// nothing, rather than act on the session it saw before waiting.
+    /// </summary>
+    [Fact]
+    public async Task A_session_ended_while_the_attempt_waited_is_not_counted()
+    {
+        var subject = await SeedAsync();
+        var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
+
+        await using var holder = await _database.OpenAsync();
+        await using var transaction = await holder.BeginTransactionAsync();
+
+        await HolderExecuteAsync(holder, transaction, $"SELECT 1 FROM app_user WHERE id = '{subject.UserId.Value}' FOR UPDATE");
+
+        var attempt = Task.Run(() => DispatchAsync(subject.UserId, current, Wrong, Fresh));
+
+        await Task.Delay(TimeSpan.FromMilliseconds(750));
+        Assert.False(attempt.IsCompleted, "the attempt did not wait for the user's row lock");
+
+        await HolderExecuteAsync(holder, transaction,
+            $"""
+             UPDATE user_session
+                SET revoked_at = now(), revoked_by = '{subject.UserId.Value}', revocation_reason = 'Logout'
+              WHERE id = '{current}'
+             """);
+
+        await transaction.CommitAsync();
+
+        Assert.Equal(ChangePasswordOutcome.SessionEnded, (await attempt).Outcome);
+        Assert.Equal(0, await ReadAttemptsAsync(current));
+        Assert.Empty(await ReadRevocationRecordsAsync(current));
+    }
+
+    /// <summary>
+    /// Two attempts on ONE session, released together by a lock the test
+    /// holds so that both are genuinely in flight. At N−1 exactly one crosses
+    /// N: one revocation, one record, and both answer SessionEnded. Without
+    /// the serialisation both would read N−1, and both would revoke.
+    /// </summary>
+    [Theory]
+    [InlineData(1, new[] { ChangePasswordOutcome.SessionEnded, ChangePasswordOutcome.SessionEnded })]
+    [InlineData(2, new[] { ChangePasswordOutcome.Refused, ChangePasswordOutcome.SessionEnded })]
+    public async Task Concurrent_attempts_on_one_session_cross_the_threshold_exactly_once(
+        int belowThreshold, ChangePasswordOutcome[] expected)
+    {
+        var subject = await SeedAsync();
+        var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
+
+        await ExecuteAsync($"UPDATE user_session SET failed_password_change_attempts = {N - belowThreshold} WHERE id = '{current}'");
+
+        await using var holder = await _database.OpenAsync();
+        await using var transaction = await holder.BeginTransactionAsync();
+
+        await HolderExecuteAsync(holder, transaction, $"SELECT 1 FROM app_user WHERE id = '{subject.UserId.Value}' FOR UPDATE");
+
+        var first = Task.Run(() => DispatchAsync(subject.UserId, current, Wrong, Fresh));
+        var second = Task.Run(() => DispatchAsync(subject.UserId, current, Wrong, Fresh));
+
+        await Task.Delay(TimeSpan.FromMilliseconds(750));
+        Assert.False(first.IsCompleted || second.IsCompleted, "an attempt did not wait for the user's row lock");
+
+        await transaction.CommitAsync();
+
+        var outcomes = (await Task.WhenAll(first, second)).Select(x => x.Outcome).Order().ToArray();
+
+        Assert.Equal(expected.Order().ToArray(), outcomes);
+        Assert.Equal(N, await ReadAttemptsAsync(current));
+        Assert.Single(await ReadRevocationRecordsAsync(current));
+        Assert.Equal("PasswordChangeAttemptsExceeded", (await ReadSessionAsync(current)).Reason);
+    }
+
+    /// <summary>AC-9 — the database refuses a negative count (L6).</summary>
+    [Fact]
+    public async Task The_database_refuses_a_negative_count()
+    {
+        var subject = await SeedAsync();
+        var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
+
+        var refusal = await Assert.ThrowsAsync<PostgresException>(
+            () => ExecuteAsync($"UPDATE user_session SET failed_password_change_attempts = -1 WHERE id = '{current}'"));
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, refusal.SqlState);
+    }
+
+    private Task<int> ReadAttemptsAsync(Guid sessionId)
+        => ScalarAsync<int>($"SELECT failed_password_change_attempts FROM user_session WHERE id = '{sessionId}'");
+
+    private async Task<string?> ReadAfterReasonAsync(Guid sessionId)
+    {
+        await using var connection = await _database.OpenAsync();
+
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT after::jsonb ->> 'RevocationReason'
+            FROM audit.audit_record
+            WHERE event_type = 'SessionRevoked' AND entity_type = 'Session' AND entity_id = @id
+            """, connection);
+
+        command.Parameters.AddWithValue("id", sessionId);
+
+        return await command.ExecuteScalarAsync() as string;
+    }
+
+    private static async Task HolderExecuteAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string sql)
+    {
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+
+        await command.ExecuteNonQueryAsync();
+    }
+
     private sealed record Subject(UserId UserId, Guid IdentityId);
 
     private sealed record CredentialRow(
@@ -495,10 +854,14 @@ public sealed class ChangePasswordIntegrationTests
                  """));
     }
 
-    /// <summary>The generic refusal, captured rather than hard-coded.</summary>
+    /// <summary>
+    /// The generic refusal, captured rather than hard-coded — from a refusal
+    /// that still THROWS (no credential), since a wrong current password is
+    /// now a counted refusal that returns.
+    /// </summary>
     private async Task<string> GenericMessageAsync()
     {
-        var subject = await SeedAsync();
+        var subject = await SeedAsync(withCredential: false);
         var current = await InsertSessionAsync(subject.IdentityId, SessionKind.Active);
 
         var failure = await Assert.ThrowsAsync<BusinessRuleViolationException>(
@@ -507,12 +870,12 @@ public sealed class ChangePasswordIntegrationTests
         return failure.Message;
     }
 
-    private Task DispatchAsync(
+    private Task<ChangePasswordResult> DispatchAsync(
         UserId? caller, Guid sessionId, string currentPassword, string newPassword,
         ActorType actorType = ActorType.Human)
         => DispatchAsync(caller, new UserSessionId(sessionId), currentPassword, newPassword, actorType);
 
-    private async Task DispatchAsync(
+    private async Task<ChangePasswordResult> DispatchAsync(
         UserId? caller, UserSessionId sessionId, string currentPassword, string newPassword,
         ActorType actorType = ActorType.Human)
     {
@@ -535,7 +898,7 @@ public sealed class ChangePasswordIntegrationTests
                         : TestActorIdentity.NonHuman());
         }
 
-        await scope.ServiceProvider
+        return await scope.ServiceProvider
             .GetRequiredService<ICommandDispatcher>()
             .SendAsync<ChangePasswordCommand, ChangePasswordResult>(
                 new ChangePasswordCommand(sessionId, currentPassword, newPassword),

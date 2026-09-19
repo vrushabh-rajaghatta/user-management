@@ -99,6 +99,71 @@ public sealed class ChangePasswordEndpointTests
         });
     }
 
+    // ------------------------------------------------------------ attempt limit
+
+    /// <summary>
+    /// Below the threshold the counted refusal is the SAME 400 as before, body
+    /// and all — the uniform refusal the frozen CRD-C4 rule requires (L4).
+    /// </summary>
+    [Fact]
+    public async Task Below_the_threshold_a_wrong_password_is_the_uniform_400()
+    {
+        await RunAsync(async client =>
+        {
+            var here = await SignInAsync(client, Password);
+
+            var response = await ChangeAsync(
+                client, here, new { CurrentPassword = "not-the-password-9", NewPassword = Fresh });
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(
+                """{"error":"The password could not be changed."}""",
+                await response.Content.ReadAsStringAsync());
+            Assert.False(response.Headers.Contains("Set-Cookie"));
+        });
+    }
+
+    /// <summary>
+    /// AC-2 and AC-3 over HTTP. The Nth wrong current password is a 401 that
+    /// clears the carrier cookie, worded as every 401 is; that carrier is then
+    /// refused. The account's other session still works, and the right
+    /// password still signs in: no lockout (L1).
+    /// </summary>
+    [Fact]
+    public async Task The_Nth_wrong_password_is_a_401_that_ends_only_this_session()
+    {
+        await RunAsync(async client =>
+        {
+            var here = await SignInAsync(client, Password);
+            var elsewhere = await SignInAsync(client, Password);
+
+            var limit = SecurityBaseline.Current.MaxFailedLoginAttempts;
+            var wrong = new { CurrentPassword = "not-the-password-9", NewPassword = Fresh };
+
+            for (var attempt = 1; attempt < limit; attempt++)
+                Assert.Equal(HttpStatusCode.BadRequest, (await ChangeAsync(client, here, wrong)).StatusCode);
+
+            var last = await ChangeAsync(client, here, wrong);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, last.StatusCode);
+            Assert.Equal(
+                """{"error":"Authentication is required."}""",
+                await last.Content.ReadAsStringAsync());
+
+            var cleared = Assert.Single(last.Headers.GetValues("Set-Cookie"));
+            Assert.StartsWith("__Host-ligature=;", cleared, StringComparison.Ordinal);
+            Assert.Contains("expires=", cleared, StringComparison.OrdinalIgnoreCase);
+
+            // This carrier is finished...
+            Assert.Equal(HttpStatusCode.Unauthorized, (await SignOutAsync(client, here)).StatusCode);
+
+            // ...and nothing else is: the right password still signs in, and
+            // the other session is still live (signing it out is the proof).
+            Assert.NotNull(await SignInAsync(client, Password));
+            Assert.Equal(HttpStatusCode.NoContent, (await SignOutAsync(client, elsewhere)).StatusCode);
+        });
+    }
+
     [Fact]
     public async Task The_endpoint_appears_in_the_api_document()
     {
@@ -119,6 +184,10 @@ public sealed class ChangePasswordEndpointTests
 
         Assert.Contains("204", description, StringComparison.Ordinal);
         Assert.Contains("other sessions", description, StringComparison.OrdinalIgnoreCase);
+
+        // The attempt limit is documented where a client author will look.
+        Assert.Contains("consecutive", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("401", description, StringComparison.Ordinal);
     }
 
     // ------------------------------------------------------------ harness

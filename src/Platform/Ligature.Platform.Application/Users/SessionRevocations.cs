@@ -35,6 +35,12 @@ internal static class SessionRevocations
     internal const string UserDeactivated = "UserDeactivated";
 
     /// <summary>
+    /// CRD-C4's attempt limit (L5): this session made the effective
+    /// MaxFailedLoginAttempts consecutive failed current-password attempts.
+    /// </summary>
+    internal const string PasswordChangeAttemptsExceeded = "PasswordChangeAttemptsExceeded";
+
+    /// <summary>
     /// Records a revocation that has already happened on <paramref name="session"/>
     /// — call only when UserSession.Revoke returned true, so a record never
     /// describes a termination that did not occur.

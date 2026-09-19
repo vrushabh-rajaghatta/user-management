@@ -181,6 +181,7 @@ public sealed class UserManagementImmutabilityTests : IAsyncLifetime
     [InlineData("credential", "password_hash", "'a-rehashed-value'")]
     [InlineData("credential", "failed_attempt_count", "3")]
     [InlineData("user_session", "last_activity_at", "now()")]
+    [InlineData("user_session", "failed_password_change_attempts", "2")]
     [InlineData("role", "name", "'A Renamed Role'")]
     [InlineData("role", "is_active", "false")]
     [InlineData("permission", "is_active", "false")]

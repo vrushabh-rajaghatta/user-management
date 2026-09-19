@@ -29,6 +29,11 @@ public sealed class UserSessionConfiguration
                 table.HasCheckConstraint(
                     "ck_user_session_revocation_reason",
                     "\"revoked_at\" IS NULL OR \"revocation_reason\" IS NOT NULL");
+
+                // CRD-C4's per-session attempt count (L6) is never negative.
+                table.HasCheckConstraint(
+                    "ck_user_session_failed_password_change_attempts",
+                    "\"failed_password_change_attempts\" >= 0");
             });
 
         builder.HasKey(x => x.Id);
@@ -79,6 +84,15 @@ public sealed class UserSessionConfiguration
         builder.Property(x => x.IpAddress)
             .HasColumnName("ip_address")
             .HasColumnType("inet");
+
+        // CRD-C4's consecutive failed current-password attempts within THIS
+        // session (L6). Session-scoped by construction: purged with the row,
+        // and never part of the credential's lockout state.
+        builder.Property(x => x.FailedPasswordChangeAttempts)
+            .HasColumnName("failed_password_change_attempts")
+            .HasColumnType("integer")
+            .HasDefaultValue(0)
+            .IsRequired();
 
         builder.Property(x => x.UserAgent)
             .HasColumnName("user_agent")

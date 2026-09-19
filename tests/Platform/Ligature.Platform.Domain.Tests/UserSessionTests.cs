@@ -108,6 +108,40 @@ public sealed class UserSessionTests
             () => session.RecordActivity(Start.AddMinutes(5)));
     }
 
+    // ============================================ CRD-C4 attempt limit (L6)
+
+    /// <summary>
+    /// The counter belongs to the session (L6): consecutive failed
+    /// current-password attempts within THIS authenticated session, never an
+    /// account-wide count.
+    /// </summary>
+    [Fact]
+    public void A_fresh_session_has_no_failed_password_change_attempts()
+        => Assert.Equal(0, Session().FailedPasswordChangeAttempts);
+
+    [Fact]
+    public void Each_failed_password_change_counts_once_and_reports_the_new_count()
+    {
+        var session = Session();
+
+        Assert.Equal(1, session.RecordFailedPasswordChange());
+        Assert.Equal(2, session.RecordFailedPasswordChange());
+        Assert.Equal(2, session.FailedPasswordChangeAttempts);
+    }
+
+    /// <summary>L3 — a successful change starts the count again.</summary>
+    [Fact]
+    public void A_reset_returns_the_count_to_zero()
+    {
+        var session = Session();
+
+        session.RecordFailedPasswordChange();
+        session.RecordFailedPasswordChange();
+        session.ResetFailedPasswordChangeAttempts();
+
+        Assert.Equal(0, session.FailedPasswordChangeAttempts);
+    }
+
     private static UserSession Session()
         => UserSession.Create(
             UserSessionId.New(),

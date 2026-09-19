@@ -145,7 +145,11 @@ public static class AuditDeclarations
             // producer: the frozen Audit Event Catalogue does not list CRD-C4
             // among its producers, and the UM command catalogue lists only
             // PasswordChanged for CRD-C4. Resolving A5 as (b) is what requires
-            // it; see docs/requirements.md. A refused change declares nothing.
+            // it; see docs/requirements.md. A refused change declares nothing —
+            // except at the attempt limit (L5): the Nth counted refusal ends
+            // THIS session and declares one SessionRevoked with the code
+            // PasswordChangeAttemptsExceeded. Never AccountLocked: SES-C1
+            // remains its only producer.
             [typeof(ChangePasswordCommand)] = new(
                 "UserManagement",
                 ["PasswordChanged", "SessionRevoked"]),
