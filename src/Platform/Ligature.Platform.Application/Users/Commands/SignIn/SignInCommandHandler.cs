@@ -167,6 +167,26 @@ public sealed class SignInCommandHandler
                     return SignInResult.Failure();
                 }
 
+                // An administrator reset is outstanding (CRD-C5): the password
+                // on file was correct, but it may no longer establish a session.
+                // Only a reset link (CRD-C3) replaces it — proof of mailbox
+                // control, not possession of the old password, which may be
+                // exactly what was compromised (docs/requirements.md, "SES-C1 —
+                // enforcing MustChangePassword at sign-in", MC1–MC4).
+                //
+                // Authentication is deliberately NOT completed, so nothing that
+                // belongs to it runs: no caller is established, no rehash, no
+                // counter change in either direction, no lock, no session. The
+                // refusal is recorded as the Anonymous SignInFailed every other
+                // refusal is, and the caller sees the same generic failure — a
+                // distinct answer would confirm the old password was right.
+                if (credential.MustChangePassword)
+                {
+                    DeclareFailure(command, resolved.Identity, "PasswordChangeRequired");
+
+                    return SignInResult.Failure();
+                }
+
                 // The password verified, so this caller IS authenticated, and
                 // the record of it must say who by name. The identity is the
                 // one whose credential just verified — passed through, never
