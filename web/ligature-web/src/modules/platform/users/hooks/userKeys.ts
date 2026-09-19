@@ -18,6 +18,9 @@ export const userKeys = {
   /** IDN-Q1: one user's identities, with their lock state as of the read. */
   identities: (userId: string) => ["users", "identities", userId] as const,
 
+  /** SES-Q1: one user's active sessions, as the server judged them at the read. */
+  sessions: (userId: string) => ["users", "sessions", userId] as const,
+
   /** USR-Q1 GetUser v1: one user's profile names. */
   profile: (userId: string) => ["users", "profile", userId] as const,
 };

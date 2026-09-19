@@ -30,6 +30,10 @@ export const UserPermissions = {
   // own them yet.
   readIdentities: definePermission("identity.read"),
   unlock: definePermission("user.unlock"),
+
+  // SES-Q1, on the User detail page. Revoke uses revokeSessions above. No
+  // sessions module exists to own them yet.
+  readSessions: definePermission("session.read"),
   grantRoles: definePermission("role.grant"),
   revokeRoles: definePermission("role.revoke"),
 } as const;
