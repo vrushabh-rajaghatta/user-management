@@ -2,6 +2,7 @@ using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Users.Commands.UnlockAccount;
 using Ligature.Platform.Application.Users.Queries.UserIdentities;
+using Ligature.Platform.Application.Users.Queries.UsernameAvailability;
 using Ligature.Platform.Domain.Users;
 
 namespace Ligature.Host.Api;
@@ -39,6 +40,25 @@ public static class IdentityEndpoints
                 + "end; otherwise false and null. Human users only: an unknown "
                 + "user, the System actor and a missing permission are 400. Not "
                 + "audited.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+
+        // IDN-Q3 CheckUsernameAvailable. A read, but POST: the typed username
+        // travels in the body so it never reaches a request URL — access logs,
+        // proxies, browser history (UN1).
+        routes.MapPost("/api/identities/username-availability", UsernameAvailabilityAsync)
+            .WithTags("Identities")
+            .WithSummary("Whether a username is free for a new local identity.")
+            .WithDescription(
+                "Requires a carrier and the 'identity.read' permission. Takes "
+                + "{ username } and returns { available }: false when a local "
+                + "identity of any status holds it, in any case; availability "
+                + "is absolute. The same check USR-C1 makes, so 'available' "
+                + "means USR-C1 would accept it now — not that it will at "
+                + "submit. Nothing about the holder is returned. A blank "
+                + "username and a missing permission are 400. Not audited.")
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
@@ -92,6 +112,22 @@ public static class IdentityEndpoints
             }),
         });
     }
+
+    private static async Task<IResult> UsernameAvailabilityAsync(
+        UsernameAvailabilityRequest? request,
+        IQueryDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        // A missing body or field is the blank case, refused by the query.
+        var result = await dispatcher.SendAsync<UsernameAvailabilityQuery, UsernameAvailabilityResult>(
+            new UsernameAvailabilityQuery(request?.Username ?? string.Empty),
+            cancellationToken);
+
+        return Results.Ok(new { result.Available });
+    }
+
+    /// <summary>The username as typed; never logged, never echoed back.</summary>
+    private sealed record UsernameAvailabilityRequest(string? Username);
 
     private static async Task<IResult> UnlockAsync(
         Guid identityId,

@@ -68,6 +68,17 @@ describe("FormField", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("A username is required.");
   });
 
+  /**
+   * Politely, for a description that changes with the field's state — Create
+   * user's "Username available." (IDN-Q3, UN8). A static description never
+   * changes, so this announces nothing for it.
+   */
+  it("announces a change of description politely", () => {
+    renderField({ description: "Username available." });
+
+    expect(screen.getByText("Username available.")).toHaveAttribute("aria-live", "polite");
+  });
+
   it("marks the control required when the field is required", () => {
     renderField({ required: true });
 

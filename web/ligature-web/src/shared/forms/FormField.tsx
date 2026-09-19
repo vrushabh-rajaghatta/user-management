@@ -46,7 +46,10 @@ export function FormField({ id, label, description, error, required = false, chi
     <div className="flex flex-col gap-2">
       <Label htmlFor={id}>{label}</Label>
       {description === undefined ? null : (
-        <p id={descriptionId} className="text-sm text-muted-foreground">
+        // Polite, for a description that changes with the field's state —
+        // Create user's "Username available." Static descriptions never
+        // change, so for them this announces nothing.
+        <p id={descriptionId} aria-live="polite" className="text-sm text-muted-foreground">
           {description}
         </p>
       )}

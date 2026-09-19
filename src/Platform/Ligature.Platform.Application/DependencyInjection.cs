@@ -19,6 +19,7 @@ using Ligature.Platform.Application.Users.Commands.UpdateUserProfile;
 using Ligature.Platform.Application.Users.Queries.UserIdentities;
 using Ligature.Platform.Application.Users.Queries.MySessions;
 using Ligature.Platform.Application.Users.Queries.UserSessions;
+using Ligature.Platform.Application.Users.Queries.UsernameAvailability;
 using Ligature.Platform.Application.Users.Queries.UserProfile;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
 using Ligature.Platform.Application.Users.Commands.SignIn;
@@ -353,6 +354,7 @@ public static class DependencyInjection
         services.AddScoped<ActiveSessionListing>();
         services.AddQuery<UserSessionsQuery, UserSessionsResult, UserSessionsQueryHandler>();
         services.AddQuery<MySessionsQuery, MySessionsResult, MySessionsQueryHandler>();
+        services.AddQuery<UsernameAvailabilityQuery, UsernameAvailabilityResult, UsernameAvailabilityQueryHandler>();
 
         // The grantable-role list: a Story 2 dependency of AUT-C1, not AUT-Q5.
         services.AddQuery<GrantableRolesQuery, GrantableRolesResult, GrantableRolesQueryHandler>();
