@@ -3850,6 +3850,19 @@ The two system-role sentences are the domain's own, **unchanged**. An unknown ro
 2. It disappears from the Roles list until **Show inactive roles** is ticked, and from the grant form's role list.
 3. **Reactivate** it. It reads Active again and returns to both lists.
 
+### Implementation notes
+
+- **`Role.Deactivate` and `Role.Reactivate` were dead code**, and RD4 changed them rather than only calling them: the `"Role is already inactive."` and `"Role is already active."` refusals are **gone**, replaced by a `bool`. Keeping them beside an idempotent command would have been two answers to one question.
+- **The blank-reason check is the handler's first statement, outside the transaction** (G6). This is not ceremony: `RoleDeactivated` is seeded `ReasonRequired`, and a blank reason reaching `AuditRecordAssembler` fails AR9 as an emission defect — an `InvalidOperationException`, which `ProblemMiddleware` catches only as a catch-all, so a **500** rather than a refusal. GrantRole carries the same guard and says so. Three mutants attack it: removed, moved inside the transaction, and weakened to a null check so whitespace slips through.
+- **Neither handler touches a `user_role` row**, and that is the story. `Deactivation_changes_eligibility_and_leaves_access_untouched` proves it through the **command**; `AuthorizationServiceTests` already proved it against the **column**. A handler that reached for `role.IsActive`, or cascaded into assignments, passes there and fails here.
+  - That test stages a live `role_permission` row with SQL. AUT-C7 does not exist, and a role carrying no permissions cannot demonstrate *keeping* any — the assertion would pass vacuously.
+  - **A holder needs an active IDENTITY as well as an active user** (invariant 7), checked before the predicate runs. Seeding only `app_user` made the test fail on its own setup; had it asserted only the post-deactivation state, it would have "passed" while proving nothing.
+- **One domain fixture reaches past the API under test, deliberately.** A system role that is *already inactive* cannot be built through the domain, because the domain refuses to retire one — so the ordering claim, ownership before the no-op, would be untestable. The state is staged by reflection; the refusal is still what must come out. The database half is staged with SQL.
+- **`ConfirmAction` gained a `destructive` prop**, its first caller being Deactivate (RD8). The variant existed in the button component and had never been used anywhere in the client.
+- **The roles module owns its own three-line reason schema.** Importing the users module's was refused by the module-boundaries rule, and moving it to `shared/forms` was refused again because that layer bans `zod` outright (*"FormField knows nothing of schemas"*). Two rules pointing the same way: modules stay independent, and the form primitives stay ignorant of validation. The users module is untouched.
+- **The announcement uses the name the SERVER answered.** The mutation campaign's one survivor was the local name, which is identical unless someone renamed the role since this page read it — a stale page, not a contrived case. Closed with a test, matching the convention RC-U3 and RM-U3 already pinned.
+- **Two PostgreSQL renderings caught tests, not the product:** `boolean::text` gives `true`/`false`, not psql's display `t`/`f`; and `JsonElement.ToString()` capitalises booleans where `GetRawText()` reflects what is stored.
+
 ### Not included
 
 - **AUT-Q4 GetRoleMembers** and any member list or per-holder detail (RD2).

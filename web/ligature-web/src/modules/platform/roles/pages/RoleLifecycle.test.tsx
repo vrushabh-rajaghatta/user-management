@@ -59,7 +59,9 @@ interface Backend {
   readonly posts: { path: string; body: unknown }[];
 }
 
-function backend(options: { active?: boolean; refuse?: string; slow?: boolean } = {}): Backend {
+function backend(
+  options: { active?: boolean; refuse?: string; slow?: boolean; renamedTo?: string } = {},
+): Backend {
   let lists = 0;
   let active = options.active ?? true;
   const posts: { path: string; body: unknown }[] = [];
@@ -92,7 +94,9 @@ function backend(options: { active?: boolean; refuse?: string; slow?: boolean } 
 
       active = verb === "reactivate";
 
-      return HttpResponse.json(role());
+      // The answer is the server's, which may carry a name the page has never
+      // seen — someone else renamed the role since it was read.
+      return HttpResponse.json({ ...role(), name: options.renamedTo ?? HELD.name });
     }),
   );
 
@@ -283,6 +287,28 @@ describe("after it succeeds", () => {
 
     expect(await screen.findByRole("button", { name: "Reactivate" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Deactivate" })).toBeNull();
+  });
+
+  /**
+   * The announcement reports what the SERVER answered, not the name the page
+   * happened to be holding. They differ whenever someone else renamed the role
+   * since this page read it — a stale page, not a contrived one — and the
+   * module has pinned this convention twice already (RC-U3, RM-U3).
+   */
+  it("announces the name the server answered, not the one on the page", async () => {
+    backend({ renamedTo: "Renamed Elsewhere" });
+    const { user } = await render([ROLE_READ, ROLE_MANAGE]);
+
+    const dialog = await openDialog(user, "Deactivate");
+
+    await user.type(within(dialog).getByLabelText("Reason"), "Retired.");
+    await user.click(within(dialog).getByRole("button", { name: "Deactivate" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    expect(screen.getByRole("status").textContent).toBe("Role deactivated: Renamed Elsewhere.");
   });
 
   it("is busy while sending, and sends once", async () => {
