@@ -3356,6 +3356,20 @@ permissionId, code, name, resource, action, requiresHumanActor, isActive
 2. Open `user-administrator`: its permissions are listed, human-only ones marked.
 3. Turn on Show inactive roles: the list is unchanged, because no role is inactive.
 
+### Implementation notes
+
+- **Three readers, one statement each.** `RoleAdministrationReader`, `RolePermissionReader` and `PermissionCatalogueReader` sit beside the existing readers and are registered with them.
+  - **AUT-Q5** computes the three derived values as correlated sub-queries on the role row, then applies `includeInactive` and `agentAssignableOnly` to the result — so neither parameter can reach a count (RA1).
+  - **`activeHolderCount`** is `DISTINCT user_id` over assignments that are not revoked and whose half-open period contains the handler's instant. There is deliberately **no join to `app_user`** (RA2); a mutant that added one is killed by the inactive-holder test.
+  - **`agentAssignable`** is `NOT EXISTS(live grant of a human-only permission)`, so a role with nothing granted is agent-assignable.
+- **Collations are explicit and different on purpose.** Role names order under ICU `unicode`, as the user list and grantable list do. **Permission codes order under `C`** — byte order — because a code is an identifier, not prose, and byte order is the same on every server.
+- **AUT-Q3 looks the role up first** and returns null when it is absent; the route maps that to `404` with its sentence. `ProblemMiddleware` is untouched (RA11).
+- **The routes** live in `RoleEndpoints`, beside `RoleAssignmentEndpoints`, which is unchanged (RA6). Booleans are parsed exactly as the assignments route parses `includeInactive`, and `asOf` must be one ISO-8601 instant.
+- **The web module** owns `role.read`; the users module imports it for its Manage roles action, and its own `readRoles` code is gone.
+  - **One rename during implementation:** a role's grants are `grants` in the client, because the lint rule reserves `.permissions` for a caller's *effective* permissions (frontend-architecture §9). The server's field name is unchanged; the page destructures it.
+  - **The detail page** reads AUT-Q5 with inactive roles included, so an inactive role's page is not a dead end, and AUT-Q3 in its current-state form only (RA5).
+- **Found while writing the tests:** the seeded catalogue stores `Resource` and `Action` capitalised (`User`, `Create`), not lowercase. The `resource` filter matches exactly, so it is `?resource=User`. Nothing was changed to accommodate the tests.
+
 ### Not included
 
 - **Any mutation:** AUT-C3–C8, and any change to the permission catalogue (PE2: release-owned).
