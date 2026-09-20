@@ -6,6 +6,7 @@ import { authRoutes } from "@/modules/platform/auth/routes";
 import { homeRoutes } from "@/modules/platform/home/routes";
 import { administrationArea } from "@/modules/platform/administration";
 import { administrationRoutes } from "@/modules/platform/administration/routes";
+import { roleRoutes } from "@/modules/platform/roles/routes";
 import { userRoutes } from "@/modules/platform/users/routes";
 import { RequireAuth } from "@/shared/auth/RequireAuth";
 import { AppShell } from "@/shared/layout/AppShell";
@@ -68,7 +69,7 @@ export function composeRoutes(publicRoutes: RouteObject[], privateRoutes: RouteO
 
 export const appRoutes = composeRoutes(
   [...authRoutes, ...accountRoutes],
-  [...homeRoutes, ...myAccountRoutes, ...administrationRoutes(userRoutes)],
+  [...homeRoutes, ...myAccountRoutes, ...administrationRoutes([...userRoutes, ...roleRoutes])],
 );
 
 export function createAppRouter() {

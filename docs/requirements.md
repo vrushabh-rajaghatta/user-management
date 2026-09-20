@@ -3230,6 +3230,155 @@ USR-C3 — an administrator changes a human user's email
 
 ---
 
+## Role administration read: AUT-Q5, AUT-Q3 and AUT-Q6, and the Roles screen
+
+**Status:** Contract frozen 2026-09-20 by owner decision (RA1–RA10). **Read-only.** No role or permission mutation, no member management, no catalogue change, and no PRV-C2 change.
+
+### Requirement
+
+A `role.read` holder can inspect role definitions: which roles exist, what each one currently carries, how many people hold each, and what the permission catalogue contains. This is the authoritative read model the role-definition mutations (AUT-C3–C8) will later act on.
+
+```text
+AUT-Q5 ListRoles            the administration list, with derived counts
+AUT-Q3 GetRolePermissions   what one role carries, now or at an instant
+AUT-Q6 ListPermissions      the release-owned catalogue, read-only
+```
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **RA1** | **`includeInactive` changes the result set only.** `false` (the default) returns active roles; `true` also returns inactive ones. It does not change `permissionCount`, `activeHolderCount` or `agentAssignable`, which stay independently defined. |
+| **RA2** | **`activeHolderCount` is assignment state, never user status.** A holder counts when their `user_role` assignment is **Active** at the query instant by the existing `RoleAssignmentStates.At` derivation: not revoked, `EffectiveFrom <= now`, and `now < EffectiveTo` when there is one. Future, Ended and Revoked do not count. **No `app_user.Status` condition is added:** that would be a second derivation of assignment state, able to diverge from authorisation. The deactivation cascade already revokes assignments. |
+| **RA3** | **`permissionCount` counts live grants only:** `role_permission` rows with `RevokedAt IS NULL`. **It does not filter on `permission.IsActive`** — the question is what the role is currently granted, not which catalogue entries are current. A grant of a retired permission still counts. |
+| **RA4** | **`agentAssignable` is the frozen derivation, exactly:** true when the role has **no live grant to a permission with `RequiresHumanActor = true`**. Never stored, no agent lookup, and no dependence on whether agents exist. `agentAssignableOnly=true` filters on that derived value. A role with no live grants is agent-assignable (vacuously). This is the same derivation AUT-C7/C8 must preserve. |
+| **RA5** | **AUT-Q3 takes `asOf`**, defaulting to the current instant; the screen asks only for the current state in this slice. A grant is **live at `asOf`** when `GrantedAt <= asOf` and (`RevokedAt IS NULL` or `RevokedAt > asOf`). |
+| **RA6** | **`GET /api/roles` is kept, unchanged.** It is the assignment workflow's narrow grantable-role reader, with one consumer, and its own comment says it is not AUT-Q5. The administration list is a separate route. |
+| **RA7** | **The screen is a roles list and a role detail.** The list shows name, code, active or inactive, agent-assignable, permission count and holder count. The detail shows the role's metadata and its permissions through AUT-Q3. **AUT-Q4 GetRoleMembers stays out**, with AUT-C5/C6, where the catalogue needs it for the stranding warning. |
+| **RA8** | **A Roles module owns `role.read`.** The users module carries that code today only because no roles module existed; it now imports it from the roles module's public surface, as one module uses another's. The users module keeps the user-management codes. |
+| **RA9** | **`role.manage` is not used anywhere in this gate.** The three reads are `role.read`. `role.manage` stays reserved for AUT-C3–C8: `role.read` inspects a definition, `role.manage` changes one. |
+| **RA10** | **PRV-C2 is parked.** The catalogue synchroniser refuses any role absent from the release seed (`RoleMissingFromSeed`), with no exemption for tenant roles. That is created by **AUT-C3**, not by this slice, and is resolved before AUT-C3 is implemented — not here. |
+| **RA11** | **An unknown role is `404`, not an empty list** (owner's change). An empty list means *this role exists and currently has no matching grants*; a role that does not exist is a different condition, and the reader must be able to tell them apart. The sentence follows the existing wording: *"The role does not exist."*, as *"The user does not exist."* elsewhere. `asOf` projects the grants only once the role is known to exist. |
+
+### The routes and their shapes
+
+**My choices, not the catalogue's** — the query catalogue defines queries, not HTTP. They follow the existing routes' conventions.
+
+| Query | Route |
+| --- | --- |
+| **AUT-Q5** | `GET /api/roles/administration?includeInactive=&agentAssignableOnly=` |
+| **AUT-Q3** | `GET /api/roles/{roleId:guid}/permissions?asOf=` |
+| **AUT-Q6** | `GET /api/permissions?resource=&requiresHumanActor=` |
+
+- **`/api/roles/administration` rather than widening `/api/roles`** (RA6). The `{roleId:guid}` constraint keeps the two `/api/roles/...` routes apart.
+- **Parameters are parsed strictly**, as `includeInactive` already is on the assignments route: a boolean must be `true` or `false`, supplied once, or the answer is `400`. `asOf` must be one ISO-8601 instant, or `400`. `resource` is matched exactly.
+- **All three require a carrier and `role.read`**; without a carrier `401`, without the permission `400`, as every other read. **None is audited.**
+
+**AUT-Q5** answers `{ "roles": [ … ] }`, each role exactly:
+
+```text
+roleId, code, name, description, isSystemRole, isActive,
+agentAssignable, permissionCount, activeHolderCount
+```
+
+- **`description` and `isSystemRole` are included because there is no GetRole query in the catalogue.** The detail view is composed from this row plus AUT-Q3.
+- **Ordered by `name`** under the ICU `unicode` collation, then `roleId`, as the grantable list and the user list are ordered, so the order does not depend on the database's default collation.
+- **No paging.** The catalogue defines none for ListRoles, and roles are few by design.
+- **One instant** is read for the whole query, and every holder state is judged against it.
+
+**AUT-Q3** answers `{ "permissions": [ … ] }`, each grant exactly:
+
+```text
+rolePermissionId, permissionId, code, name, resource, action,
+requiresHumanActor, grantedAt, revokedAt
+```
+
+- The rows are the grants **live at `asOf`** (RA5). `revokedAt` is therefore null for a current read, and may carry a value for a historical one — which is the "granted/revoked info" the catalogue asks for.
+- **Ordered by `code`.** A role that exists with no live grants answers `200` and an empty list; **an unknown role answers `404` with *"The role does not exist."*** (RA11).
+- **How the `404` is produced.** `ProblemMiddleware` maps exceptions to `400`, `401`, `429` and `500` only, and this story does not widen that allowlist. The query's result distinguishes "no such role" from "no grants", and the route maps that to `404 { "error": … }`. **This is the host's first `404` with a body.**
+- **A recorded divergence:** AUT-Q2, the sibling read, answers `400` *"The user does not exist."* for an unknown user. Aligning the two is not this gate's work; see the Known Gap.
+
+**AUT-Q6** answers `{ "permissions": [ … ] }`, each permission exactly:
+
+```text
+permissionId, code, name, resource, action, requiresHumanActor, isActive
+```
+
+- **Ordered by `code`.** `isActive` is included so a retired catalogue entry is visibly retired; the catalogue is release-owned (PE2) and this route never writes.
+- **No screen consumes AUT-Q6 in this slice.** It is the surface AUT-C7 will pick permissions from. *Open point for the owner:* leave it API-only, or add a Permissions page under the Roles area now.
+
+### The screen (RA7, RA8)
+
+- **A new `modules/platform/roles`**, owning `role.read` and contributing one navigation item, **Roles** → `/admin/roles`, to the Administration area beside Users. The users module imports the code from it for its Manage roles action.
+- **`/admin/roles` — the list.** Columns: Name, Code, Status, Agent-assignable, Permissions, Holders. A **Show inactive roles** control drives `includeInactive`. **`agentAssignableOnly` is served by the query but not surfaced** in this slice; the column shows the value.
+- **`/admin/roles/{roleId}` — the detail.** The role's metadata, then its permissions from AUT-Q3: code, name, resource, action, human-only, granted. Composed from the list row and AUT-Q3, since no GetRole exists; a role id that is not in the list shows a not-found state, never an empty page.
+- **Nothing on either page mutates anything**, and neither offers an action.
+
+### Acceptance Criteria
+
+**AUT-Q5 (RA1–RA4)**
+
+- **RA-A1** Each role is answered with exactly the nine members above, with its stored values, ordered by name.
+- **RA-A2** **`includeInactive`:** absent or `false` returns active roles only; `true` also returns inactive ones. **The counts and `agentAssignable` of a role are identical under both.**
+- **RA-A3** **`activeHolderCount`:** a role held by an Active assignment counts 1; Future, Ended and Revoked assignments count 0; two assignments for one user count 1. A holder whose user is inactive but whose assignment is somehow still Active **is counted** — the count is the assignment's state, not the user's.
+- **RA-A4** **`permissionCount`:** live grants only. A revoked grant does not count; a live grant of a permission whose `IsActive` is false **does** count.
+- **RA-A5** **`agentAssignable`:** false when any live grant requires a human actor; true when none does; true for a role with no live grants; unaffected by revoked grants of human-only permissions. **`agentAssignableOnly=true`** returns exactly the roles whose derived value is true, and combines with `includeInactive`.
+
+**AUT-Q3 (RA5)**
+
+- **RA-A6** Without `asOf`, the current live grants are returned, each with exactly the nine members above, ordered by code.
+- **RA-A7** With `asOf`, the grants live at that instant are returned: one revoked after `asOf` appears with its `revokedAt`; one granted after `asOf` does not appear; one revoked before `asOf` does not appear.
+- **RA-A8** **A role with no live grants answers `200` and an empty list; an unknown role answers `404`** with *"The role does not exist."* (RA11). The `404` carries that body, which is what distinguishes it from an unmapped route.
+
+**AUT-Q6**
+
+- **RA-A9** Every permission is answered with exactly the seven members above, ordered by code, including inactive ones.
+- **RA-A10** `resource` and `requiresHumanActor` filter the list, together and separately.
+
+**All three**
+
+- **RA-A11** Each requires `role.read`: an access reviewer may read them, a caller without the permission is refused, and no carrier is `401`. **No audit record is written by any of them.**
+- **RA-A12** Malformed parameters are `400`: a boolean that is not `true`/`false` or supplied twice, and an `asOf` that is not an instant.
+
+**The screen (RA7, RA8)**
+
+- **RA-U1** Roles appears in the Administration navigation for a `role.read` holder, and never without it.
+- **RA-U2** The list shows a row per role with its six columns, an Inactive marker, and Agent-assignable as a plain yes or no. Show inactive roles re-reads with `includeInactive=true`.
+- **RA-U3** A failed read shows the server's sentence and a Try again that reads again; loading shows no table.
+- **RA-U4** The detail shows the role's metadata and its permissions, and a human-only permission is marked as such.
+- **RA-U5** A role id that is not in the list shows a not-found state.
+- **RA-U6** Neither page offers any action, and neither sends anything but its reads.
+- **RA-U7** No accessibility violations on either page.
+
+**Browser, in the dev stack (RA-U8),** with the owner's approval. As Ada:
+
+1. Open Roles: three roles, each with its counts. `access-reviewer` is agent-assignable; the other two are not.
+2. Open `user-administrator`: its permissions are listed, human-only ones marked.
+3. Turn on Show inactive roles: the list is unchanged, because no role is inactive.
+
+### Implementation notes
+
+- **Three readers, one statement each.** `RoleAdministrationReader`, `RolePermissionReader` and `PermissionCatalogueReader` sit beside the existing readers and are registered with them.
+  - **AUT-Q5** computes the three derived values as correlated sub-queries on the role row, then applies `includeInactive` and `agentAssignableOnly` to the result — so neither parameter can reach a count (RA1).
+  - **`activeHolderCount`** is `DISTINCT user_id` over assignments that are not revoked and whose half-open period contains the handler's instant. There is deliberately **no join to `app_user`** (RA2); a mutant that added one is killed by the inactive-holder test.
+  - **`agentAssignable`** is `NOT EXISTS(live grant of a human-only permission)`, so a role with nothing granted is agent-assignable.
+- **Collations are explicit and different on purpose.** Role names order under ICU `unicode`, as the user list and grantable list do. **Permission codes order under `C`** — byte order — because a code is an identifier, not prose, and byte order is the same on every server.
+- **AUT-Q3 looks the role up first** and returns null when it is absent; the route maps that to `404` with its sentence. `ProblemMiddleware` is untouched (RA11).
+- **The routes** live in `RoleEndpoints`, beside `RoleAssignmentEndpoints`, which is unchanged (RA6). Booleans are parsed exactly as the assignments route parses `includeInactive`, and `asOf` must be one ISO-8601 instant.
+- **The web module** owns `role.read`; the users module imports it for its Manage roles action, and its own `readRoles` code is gone.
+  - **One rename during implementation:** a role's grants are `grants` in the client, because the lint rule reserves `.permissions` for a caller's *effective* permissions (frontend-architecture §9). The server's field name is unchanged; the page destructures it.
+  - **The detail page** reads AUT-Q5 with inactive roles included, so an inactive role's page is not a dead end, and AUT-Q3 in its current-state form only (RA5).
+- **Found while writing the tests:** the seeded catalogue stores `Resource` and `Action` capitalised (`User`, `Create`), not lowercase. The `resource` filter matches exactly, so it is `?resource=User`. Nothing was changed to accommodate the tests.
+
+### Not included
+
+- **Any mutation:** AUT-C3–C8, and any change to the permission catalogue (PE2: release-owned).
+- **AUT-Q4 GetRoleMembers**, which belongs with AUT-C5/C6.
+- **Any change to `/api/roles`** (RA6), to PRV-C2 (RA10), or any use of `role.manage` (RA9).
+- **A Permissions screen** (see AUT-Q6 above).
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
@@ -4193,3 +4342,9 @@ Requirement ID → Story → Implementation plan → Branch → Commit(s) → Pu
 ## CRD-C7 does not serialise against USR-C3
 
 **Recorded by owner decision (CE9).** CRD-C7 Resend activation does not currently serialise against USR-C3 email changes, so an activation token could be issued to the previous address during the race. USR-C3 takes the target's row lock; CRD-C7 does not. Closing this is its own concurrency-hardening story: CRD-C7 taking the same D6 lock. USR-C3 does not change CRD-C7.
+
+## Unknown resources answer 400 in one read and 404 in another
+
+**Recorded by owner decision (RA11 of *Role administration read*, 2026-09-20).** AUT-Q3 answers `404` *"The role does not exist."* for an unknown role, because an empty list must keep meaning "this role has no grants". AUT-Q2, the sibling read, answers `400` *"The user does not exist."* for an unknown user, as every other read and command in the platform does — `ProblemMiddleware` maps refusals to `400`.
+
+**Deferred:** whether unknown-resource reads answer `404` everywhere, which would touch AUT-Q2, USR-Q1 and the middleware's allowlist, and which interacts with the Known Gap *Authorization failures are not distinguishable from validation failures*. AUT-Q3's `404` is deliberate and is not to be "made consistent" inside an unrelated story.

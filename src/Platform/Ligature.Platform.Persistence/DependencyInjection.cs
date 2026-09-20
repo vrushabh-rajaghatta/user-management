@@ -48,6 +48,11 @@ public static class DependencyInjection
 
         services.AddScoped<IUserIdentityRepository, UserIdentityRepository>();
 
+        // AUT-Q5, AUT-Q3, AUT-Q6 — the role administration reads.
+        services.AddScoped<IRoleAdministrationReader, RoleAdministrationReader>();
+        services.AddScoped<IRolePermissionReader, RolePermissionReader>();
+        services.AddScoped<IPermissionCatalogueReader, PermissionCatalogueReader>();
+
         services.AddScoped<IUserTokenRepository, UserTokenRepository>();
 
         services.AddScoped<INotificationRepository, NotificationRepository>();
