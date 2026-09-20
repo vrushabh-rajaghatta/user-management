@@ -309,6 +309,10 @@ public sealed class CommandHandlerRegistrationTests
             Domain.Users.EmailAddress email, CancellationToken cancellationToken)
             => Task.FromResult(false);
 
+        public Task<bool> ExistsOtherActiveHumanWithEmailAsync(
+            Domain.Users.EmailAddress email, Domain.Users.UserId excluding, CancellationToken cancellationToken)
+            => Task.FromResult(false);
+
         public Task AddAsync(Domain.Users.User user, CancellationToken cancellationToken)
             => Task.CompletedTask;
 

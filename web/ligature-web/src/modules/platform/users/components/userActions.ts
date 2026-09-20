@@ -26,10 +26,13 @@ export interface UserActionPermissions {
 
   /** user.update (USR-C2): whether the caller may edit a user's names. */
   readonly editProfile: boolean;
+
+  /** user.update (USR-C3): whether the caller may change a user's email address. */
+  readonly changeEmail: boolean;
 }
 
-/** A row action: a confirmed command, or Manage roles or Edit profile, which open their own dialogs. */
-export type RowAction = UserAction | "manage-roles" | "edit-profile";
+/** A row action: a confirmed command, or Manage roles, Edit profile or Change email, which open their own dialogs. */
+export type RowAction = UserAction | "manage-roles" | "edit-profile" | "change-email";
 
 export const ACTION_LABEL: Record<RowAction, string> = {
   "resend-activation": "Resend activation link",
@@ -39,6 +42,7 @@ export const ACTION_LABEL: Record<RowAction, string> = {
   reactivate: "Reactivate",
   "manage-roles": "Manage roles",
   "edit-profile": "Edit profile",
+  "change-email": "Change email",
 };
 
 /**
@@ -96,6 +100,12 @@ export function getUserActions({
     actions.push("edit-profile");
   }
 
+  // Every row, active or inactive (USR-C3, CE8): an inactive user's address is
+  // what USR-C5's email refusal is remedied by.
+  if (can.changeEmail) {
+    actions.push("change-email");
+  }
+
   // Last, apart from the everyday actions: it ends the person's access.
   if (user.status === "Active" && can.deactivate) {
     actions.push("deactivate");
@@ -114,6 +124,7 @@ export function useUserActionPermissions(): UserActionPermissions {
     reactivate: useCan(UserPermissions.reactivate),
     manageRoles: useCan(UserPermissions.readRoles),
     editProfile: useCan(UserPermissions.update),
+    changeEmail: useCan(UserPermissions.update),
   };
 }
 

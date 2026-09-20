@@ -1427,7 +1427,7 @@ All of it is written by the command's own transaction. The audit actor of every 
 
 **Restores nothing.** No role assignment, session or token is recreated. Revoked assignments stay revoked. Access is granted afresh through AUT-C1, and a password or activation link through CRD-C5 or CRD-C7. Credentials are untouched throughout, as §11.8 specifies.
 
-**The email refusal has no remedy yet.** The holder's email can only change through USR-C3, which is blocked on decision A3. The refusal message says what is wrong, and the record is not reactivated.
+**The email refusal has no remedy yet.** The holder's email can only change through USR-C3, which is blocked on decision A3. The refusal message says what is wrong, and the record is not reactivated. *Since USR-C3 (2026-09-19):* the remedy is to change the returning user's address with USR-C3, which allows an inactive target (CE8), and then reactivate; CE-A9 proves it.
 
 ### Concurrency: one lock, three commands (D6)
 
@@ -3090,6 +3090,146 @@ Nothing is submitted, so no user is created.
 
 ---
 
+## USR-C3 ChangeUserEmail — the administrator command, and its UI
+
+**Status:** Contract frozen 2026-09-19 by owner decision (CE1–CE13, with the owner's changes to CE2 and CE9 and a clarification of CE7). Closes open decision **A3** for its administrator half.
+
+### Requirement
+
+An administrator holding `user.update` changes another human's email address. The change takes effect immediately and is attributable in the trail. Links already sent to the old address stop working. Nothing is sent anywhere by this command.
+
+```text
+USR-C3 — an administrator changes a human user's email
+   ├── validate the address
+   ├── lock the target user
+   ├── no-op if it is the same effective address
+   ├── refuse if another non-inactive human holds it
+   ├── change the email
+   ├── invalidate open activation and reset tokens
+   └── UserEmailChanged
+```
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **CE1** | **A3 is closed as option (c), administrator half.** An administrator's change is immediate and audited. **Self-service** (a user changing their own address, which A3 (c) requires to be verified) is **not built**: it is its own future command, recorded as a Known Gap, as USR-C2's "Admin or self" split was. |
+| **CE2** | **No rule about who the target is** (owner's change). This is the administrator command, with the administrator command's single meaning. It does not quietly acquire a second, self-service semantics, and it does not carry an "except yourself" refusal. The self-service path is deferred entirely. |
+| **CE3** | **`POST /api/users/{userId}/email`** with `{ "email": "…", "reason": "…" }` → `204`, under **`user.update`**. Like USR-C2 under the same permission, the command is not marked human-only; the catalogue's *"Human actors only"* is about the **target** (CE8). `email` is required. `reason` is optional, as the catalogue says: a missing, empty or whitespace-only reason means none. Any other reason is recorded as the audit record's Reason, exactly as sent. |
+| **CE4** | **The address is `EmailAddress.Create`**, exactly as USR-C1: trimmed, structurally checked, no control character. An invalid one is `400` *"Email address has an invalid format."*. |
+| **CE5** | **Uniqueness among other non-inactive humans, whatever the target's status.** The *holder* is what matters: if another human who is not inactive holds the address (compared with `lower()`), the change is refused with *"A user with this email address already exists."*. An address held only by an inactive human, or by nobody, is available. The pre-check excludes the target itself. `ux_app_user_active_human_email` remains the guarantee, and a race past the pre-check is refused by it with the same sentence. |
+| **CE6** | **The same effective address is no change.** When the new address equals the current one ignoring case (the domain's existing `EmailAddress` equality), the answer is `204`. Nothing is written, no audit record is made, and no token is touched. |
+| **CE7** | **Open tokens are invalidated, and nothing replaces them** (owner's clarification). Every outstanding activation and password-reset token of the user's identities is invalidated at the command's instant (`InvalidateOutstandingForUserAsync`, as USR-C4 does). **No `TokenInvalidated` record is written**, following the D13 precedent: the frozen event requires a superseding token, and none is fabricated. **Changing an email never issues a replacement token.** For a user who has not activated, CRD-C7 Resend activation is how a new link reaches the new address. A notification still pending for an invalidated token is held back by the existing eligibility gate (`TokenNotLive`). |
+| **CE8** | **Inactive users are allowed.** This is the remedy for the USR-C5 refusal *"Another active user now has this user's email address."*. The System actor and agents are refused with *"This user's email cannot be changed."*, and an unknown user with *"The user does not exist."*. |
+| **CE9** | **The target's row is locked** (`FindForUpdateAsync`, the D6 lock) before anything about the user is read, and the clock is read after the lock. **CRD-C7 is not changed** (owner's change). Its race with this command is recorded as a Known Gap for its own concurrency story. |
+| **CE10** | **Sessions are untouched**: an email is not a credential. **No notice is sent** to the old or new address, because non-secret notifications are not V1. That is recorded as a Known Gap. |
+| **CE11** | **`UserEmailChanged` v1**: `Primary("User")`, `Before { Email }`, `After { Email }` (both PII paths of the primary subject), and the Reason when given. `AuditEventCatalogue.Version` is unchanged. |
+| **CE12** | **One story, backend and UI.** See *The UI*. |
+| **CE13** | **Out of scope:** the self-service command and verification (A3's other half), an `EmailVerification` notification type, notices to either address, any change to sign-in (usernames only), and any change to CRD-C7. |
+
+### Order of work in the handler
+
+1. **Parse the address** (CE4). Normalise the reason (CE3).
+2. **In the pipeline's transaction:** lock and load the target (CE9). Refuse an unknown user, the System actor or an agent (CE8).
+3. **Read the clock**, after the lock.
+4. **No-op check** (CE6).
+5. **Uniqueness** (CE5): the pre-check excludes the target.
+6. `User.ChangeEmail`.
+7. **Invalidate outstanding tokens** (CE7).
+8. **Declare `UserEmailChanged`** (CE11).
+
+### Change control
+
+**No workbook is edited.** Each of these is outstanding change control, like the USR-C2 and USR-C4/C5 items:
+
+1. **Command catalogue, USR-C3.** The row reads *"Admin or self, `user.update` / self"*. This is the **administrator** command. The self-service command, verified per A3 (c), is separate and not yet built.
+2. **Command catalogue, USR-C3.** The row lists `user_token` only *"if re-verification adopted"*. This command writes `user_token` (invalidation) **without** re-verification.
+3. **Open decisions, A3.** Closed as (c) for administrator changes; the self-service half is open.
+4. **Audit workbook, `TokenInvalidated`.** As for USR-C4 (D13), invalidation without a superseding token has no per-token record.
+
+### The UI (CE12)
+
+- **Change email** is a row action for `user.update`, on **active and inactive** rows. It appears in the list and on User detail, through the shared action matrix, after Edit profile and before Deactivate. The USR-C4/C5 matrix test is updated to the amended table.
+- **The dialog, titled *"Change email for {display name}"*:**
+  - It shows the current address, then **New email** and **Reason (optional)**.
+  - **Presence only:** an empty New email sends nothing and says *"An email address is required."*.
+  - **What is sent:** the typed email exactly, and the typed reason exactly, omitted when the field is empty. The client never copies the server's address rules.
+  - **For a user whose activation is pending,** the dialog also says: *"Their current activation link will stop working. Use Resend activation to send a new one to the new address."* This is guidance only; the command issues nothing.
+- **Saving:**
+  - The button is busy while the request is in flight, and a repeated press sends once.
+  - On `204` the dialog closes, the page announces *"Email changed for {display name}."*, and the client refreshes the list and that user's GetUser query.
+  - **A refusal** keeps the dialog open with the typed values, and shows the server's sentence word for word.
+- **The unsaved-changes guard,** as in Edit profile: once either field is typed into, Cancel, Escape and the close button ask *"Discard changes?"*.
+- **Focus** returns to the Actions button when the dialog closes.
+
+### Acceptance Criteria
+
+**The command**
+
+- **CE-A1** An administrator changes an active user's email. The stored address is the new one, trimmed. One `UserEmailChanged` is written, with the administrator as actor, `Before.Email` and `After.Email`, and the Reason when one is given. A blank reason records none.
+- **CE-A2** **No change.** For the same address, and for the same address in a different case, the answer is accepted and there is no write, no audit record and no token change.
+- **CE-A3** **Uniqueness:**
+  - an address held by another **active** human, in any case, is refused with *"A user with this email address already exists."*, and nothing is written;
+  - an address held only by an **inactive** human is accepted;
+  - an **inactive** target is refused an address an active human holds.
+- **CE-A4** An invalid address is refused with *"Email address has an invalid format."*, and nothing is written.
+- **CE-A5** An unknown user, the System actor and an agent are refused. A caller without `user.update` is refused by the pipeline.
+- **CE-A6** **Tokens:**
+  - every outstanding activation and reset token of the user is invalidated at the command's instant;
+  - a used token is untouched;
+  - no `TokenInvalidated` record is written;
+  - **no new token and no notification** are created;
+  - **the old activation link no longer activates the account** (CRD-C1 refuses it).
+- **CE-A7** **The lock:** while another transaction holds the target's row lock, the command waits, and it completes once the lock is released.
+- **CE-A8** **Nothing else changes:** names, status, identities, credentials, sessions and role assignments.
+- **CE-A9** **An inactive user's email can be changed** (CE8), and it is the remedy: once a colliding inactive user's address is changed, USR-C5 reactivates them.
+- **CE-A10** **No target rule** (CE2): an administrator's change to their own record is accepted like any other, and the record names them as actor and subject.
+
+**Over HTTP**
+
+- **CE-A11** `POST /api/users/{userId}/email` answers `204` on a change and on no change. A missing `email` is `400`. No carrier is `401`. A refusal is `400 { "error": … }` with the sentences above.
+
+**The UI**
+
+- **CE-U1** Change email is offered for `user.update` on active and inactive rows, never without it, in the list and on User detail.
+- **CE-U2** **The request:** Save sends exactly `{ email }`, or `{ email, reason }` when a reason was typed, untrimmed, to `POST /api/users/{userId}/email`. An empty New email sends nothing and is flagged.
+- **CE-U3** **On `204`:** the dialog announces, refreshes the list and GetUser, and closes. It is busy while sending, and sends once.
+- **CE-U4** **A refusal** is shown word for word, and the dialog stays open with the typed values.
+- **CE-U5** **The activation guidance** appears exactly when the user's activation is pending.
+- **CE-U6** **The guard:** once dirty, Cancel, Escape and the close button ask "Discard changes?". When the form is clean, they close it.
+- **CE-U7** No accessibility violations with the dialog open.
+
+**Browser, in the dev stack (CE-U8),** each state change approved by the owner:
+
+1. As Ada, change V R's email. The list shows the new address, and one `UserEmailChanged` record is written.
+2. Try an address another active user holds. The refusal is shown word for word.
+3. Change V R back.
+
+### Implementation notes
+
+- **The handler** is `ChangeUserEmailCommandHandler`, in the contract's order of work.
+  - **Refusals:** the address is parsed with `EmailAddress.Create` before the transaction opens, so an invalid address never takes the lock. Its refusal is the domain's, `400` like every other.
+  - **The no-op** is `EmailAddress` equality, which ignores case. It returns before the uniqueness check and before the tokens.
+  - **The record** is declared only after the change and the invalidation, so a refusal or a no-op declares nothing.
+- **Uniqueness:** `IUserRepository.ExistsOtherActiveHumanWithEmailAsync` is a new method with the existing pre-check's predicate, the index's own terms, plus `id <> target`. The existing method is unchanged, and so are its callers, USR-C1 and USR-C5.
+- **Tokens:** `InvalidateOutstandingForUserAsync`, the USR-C4 method, stamped with the clock read after the lock.
+- **Audit:** `ChangeUserEmailCommand` is registered in `AuditDeclarations` with `UserEmailChanged` only, and the declaration test's list of every declared code gains it.
+- **The route** sits in `UserEndpoints`. A missing `email` is refused before dispatch, *"email is required."*, as the other routes treat missing inputs.
+- **The page:**
+  - **Wiring:** `ChangeEmailDialog` is built as Edit profile is. The action is `change-email` in the shared matrix, with its own `changeEmail` permission flag (`user.update`), after Edit profile.
+  - **The address field is text with `inputMode="email"`, not `type="email"`.** *Found during implementation:* the browser sanitises an email input's value, stripping surrounding whitespace, so what was sent differed from what was typed. That breaks CE12's "sent exactly as typed" and hides the server's own trimming.
+  - **The reason** is omitted from the request when the field is empty.
+  - **The current address** comes from the row or GetUser the dialog was opened from, and is not re-read.
+
+### Not included
+
+- **The self-service command and its verification** (A3's self half), and an `EmailVerification` notification type.
+- **Notices** to the old or new address.
+- **Any change to CRD-C7,** including its race with this command (Known Gap).
+- **Sign-in:** it is by username, and is unchanged.
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
@@ -4041,3 +4181,15 @@ Requirement ID → Story → Implementation plan → Branch → Commit(s) → Pu
 **Recorded by owner decision (WS9 of *Local usernames refuse surrounding whitespace*, 2026-09-19).** The surrounding-whitespace rule is deliberately `char.IsWhiteSpace` and nothing more. Invisible Unicode format characters such as U+200B ZERO WIDTH SPACE and U+FEFF are not whitespace to it, so `"\u200Bada"` is a valid username that looks like `ada` but never matches it.
 
 **This is not a whitespace defect.** Prohibiting such characters is a username-character policy, and no specification defines one. It is decided, if ever, with username format rules.
+
+## USR-C3 self-service email change is not built
+
+**Recorded by owner decision (CE1 and CE2 of *USR-C3 ChangeUserEmail*, 2026-09-19).** A3 (c) makes a user's change of their own address subject to verification: pending until confirmed through a token sent to the new address. Only the administrator command exists. A self-service command, its permission, an `EmailVerification` notification type and the verification flow are a separate story. Until then the catalogue's *"Admin or self"* row is outstanding change control, as USR-C2's is.
+
+## No notice is sent when an email address changes
+
+**Recorded by owner decision (CE10).** USR-C3 tells neither the old address nor the new one. Non-secret notifications are not V1 (Notification specification, §1). The change is visible in the audit trail as `UserEmailChanged`.
+
+## CRD-C7 does not serialise against USR-C3
+
+**Recorded by owner decision (CE9).** CRD-C7 Resend activation does not currently serialise against USR-C3 email changes, so an activation token could be issued to the previous address during the race. USR-C3 takes the target's row lock; CRD-C7 does not. Closing this is its own concurrency-hardening story: CRD-C7 taking the same D6 lock. USR-C3 does not change CRD-C7.

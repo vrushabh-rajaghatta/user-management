@@ -15,6 +15,7 @@ using Ligature.Platform.Application.Users.Commands.ReissueActivationLink;
 using Ligature.Platform.Application.Users.Commands.DeactivateUser;
 using Ligature.Platform.Application.Users.Commands.ReactivateUser;
 using Ligature.Platform.Application.Users.Commands.RevokeRole;
+using Ligature.Platform.Application.Users.Commands.ChangeUserEmail;
 using Ligature.Platform.Application.Users.Commands.UpdateUserProfile;
 using Ligature.Platform.Application.Users.Queries.UserIdentities;
 using Ligature.Platform.Application.Users.Queries.MySessions;
@@ -306,6 +307,11 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<UpdateUserProfileCommand, UpdateUserProfileResult>,
             UpdateUserProfileCommandHandler>();
+
+        // USR-C3.
+        services.AddScoped<
+            ICommandHandler<ChangeUserEmailCommand, ChangeUserEmailResult>,
+            ChangeUserEmailCommandHandler>();
 
         // USR-C4 / USR-C5.
         services.AddScoped<

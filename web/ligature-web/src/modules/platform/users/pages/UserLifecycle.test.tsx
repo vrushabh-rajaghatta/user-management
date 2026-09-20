@@ -178,7 +178,7 @@ async function menuOf(user: ReturnType<typeof renderWithApp>["user"], name: stri
 /**
  * The contract's matrix, as data (USR-C4 / USR-C5 UI, "The action matrix",
  * as amended by the USR-C2 UI, U4: Edit profile on every row, active and
- * inactive, for user.update). The permission named in each cell shows the
+ * inactive, for user.update; and by USR-C3, CE-U1: Change email likewise). The permission named in each cell shows the
  * action; nothing else does.
  */
 function expectedMenu(row: Row, holds: ReadonlySet<PermissionCode>): string[] {
@@ -194,7 +194,7 @@ function expectedMenu(row: Row, holds: ReadonlySet<PermissionCode>): string[] {
   }
 
   if (holds.has(ROLE_READ)) menu.push("Manage roles");
-  if (holds.has(UPDATE)) menu.push("Edit profile");
+  if (holds.has(UPDATE)) menu.push("Edit profile", "Change email");
 
   return menu.sort();
 }

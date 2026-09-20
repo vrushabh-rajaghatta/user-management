@@ -8,6 +8,16 @@ public interface IUserRepository
         EmailAddress email,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// USR-C3 (CE5): as <see cref="ExistsActiveHumanWithEmailAsync"/>, but
+    /// ignoring one user — the target of an email change, whose own address is
+    /// not a collision with itself.
+    /// </summary>
+    Task<bool> ExistsOtherActiveHumanWithEmailAsync(
+        EmailAddress email,
+        UserId excluding,
+        CancellationToken cancellationToken);
+
     Task AddAsync(
         User user,
         CancellationToken cancellationToken);

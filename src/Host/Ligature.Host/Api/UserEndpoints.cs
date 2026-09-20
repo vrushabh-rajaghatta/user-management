@@ -2,6 +2,7 @@ using System.Globalization;
 using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
+using Ligature.Platform.Application.Users.Commands.ChangeUserEmail;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.DeactivateUser;
 using Ligature.Platform.Application.Users.Commands.ReactivateUser;
@@ -166,6 +167,25 @@ public static class UserEndpoints
                 + "no body, whether or not anything changed; a change is audited. "
                 + "A missing or invalid name, an unknown user, the System actor and "
                 + "a missing permission are 400.")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+
+        // USR-C3, the administrator command (A3 (c), administrator half).
+        routes.MapPost("/api/users/{userId:guid}/email", ChangeEmailAsync)
+            .WithTags("Users")
+            .WithSummary("Change a user's email address (administrator).")
+            .WithDescription(
+                "Requires a carrier and the 'user.update' permission. Body: email, "
+                + "required, and reason, optional. The address is trimmed and must be "
+                + "well formed; another human who is not inactive must not hold it. "
+                + "The change takes effect immediately and is audited, and every "
+                + "outstanding activation and password-reset link the user was sent "
+                + "stops working; nothing new is sent. The same address, in any case, "
+                + "changes nothing. Success is 204 with no body. A missing or invalid "
+                + "address, an address in use, an unknown user, a user who is not a "
+                + "human and a missing permission are 400.")
             .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
@@ -469,6 +489,26 @@ public static class UserEndpoints
     }
 
     private sealed record UpdateProfileRequest(string? FirstName, string? LastName, string? DisplayName);
+
+    private static async Task<IResult> ChangeEmailAsync(
+        Guid userId,
+        ChangeEmailRequest? request,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        // A missing address is refused before dispatch, as the other endpoints
+        // treat missing inputs; everything else about it is the domain's.
+        if (request?.Email is null)
+            return Results.BadRequest(new { Error = "email is required." });
+
+        await dispatcher.SendAsync<ChangeUserEmailCommand, ChangeUserEmailResult>(
+            new ChangeUserEmailCommand(new UserId(userId), request.Email, request.Reason),
+            cancellationToken);
+
+        return Results.NoContent();
+    }
+
+    private sealed record ChangeEmailRequest(string? Email, string? Reason);
 
     private static async Task<IResult> CreateAsync(
         CreateUserRequest? request,

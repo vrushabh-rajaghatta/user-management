@@ -81,6 +81,7 @@ public sealed class RoleAssignmentReasonTests
         public DateTimeOffset UtcNow => DateTimeOffset.UtcNow;
 
         public Task<bool> ExistsActiveHumanWithEmailAsync(EmailAddress email, CancellationToken cancellationToken) => throw Touched();
+        public Task<bool> ExistsOtherActiveHumanWithEmailAsync(EmailAddress email, UserId excluding, CancellationToken cancellationToken) => throw Touched();
         public Task AddAsync(User user, CancellationToken cancellationToken) => throw Touched();
         public Task<User?> FindAsync(UserId userId, CancellationToken cancellationToken) => throw Touched();
         public Task<Role?> FindAsync(RoleId roleId, CancellationToken cancellationToken) => throw Touched();

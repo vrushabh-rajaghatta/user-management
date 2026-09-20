@@ -16,6 +16,7 @@ import { EmptyState } from "@/shared/components/EmptyState";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { useUsers } from "../hooks/useUsers";
 import type { UserRow } from "../schemas/users";
+import { ChangeEmailDialog } from "./ChangeEmailDialog";
 import { EditProfileDialog } from "./EditProfileDialog";
 import { ManageRolesDialog } from "./ManageRolesDialog";
 import { UserActionDialog, type UserAction } from "./UserActionDialog";
@@ -91,6 +92,7 @@ export function UsersTable() {
   const [pending, setPending] = useState<Pending | undefined>(undefined);
   const [managing, setManaging] = useState<{ user: UserRow; open: boolean } | undefined>(undefined);
   const [editing, setEditing] = useState<{ user: UserRow; open: boolean } | undefined>(undefined);
+  const [changing, setChanging] = useState<{ user: UserRow; open: boolean } | undefined>(undefined);
   const [announcement, setAnnouncement] = useState("");
   const [queued, setQueued] = useState<string | undefined>(undefined);
   const triggers = useRef(new Map<string, HTMLButtonElement>());
@@ -110,6 +112,8 @@ export function UsersTable() {
       setManaging({ user, open: true });
     } else if (action === "edit-profile") {
       setEditing({ user, open: true });
+    } else if (action === "change-email") {
+      setChanging({ user, open: true });
     } else {
       setPending({ user, action, open: true });
     }
@@ -168,6 +172,29 @@ export function UsersTable() {
           }}
           onClosed={() => {
             setEditing(undefined);
+
+            if (queued !== undefined) {
+              setAnnouncement(queued);
+              setQueued(undefined);
+            }
+          }}
+        />
+      )}
+
+      {changing === undefined ? null : (
+        <ChangeEmailDialog
+          key={changing.user.userId}
+          open={changing.open}
+          user={changing.user}
+          returnFocus={returnFocus}
+          onClose={() => {
+            setChanging({ ...changing, open: false });
+          }}
+          onSaved={(message) => {
+            setQueued(message);
+          }}
+          onClosed={() => {
+            setChanging(undefined);
 
             if (queued !== undefined) {
               setAnnouncement(queued);
