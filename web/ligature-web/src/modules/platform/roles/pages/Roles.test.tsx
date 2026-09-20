@@ -224,11 +224,26 @@ describe("the role detail", () => {
     expect(state.grantReads).toEqual([REVIEWER.roleId]);
   });
 
+  // The server is the authority on whether a role exists (RA11). A list read
+  // that still carries the role — a stale cache — must not override its 404.
+  it("honours the server's 404 even when the list still carries the role", async () => {
+    backend({ grants: () => HttpResponse.json({ error: "The role does not exist." }, { status: 404 }) });
+    await render([ROLE_READ], `/admin/roles/${REVIEWER.roleId}`);
+
+    // The not-found state, not the generic failure: a 404 is an answer, so
+    // there is nothing to retry.
+    expect(await screen.findByText("Not found")).toBeInTheDocument();
+    expect(screen.getByText("The role does not exist.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.queryByRole("table", { name: "Permissions" })).toBeNull();
+  });
+
   it("shows a not-found state for a role that does not exist", async () => {
     backend();
     await render([ROLE_READ], "/admin/roles/b5000000-0000-4000-8000-0000000000ff");
 
-    expect(await screen.findByText("The role does not exist.")).toBeInTheDocument();
+    expect(await screen.findByText("Not found")).toBeInTheDocument();
+    expect(screen.getByText("The role does not exist.")).toBeInTheDocument();
     expect(screen.queryByRole("table", { name: "Permissions" })).toBeNull();
   });
 });
