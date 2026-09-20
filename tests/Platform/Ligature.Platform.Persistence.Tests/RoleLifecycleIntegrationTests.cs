@@ -61,13 +61,13 @@ public sealed class RoleLifecycleIntegrationTests : IClassFixture<ActivationData
         Assert.Equal(created.Code, deactivated.Code);
         Assert.Equal(created.Name, deactivated.Name);
         Assert.False(deactivated.IsSystemRole);
-        Assert.Equal("f", await ActivityAsync(created.RoleId));
+        Assert.Equal("false", await ActivityAsync(created.RoleId));
 
         var reactivated = await ReactivateAsync(admin, created.RoleId);
 
         Assert.True(reactivated.IsActive);
         Assert.Equal(created.Code, reactivated.Code);
-        Assert.Equal("t", await ActivityAsync(created.RoleId));
+        Assert.Equal("true", await ActivityAsync(created.RoleId));
     }
 
     // ---------------------------------------------------------------- RD-A2
@@ -150,7 +150,7 @@ public sealed class RoleLifecycleIntegrationTests : IClassFixture<ActivationData
         Assert.Equal(NoDeactivate, await RefusalAsync(() => DeactivateAsync(admin, seeded, "Trying.")));
         Assert.Equal(NoReactivate, await RefusalAsync(() => ReactivateAsync(admin, seeded)));
 
-        Assert.Equal("t", await ActivityAsync(seeded));
+        Assert.Equal("true", await ActivityAsync(seeded));
         Assert.Equal(provenance, await ProvenanceAsync(seeded));
         Assert.Equal(0, await RecordCountAsync(seeded, "RoleDeactivated"));
     }
@@ -193,7 +193,7 @@ public sealed class RoleLifecycleIntegrationTests : IClassFixture<ActivationData
             await RefusalAsync(() => ReactivateAsync(reviewer, created.RoleId)),
             StringComparison.OrdinalIgnoreCase);
 
-        Assert.Equal("t", await ActivityAsync(created.RoleId));
+        Assert.Equal("true", await ActivityAsync(created.RoleId));
     }
 
     // ------------------------------------------------------ RD-A8 and RD-A9
@@ -308,7 +308,7 @@ public sealed class RoleLifecycleIntegrationTests : IClassFixture<ActivationData
 
     private static List<(string Name, string? Value)> Members(string json)
         => [.. System.Text.Json.JsonDocument.Parse(json).RootElement.EnumerateObject()
-            .Select(x => (x.Name, (string?)x.Value.ToString()))
+            .Select(x => (x.Name, (string?)x.Value.GetRawText()))
             .OrderBy(x => x.Name, StringComparer.Ordinal)];
 
     private async Task<bool> AllowedAsync(UserId user, string permission)
@@ -423,6 +423,20 @@ public sealed class RoleLifecycleIntegrationTests : IClassFixture<ActivationData
                      'Active', now(), '{system}', now(), '{system}');
              """);
 
+        // Invariant 7: authorisation needs an active IDENTITY as well as an
+        // active user, and AuthorizationService checks that before its
+        // predicate runs. A holder without one would read as unauthorised for
+        // a reason that has nothing to do with this story.
+        var identity = Guid.NewGuid();
+
+        await ExecuteAsync(
+            $"""
+             INSERT INTO user_identity (id, user_id, actor_type, identity_type, identity_provider,
+                                        subject_id, username, status, created_at, created_by)
+             VALUES ('{identity}', '{id}', 'Human', 'Local', 'Application',
+                     '{identity}', 'holder-{identity:N}', 'Active', now(), '{system}');
+             """);
+
         return new UserId(id);
     }
 
@@ -435,6 +449,7 @@ public sealed class RoleLifecycleIntegrationTests : IClassFixture<ActivationData
                FROM permission p WHERE p.code = '{permissionCode}';
              """);
 
+    /// <summary>boolean::text renders "true"/"false", not psql's display "t"/"f".</summary>
     private Task<string> ActivityAsync(RoleId roleId)
         => ScalarAsync<string>($"SELECT is_active::text FROM role WHERE id = '{roleId.Value}'");
 

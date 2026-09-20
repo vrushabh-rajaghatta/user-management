@@ -27,6 +27,13 @@ interface ConfirmActionProps {
   /** While true, confirming and dismissing are both refused. */
   readonly busy?: boolean;
 
+  /**
+   * Whether the confirm button carries the destructive treatment. Reserved for
+   * an action whose effect a reader should weigh before pressing it — not for
+   * every confirmation, or the signal stops meaning anything.
+   */
+  readonly destructive?: boolean;
+
   readonly onConfirm: () => void;
 
   /**
@@ -67,6 +74,7 @@ export function ConfirmAction({
   busyLabel,
   cancelLabel = "Cancel",
   busy = false,
+  destructive = false,
   onConfirm,
   returnFocus,
   onClosed,
@@ -110,6 +118,7 @@ export function ConfirmAction({
             {cancelLabel}
           </Button>
           <Button
+            variant={destructive ? "destructive" : "default"}
             disabled={busy}
             onClick={() => {
               if (!busy) {

@@ -176,8 +176,32 @@ public sealed class Role : AggregateRoot<RoleId>
     /// nothing. Ownership is refused FIRST, so a system role is refused
     /// whatever state it is in.
     /// </summary>
-    public bool Deactivate() => throw new NotImplementedException("AUT-C5 (RD4).");
+    public bool Deactivate()
+    {
+        if (IsSystemRole)
+            throw new DomainException(
+                "System roles cannot be deactivated.");
+
+        if (!IsActive)
+            return false;
+
+        IsActive = false;
+
+        return true;
+    }
 
     /// <summary>AUT-C6 (RD4). The inverse, with the same shape.</summary>
-    public bool Reactivate() => throw new NotImplementedException("AUT-C6 (RD4).");
+    public bool Reactivate()
+    {
+        if (IsSystemRole)
+            throw new DomainException(
+                "System roles cannot be reactivated.");
+
+        if (IsActive)
+            return false;
+
+        IsActive = true;
+
+        return true;
+    }
 }

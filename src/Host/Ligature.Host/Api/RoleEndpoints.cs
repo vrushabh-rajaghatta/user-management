@@ -1,6 +1,8 @@
 using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Roles.Commands.CreateRole;
+using Ligature.Platform.Application.Roles.Commands.DeactivateRole;
+using Ligature.Platform.Application.Roles.Commands.ReactivateRole;
 using Ligature.Platform.Application.Roles.Commands.UpdateRoleMetadata;
 using Ligature.Platform.Application.Roles.Queries.PermissionCatalogue;
 using Ligature.Platform.Application.Roles.Queries.RoleAdministration;
@@ -66,6 +68,40 @@ public static class RoleEndpoints
                 + "that changes nothing writes nothing and records nothing. An "
                 + "invalid input, an unknown role, a release-owned role and a "
                 + "missing permission are 400.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+
+        // AUT-C5 / AUT-C6. The state-changing pair, in the same convention.
+        routes.MapPost("/api/roles/{roleId:guid}/deactivate", DeactivateAsync)
+            .WithTags("Roles")
+            .WithSummary("Retire a tenant role (administrator).")
+            .WithDescription(
+                "Requires a carrier and the 'role.manage' permission, and a human "
+                + "caller. Body: reason, required and not blank. Retiring a role "
+                + "PREVENTS NEW ASSIGNMENTS; it does not revoke any existing one, "
+                + "and every current holder keeps the access the role grants. The "
+                + "role is never deleted. A role that is already inactive answers "
+                + "200 and writes nothing. A release-owned role is refused. Success "
+                + "is 200 with the role as stored. A missing or blank reason, an "
+                + "unknown role, a release-owned role and a missing permission "
+                + "are 400.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+
+        routes.MapPost("/api/roles/{roleId:guid}/reactivate", ReactivateAsync)
+            .WithTags("Roles")
+            .WithSummary("Return a retired tenant role to use (administrator).")
+            .WithDescription(
+                "Requires a carrier and the 'role.manage' permission, and a human "
+                + "caller. No body, and no reason: the catalogue gives this command "
+                + "none. The role may be assigned again; existing holders were never "
+                + "affected. A role that is already active answers 200 and writes "
+                + "nothing. A release-owned role is refused. Success is 200 with the "
+                + "role as stored.")
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
@@ -188,6 +224,50 @@ public static class RoleEndpoints
     /// such input, so there is no attempted mutation to refuse.
     /// </summary>
     private sealed record UpdateRoleMetadataRequest(string? Name, string? Description);
+
+    private static async Task<IResult> DeactivateAsync(
+        Guid roleId,
+        DeactivateRoleRequest? request,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        if (request?.Reason is null)
+            return Results.BadRequest(new { Error = "A reason is required." });
+
+        var result = await dispatcher.SendAsync<DeactivateRoleCommand, DeactivateRoleResult>(
+            new DeactivateRoleCommand(new RoleId(roleId), request.Reason),
+            cancellationToken);
+
+        return Stored(result.RoleId, result.Code, result.Name, result.Description, result.IsSystemRole, result.IsActive);
+    }
+
+    private static async Task<IResult> ReactivateAsync(
+        Guid roleId,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var result = await dispatcher.SendAsync<ReactivateRoleCommand, ReactivateRoleResult>(
+            new ReactivateRoleCommand(new RoleId(roleId)),
+            cancellationToken);
+
+        return Stored(result.RoleId, result.Code, result.Name, result.Description, result.IsSystemRole, result.IsActive);
+    }
+
+    /// <summary>The role AS STORED (RD6), the same six members AUT-C3 and AUT-C4 answer.</summary>
+    private static IResult Stored(
+        RoleId roleId, string code, string name, string? description, bool isSystemRole, bool isActive)
+        => Results.Ok(new
+        {
+            RoleId = roleId.Value,
+            Code = code,
+            Name = name,
+            Description = description,
+            IsSystemRole = isSystemRole,
+            IsActive = isActive,
+        });
+
+    /// <summary>A reason, and nothing else. AUT-C6 has no request body at all (RD5).</summary>
+    private sealed record DeactivateRoleRequest(string? Reason);
 
     private static async Task<IResult> ListAsync(
         HttpRequest request,
