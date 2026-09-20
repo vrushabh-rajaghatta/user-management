@@ -3727,6 +3727,152 @@ The name and description rules are **AUT-C3's, unchanged** (RC2) — this story 
 
 ---
 
+## AUT-C5 DeactivateRole and AUT-C6 ReactivateRole — the role's lifecycle
+
+**Status:** Contract frozen 2026-09-20 by owner decision (RD1–RD9). One gate for the pair: AUT-C6 is the inverse, and shipping deactivation without a way back would leave an incomplete lifecycle.
+
+### Requirement
+
+An administrator holding `role.manage` retires a **tenant** role, and brings it back. Retiring is `IsActive = false` — **never a delete** (RO4, invariant 11).
+
+```text
+DeactivateRole                      ReactivateRole
+   role.manage + human actor           role.manage + human actor
+   -> refuse a blank reason            -> load the role
+   -> load the role                    -> refuse the unknown
+   -> refuse the unknown               -> refuse a system role
+   -> refuse a system role             -> already active: 200, nothing written
+   -> already inactive: 200,           -> otherwise IsActive = true
+      nothing written                  -> RoleReactivated, Before/After
+   -> otherwise IsActive = false       -> 200 with the stored role
+   -> RoleDeactivated, Before/After
+      and the reason
+   -> 200 with the stored role
+```
+
+### The conceptual correction this gate makes
+
+The command catalogue's failure-mode note says a role with many active holders should *"warn, not silently strand them"*. **That instinct points the wrong way, and the running system already knows it.** `role.IsActive` is deliberately absent from the authorisation predicate — invariant 7, UR12 and AUT-Q1's full predicate all omit it, `AuthorizationService` says so in three comments, and **two positive regression tests pin it**. Nobody loses access when a role is deactivated.
+
+> **Deactivation is a change to role-assignment ELIGIBILITY, not an access revocation.**
+
+So the warning this story shows is not a danger notice. It is the plain consequence, stated so an administrator is not surprised in either direction: new assignments stop, and current holders keep what they have. **The word "strand" does not appear in any user-facing copy**, because it implies a loss of access that does not occur.
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **RD1** | **AUT-C5 and AUT-C6 ship together.** AUT-C6 already has its domain method, its seeded audit event and its own catalogue row, and is "a straightforward inverse". Deactivation without a way back is an incomplete lifecycle. AUT-C6's contract stays the simpler of the two. |
+| **RD2** | **The holder count comes from AUT-Q5, and AUT-Q4 is not built.** The catalogue says to "consider surfacing active-holder count first", and `activeHolderCount` is already a member of the role administration read. AUT-Q4 GetRoleMembers stays deferred, as RA7 froze it. **No member endpoint, no threshold, no definition of "many", no force flag.** The count is **information, not a blocking safety rule**: nothing about it can refuse the command. |
+| **RD3** | **The confirmation states the actual effect.** *"This role has N active holders. Deactivating it will prevent new assignments, but existing holders will keep their current access."* With no holders the holder sentence is dropped. The copy never says "strand". |
+| **RD4** | **Reaching the state that is already held is a successful no-op**, not a refusal — the convention AUT-C4 established (RM3). Already inactive, or already active, answers **`200` with the stored role, writes nothing and records nothing.** `Role.Deactivate()` and `Role.Reactivate()` therefore become **change-aware**, returning `bool`, and their `"Role is already inactive."` / `"Role is already active."` refusals are **removed**. This is a deliberate departure from the domain as written; it gives C5 and C6 symmetric lifecycle semantics and matches the rest of the platform. |
+| **RD5** | **AUT-C5 requires a reason; AUT-C6 takes none.** The catalogue gives C5 `RoleId, Reason` and C6 `RoleId`, and `RoleDeactivated` is seeded `ReasonRequired: true` while `RoleReactivated` is `false`. The reason is **refused before any database work** (G6) with *"A reason is required to deactivate a role."* — this matters concretely: AR9 in the audit assembler would otherwise turn a missing reason into an `InvalidOperationException`, which `ProblemMiddleware` only catches as a catch-all, i.e. a **500**. GrantRole already guards against exactly that. **No reason is added to C6 for symmetry's sake.** |
+| **RD6** | **`POST /api/roles/{roleId}/deactivate` and `POST /api/roles/{roleId}/reactivate`** → `200` with the **stored role**, exactly `{ roleId, code, name, description, isSystemRole, isActive }`. The verb and shape follow USR-C4/C5 and AUT-C4; the caller gets the authoritative post-mutation state without a second read. |
+| **RD7** | **`Before` and `After`, both sides.** `RoleDeactivated` carries `Before { IsActive: true }` → `After { IsActive: false }` plus the reason; `RoleReactivated` carries `Before { IsActive: false }` → `After { IsActive: true }` and no reason. `BeforeAfter` permits one side alone (AR17), but here both sides communicate the transition. **Both events are already seeded and active; `AuditEventCatalogue.Version` is not bumped.** |
+| **RD8** | **One state-dependent action on the Role detail page.** A tenant role shows **Deactivate** when active and **Reactivate** when inactive — never both. **Edit stays available in both states**, as RM-A10 requires. **Nothing is added to the roles list**: the detail page is already the role-management surface, and lifecycle controls there keep the list from becoming an action-heavy table. A release-owned role is offered **neither** action, and the server stays authoritative regardless. Deactivate uses the **`destructive`** button variant — its first use in this client; Reactivate uses the ordinary treatment. |
+| **RD9** | **No row lock, for either command.** There is no lifecycle-sensitive cascade: deactivation revokes no assignment, changes no existing authorisation, and the only transition is `IsActive`. The known race — `GrantRole` reads the role without a lock, so a grant can interleave with a deactivation — is recorded as a **Known Gap** rather than solved with locking the authorisation semantics deliberately tolerate. |
+
+### The rules, and what each refusal says
+
+| Input | Rule | Refusal |
+| --- | --- | --- |
+| **Reason** (C5 only) | required, not blank, **before any database work** | *"A reason is required to deactivate a role."* |
+| **RoleId** | names an existing role | *"The role does not exist."* |
+| | names a **tenant** role — C5 | *"System roles cannot be deactivated."* |
+| | names a **tenant** role — C6 | *"System roles cannot be reactivated."* |
+| **Already in the target state** | **not a refusal** (RD4) | — |
+
+The two system-role sentences are the domain's own, **unchanged**. An unknown role is `400` *"The role does not exist."*, as AUT-C4 answers it.
+
+### Order of work in the handlers
+
+1. **AUT-C5 only: refuse a blank reason**, as the first statement, **outside the transaction** — no transaction is opened, so no database work occurs (G6).
+2. **Load** the role tracked. No row lock (RD9).
+3. **Refuse an unknown role**, then let the domain refuse a **system role** — ownership before state, as AUT-C4 orders it.
+4. **Capture `Before`**, then call the change-aware domain method.
+5. **Nothing changed:** return the stored role. **No write, no record.**
+6. **Otherwise** declare the event with `Before`, `After`, and — C5 only — `.WithReason(command.Reason)`.
+7. **Answer `200`** with the stored role.
+
+### Change control
+
+**No workbook is edited.** Four items are outstanding change control:
+
+- **The `Command steps` sheet has no sequence for AUT-C5 or AUT-C6.** The order above is this contract's, derived from AUT-C1's reason handling and AUT-C4's shape.
+- **The catalogue's "warn, not silently strand them" is answered by RD3, not implemented literally.** Stranding does not occur; the copy states what does.
+- **"Consider surfacing active-holder count first"** is satisfied from AUT-Q5 rather than by AUT-Q4 (RD2), whose deferral RA7 already recorded.
+- **The frozen `role` entity has no column for a deactivation reason, timestamp or actor**, unlike `app_user`. The reason reaches the `RoleDeactivated` audit record and nowhere else. AUT-C8 has the identical shape. This story adds no column.
+
+### The actions (RD8)
+
+- **On the Role detail page**, for `role.manage` holders and **tenant roles only**: **Deactivate** while the role is active, **Reactivate** while it is inactive. Beside the existing **Edit role**, which is offered in both states.
+- **Deactivate** opens a confirmation carrying:
+  - the consequence, stated per RD3, with the holder count from the role already on the page;
+  - a **required Reason** field, as Revoke role and Deactivate user have;
+  - a confirm button labelled **Deactivate**, in the `destructive` variant, and **Deactivating…** while it sends.
+- **Reactivate** opens a confirmation with no reason field, stating that the role may be assigned again and that existing holders are unaffected, confirmed by **Reactivate**.
+- **On `200`:** the dialog closes, the page announces — *"Role deactivated: {name}."* / *"Role reactivated: {name}."* using the **server's** stored name — and the role is re-read. A call that changed nothing is still a success to the client, which does not predict a no-op.
+- **Focus** returns to the action that opened the dialog.
+
+### Acceptance Criteria
+
+**The commands**
+
+- **RD-A1** Deactivating an active tenant role sets `is_active` false and answers the six members of RD6 with `isActive` false; `code`, `name`, `description`, `isSystemRole`, `createdAt` and `createdBy` are untouched. Reactivating an inactive one is the exact inverse.
+- **RD-A2** **One `RoleDeactivated`** is written, with the administrator as actor, the role as primary entity, `Before { IsActive: true }`, `After { IsActive: false }` and **the supplied reason**. **One `RoleReactivated`** is written with the inverse pair and **no reason**. No other record is written, and `AuditEventCatalogue.Version` is unchanged.
+- **RD-A3** **The no-op** (RD4): deactivating an already-inactive role, and reactivating an already-active one, answer `200` with the stored role while leaving `updated_at`, `updated_by` and the audit sequence untouched.
+- **RD-A4** **A blank reason is refused before any database work** (G6): no transaction is opened and no collaborator is touched, for `""` and for whitespace. AUT-C6 has no reason input at all.
+- **RD-A5** **A system role is refused** for both commands, with their own sentences, and nothing is written — including when it is already in the target state, so ownership precedes the no-op check.
+- **RD-A6** **An unknown role is refused** for both commands with *"The role does not exist."*, and nothing is written.
+- **RD-A7** **Authorisation:** a caller without `role.manage` is refused, and so is a non-human caller, for both commands.
+- **RD-A8** **Deactivation changes no assignment and no access.** After deactivating a role that has holders: every `user_role` row is untouched, and the holder's authorisation is unchanged on **both** views — `IsAllowedAsync` and the effective set. This is AUT-C5's central claim and is asserted positively, not as the absence of a filter.
+- **RD-A9** **Eligibility does change:** after deactivation the role is refused by AUT-C1 (*"This role cannot be granted."*), is absent from the grantable list `GET /api/roles`, and is absent from AUT-Q5 unless `includeInactive` is set — where it appears with `isActive` false and its derived values unchanged. After reactivation all three are restored.
+- **RD-A10** **An inactive tenant role can still be edited** (RM-A10), and reactivating it later keeps the edited metadata.
+- **RD-A11** **Nothing else changes:** no permission, no grant, no other role, and no user.
+
+**Over HTTP**
+
+- **RD-A12** Both routes answer `200` with the six members. A missing reason on `/deactivate` is `400`, including for an absent body. A refusal is `400 { "error": … }` with the sentences above. No carrier is `401`. `GET /api/roles`, AUT-Q5 and AUT-Q3 are otherwise undisturbed.
+
+**The actions**
+
+- **RD-U1** Deactivate is offered on a tenant role's detail page to a `role.manage` holder while the role is active; Reactivate while it is inactive; **never both**, never to a `role.read` holder, and neither on a release-owned role for anyone.
+- **RD-U2** **Edit role remains offered in both states**, and the roles list gains no lifecycle action.
+- **RD-U3** The Deactivate confirmation states the consequence with the holder count, and **never uses the word "strand"**. With no holders the holder sentence is absent.
+- **RD-U4** A blank reason is flagged client-side and **nothing is sent**; the reason is otherwise sent as the server's own rule decides.
+- **RD-U5** On `200` the dialog closes, the page announces with the **server's** stored name, and the role is re-read, so the action flips to its inverse. It is busy while sending, and sends once.
+- **RD-U6** A refusal is shown word for word and the dialog stays open.
+- **RD-U7** No accessibility violations with either confirmation open.
+
+**Browser, in the dev stack (RD-U8),** with the owner's approval. These steps are **reversible** — that is the point of the pair — but **each transition's audit record is permanent**.
+
+1. As Ada, open `dev-smoke-reviewer` and **Deactivate** it with a reason. It reads Inactive, the action becomes Reactivate, and Edit is still offered.
+2. It disappears from the Roles list until **Show inactive roles** is ticked, and from the grant form's role list.
+3. **Reactivate** it. It reads Active again and returns to both lists.
+
+### Implementation notes
+
+- **`Role.Deactivate` and `Role.Reactivate` were dead code**, and RD4 changed them rather than only calling them: the `"Role is already inactive."` and `"Role is already active."` refusals are **gone**, replaced by a `bool`. Keeping them beside an idempotent command would have been two answers to one question.
+- **The blank-reason check is the handler's first statement, outside the transaction** (G6). This is not ceremony: `RoleDeactivated` is seeded `ReasonRequired`, and a blank reason reaching `AuditRecordAssembler` fails AR9 as an emission defect — an `InvalidOperationException`, which `ProblemMiddleware` catches only as a catch-all, so a **500** rather than a refusal. GrantRole carries the same guard and says so. Three mutants attack it: removed, moved inside the transaction, and weakened to a null check so whitespace slips through.
+- **Neither handler touches a `user_role` row**, and that is the story. `Deactivation_changes_eligibility_and_leaves_access_untouched` proves it through the **command**; `AuthorizationServiceTests` already proved it against the **column**. A handler that reached for `role.IsActive`, or cascaded into assignments, passes there and fails here.
+  - That test stages a live `role_permission` row with SQL. AUT-C7 does not exist, and a role carrying no permissions cannot demonstrate *keeping* any — the assertion would pass vacuously.
+  - **A holder needs an active IDENTITY as well as an active user** (invariant 7), checked before the predicate runs. Seeding only `app_user` made the test fail on its own setup; had it asserted only the post-deactivation state, it would have "passed" while proving nothing.
+- **One domain fixture reaches past the API under test, deliberately.** A system role that is *already inactive* cannot be built through the domain, because the domain refuses to retire one — so the ordering claim, ownership before the no-op, would be untestable. The state is staged by reflection; the refusal is still what must come out. The database half is staged with SQL.
+- **`ConfirmAction` gained a `destructive` prop**, its first caller being Deactivate (RD8). The variant existed in the button component and had never been used anywhere in the client.
+- **The roles module owns its own three-line reason schema.** Importing the users module's was refused by the module-boundaries rule, and moving it to `shared/forms` was refused again because that layer bans `zod` outright (*"FormField knows nothing of schemas"*). Two rules pointing the same way: modules stay independent, and the form primitives stay ignorant of validation. The users module is untouched.
+- **The announcement uses the name the SERVER answered.** The mutation campaign's one survivor was the local name, which is identical unless someone renamed the role since this page read it — a stale page, not a contrived case. Closed with a test, matching the convention RC-U3 and RM-U3 already pinned.
+- **Two PostgreSQL renderings caught tests, not the product:** `boolean::text` gives `true`/`false`, not psql's display `t`/`f`; and `JsonElement.ToString()` capitalises booleans where `GetRawText()` reflects what is stored.
+
+### Not included
+
+- **AUT-Q4 GetRoleMembers** and any member list or per-holder detail (RD2).
+- **AUT-C7/C8 permissions**, and deletion of any kind.
+- **Any change to the authorisation predicate**, to AUT-C1's eligibility rule, to AUT-Q5, AUT-Q3 or `GET /api/roles`.
+- **Any lifecycle column on `role`** — no `deactivated_at`, `deactivated_by` or reason column.
+- **Any locking** (RD9), and any resolution of the grant/deactivation race, which is recorded as a Known Gap.
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
@@ -3761,6 +3907,25 @@ AUT-C3 shipped against this asymmetry and AUT-C4 does too. The general
 obligation the specification does state is invariant 16, that every lifecycle
 action produces an audit event carrying an actor snapshot, which these satisfy.
 The two documents disagree about completeness, not about content.
+
+## A grant can race a role's deactivation
+
+`GrantRoleCommandHandler` reads the role with `FindAsync` — no row lock — while
+locking only the **target user** row (D6). `DeactivateRoleCommandHandler` takes
+no lock either (RD9). So a grant that has passed its eligibility check can
+commit against a role another transaction is retiring, leaving a fresh
+assignment on an inactive role.
+
+**Deliberately tolerated, not overlooked.** The consequence is small and
+self-correcting in the direction that matters: the assignment is valid and its
+holder has access, which is exactly what AUT-C5 guarantees every existing
+holder anyway. Nothing is stranded and nothing is silently revoked. Locking the
+role on the grant path would add contention to the hottest write in the
+authorisation model to prevent an outcome the model already accepts.
+
+Recorded at the AUT-C5/C6 gate (RD9). If a later requirement makes a fresh
+assignment on a retired role genuinely wrong, the fix belongs with that
+requirement, and it is a lock on the role in both commands.
 
 ## USR-C2 change control: "Admin or self" is two commands
 

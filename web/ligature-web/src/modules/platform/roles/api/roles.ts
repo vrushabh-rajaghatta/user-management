@@ -38,3 +38,21 @@ export const updateRoleMetadata = (roleId: string, form: UpdateRoleForm) =>
     body: form,
     response: createdRoleSchema,
   });
+
+/**
+ * AUT-C5: POST /api/roles/{roleId}/deactivate, role.manage. The reason is
+ * required and reaches the audit record; the answer is the role AS STORED, so
+ * the page knows which action to offer next without a second read (RD6).
+ */
+export const deactivateRole = (roleId: string, reason: string) =>
+  api.post(`/api/roles/${encodeURIComponent(roleId)}/deactivate`, {
+    body: { reason },
+    response: createdRoleSchema,
+  });
+
+/** AUT-C6: the inverse, and no reason (RD5). */
+export const reactivateRole = (roleId: string) =>
+  api.post(`/api/roles/${encodeURIComponent(roleId)}/reactivate`, {
+    body: {},
+    response: createdRoleSchema,
+  });

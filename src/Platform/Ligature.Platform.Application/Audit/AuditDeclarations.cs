@@ -2,6 +2,8 @@ using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Roles.Commands.CreateRole;
+using Ligature.Platform.Application.Roles.Commands.DeactivateRole;
+using Ligature.Platform.Application.Roles.Commands.ReactivateRole;
 using Ligature.Platform.Application.Roles.Commands.UpdateRoleMetadata;
 using Ligature.Platform.Application.Users.Commands.ChangeUserEmail;
 using Ligature.Platform.Application.Users.Commands.GrantRole;
@@ -115,6 +117,11 @@ public static class AuditDeclarations
 
             // AUT-C4 — one record, and only when the edit changed something (RM3).
             [typeof(UpdateRoleMetadataCommand)] = new("UserManagement", ["RoleUpdated"]),
+
+            // AUT-C5 / AUT-C6 — one record each, and only for a real
+            // transition (RD4). Reaching a state already held records nothing.
+            [typeof(DeactivateRoleCommand)] = new("UserManagement", ["RoleDeactivated"]),
+            [typeof(ReactivateRoleCommand)] = new("UserManagement", ["RoleReactivated"]),
 
             // USR-C4 — the cascade, one operation caused by UserDeactivated.
             // NOT TokenInvalidated: its frozen definition requires a

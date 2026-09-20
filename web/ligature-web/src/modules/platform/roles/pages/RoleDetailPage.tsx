@@ -8,6 +8,7 @@ import { ErrorState } from "@/shared/components/ErrorState";
 import { Page } from "@/shared/components/Page";
 import { useCan } from "@/shared/auth/useCan";
 import { EditRoleDialog } from "../components/EditRoleDialog";
+import { RoleLifecycleDialog } from "../components/RoleLifecycleDialog";
 import { useRolePermissions, useRoles } from "../hooks/useRoles";
 import { RolePermissions } from "../permissions";
 
@@ -30,9 +31,11 @@ export function RoleDetailPage() {
   // AUT-C4 (RM-U1). An affordance, never authorization: the command decides.
   const canManage = useCan(RolePermissions.manage);
   const [editing, setEditing] = useState<{ open: boolean } | undefined>(undefined);
+  const [lifecycle, setLifecycle] = useState<{ open: boolean } | undefined>(undefined);
   const [announcement, setAnnouncement] = useState("");
   const [queued, setQueued] = useState<string | undefined>(undefined);
   const edit = useRef<HTMLButtonElement | null>(null);
+  const lifecycleAction = useRef<HTMLButtonElement | null>(null);
 
   const role = roles.data?.roles.find((candidate) => candidate.roleId === roleId);
   const missing = grants.error instanceof ApiError && grants.error.status === 404;
@@ -89,15 +92,30 @@ export function RoleDetailPage() {
       title={role.name}
       actions={
         editable ? (
-          <Button
-            ref={edit}
-            onClick={() => {
-              setAnnouncement("");
-              setEditing({ open: true });
-            }}
-          >
-            Edit role
-          </Button>
+          <>
+            <Button
+              ref={edit}
+              variant="outline"
+              onClick={() => {
+                setAnnouncement("");
+                setEditing({ open: true });
+              }}
+            >
+              Edit role
+            </Button>
+
+            {/* RD8: one action, and which one is the role's state. */}
+            <Button
+              ref={lifecycleAction}
+              variant={role.isActive ? "destructive" : "default"}
+              onClick={() => {
+                setAnnouncement("");
+                setLifecycle({ open: true });
+              }}
+            >
+              {role.isActive ? "Deactivate" : "Reactivate"}
+            </Button>
+          </>
         ) : undefined
       }
     >
@@ -147,6 +165,28 @@ export function RoleDetailPage() {
           ))}
         </TableBody>
       </Table>
+
+      {lifecycle === undefined ? null : (
+        <RoleLifecycleDialog
+          role={role}
+          open={lifecycle.open}
+          returnFocus={lifecycleAction}
+          onClose={() => {
+            setLifecycle({ open: false });
+          }}
+          onDone={(message) => {
+            setQueued(message);
+          }}
+          onClosed={() => {
+            setLifecycle(undefined);
+
+            if (queued !== undefined) {
+              setAnnouncement(queued);
+              setQueued(undefined);
+            }
+          }}
+        />
+      )}
 
       {editing === undefined ? null : (
         <EditRoleDialog

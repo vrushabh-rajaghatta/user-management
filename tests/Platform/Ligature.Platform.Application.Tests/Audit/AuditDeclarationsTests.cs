@@ -4,6 +4,8 @@ using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Roles.Commands.CreateRole;
+using Ligature.Platform.Application.Roles.Commands.DeactivateRole;
+using Ligature.Platform.Application.Roles.Commands.ReactivateRole;
 using Ligature.Platform.Application.Roles.Commands.UpdateRoleMetadata;
 using Ligature.Platform.Application.Users.Commands.ChangeUserEmail;
 using Ligature.Platform.Application.Users.Commands.DeactivateUser;
@@ -210,6 +212,24 @@ public sealed class AuditDeclarationsTests
     }
 
     /// <summary>
+    /// AUT-C5/C6: one record each, and only for a real transition (RD4).
+    /// Both codes were already seeded, so nothing here bumps
+    /// AuditEventCatalogue.Version.
+    /// </summary>
+    [Fact]
+    public void AUT_C5_and_AUT_C6_declare_the_lifecycle_events()
+    {
+        var deactivate = AuditDeclarations.For(typeof(DeactivateRoleCommand));
+        var reactivate = AuditDeclarations.For(typeof(ReactivateRoleCommand));
+
+        Assert.Equal("UserManagement", deactivate!.OwningContext);
+        Assert.Equal(["RoleDeactivated"], deactivate.Codes);
+
+        Assert.Equal("UserManagement", reactivate!.OwningContext);
+        Assert.Equal(["RoleReactivated"], reactivate.Codes);
+    }
+
+    /// <summary>
     /// USR-C3: one record, and deliberately NOT TokenInvalidated for the links
     /// it invalidates — none is superseded (D13, as USR-C4).
     /// </summary>
@@ -297,6 +317,7 @@ public sealed class AuditDeclarationsTests
                 typeof(DeactivateUserCommand), typeof(ReactivateUserCommand),
                 typeof(UpdateUserProfileCommand), typeof(ChangeUserEmailCommand),
                 typeof(CreateRoleCommand), typeof(UpdateRoleMetadataCommand),
+                typeof(DeactivateRoleCommand), typeof(ReactivateRoleCommand),
                 typeof(UnlockAccountCommand),
                 typeof(RevokeSessionCommand), typeof(RevokeUserSessionsCommand),
                 typeof(SignOutEverywhereCommand),

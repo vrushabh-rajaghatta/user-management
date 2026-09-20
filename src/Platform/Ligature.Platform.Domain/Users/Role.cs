@@ -170,29 +170,38 @@ public sealed class Role : AggregateRoot<RoleId>
             throw new DomainException($"{subject} must be at most {MaxTextLength} characters.");
     }
 
-    public void Deactivate()
+    /// <summary>
+    /// AUT-C5 (RD4). Change-aware, as UpdateMetadata is: false means the role
+    /// is already inactive, and the caller must then write nothing and record
+    /// nothing. Ownership is refused FIRST, so a system role is refused
+    /// whatever state it is in.
+    /// </summary>
+    public bool Deactivate()
     {
         if (IsSystemRole)
             throw new DomainException(
                 "System roles cannot be deactivated.");
 
         if (!IsActive)
-            throw new DomainException(
-                "Role is already inactive.");
+            return false;
 
         IsActive = false;
+
+        return true;
     }
 
-    public void Reactivate()
+    /// <summary>AUT-C6 (RD4). The inverse, with the same shape.</summary>
+    public bool Reactivate()
     {
         if (IsSystemRole)
             throw new DomainException(
                 "System roles cannot be reactivated.");
 
         if (IsActive)
-            throw new DomainException(
-                "Role is already active.");
+            return false;
 
         IsActive = true;
+
+        return true;
     }
 }
