@@ -7,6 +7,10 @@ namespace Ligature.Platform.Persistence.Repositories;
 
 public sealed class UserRoleRepository : IUserRoleRepository
 {
+    /// <summary>AUT-C7 (RP6). Not implemented yet.</summary>
+    public Task<bool> HasActiveAgentAssignmentAsync(RoleId roleId, DateTimeOffset at, CancellationToken cancellationToken)
+        => throw new NotImplementedException("AUT-C7 (RP6).");
+
     private readonly LigatureDbContext _dbContext;
 
     public UserRoleRepository(LigatureDbContext dbContext)
