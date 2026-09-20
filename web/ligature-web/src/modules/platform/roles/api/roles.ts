@@ -1,4 +1,5 @@
 import { api } from "@/shared/api/client";
+import { createdRoleSchema, type CreateRoleForm } from "../schemas/createRole";
 import { rolePermissionsSchema, rolesSchema } from "../schemas/roles";
 
 /** AUT-Q5: GET /api/roles/administration, role.read. Not the grantable-role list. */
@@ -18,3 +19,10 @@ export const getRolePermissions = (roleId: string, signal?: AbortSignal) =>
     response: rolePermissionsSchema,
     signal,
   });
+
+/**
+ * AUT-C3: POST /api/roles, role.manage. Sends exactly what was typed; the
+ * server trims the name and description, and stores the code as supplied.
+ */
+export const createRole = (form: CreateRoleForm) =>
+  api.post("/api/roles", { body: form, response: createdRoleSchema });

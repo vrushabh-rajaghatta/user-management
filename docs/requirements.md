@@ -3457,6 +3457,131 @@ permissionId, code, name, resource, action, requiresHumanActor, isActive
 
 ---
 
+## AUT-C3 CreateRole — the tenant role, and its dialog
+
+**Status:** Contract frozen 2026-09-20 by owner decision (RC1–RC9). Deploy-safe because of PRV-C2 Amendment 1 (#79), which is its prerequisite: without it the first tenant role would fail the next deployment.
+
+### Requirement
+
+An administrator holding `role.manage` creates a role the tenant owns: a name, a code and an optional description. The role is created **active, with no permissions and no holders**, and it is immediately grantable through AUT-C1.
+
+```text
+CreateRole
+   role.manage + human actor
+   -> validate code, name, description
+   -> refuse a code that collides, exactly or by case alone
+   -> create the role, IsSystemRole = false
+   -> RoleCreated
+   -> 201
+```
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **RC1** | **The code is refused, never normalised.** Non-blank; **no leading or trailing whitespace**, by the same `char.IsWhiteSpace` boundary rule usernames use; otherwise stored exactly as supplied. Uniqueness stays the database's **case-sensitive** index, and in addition **a code differing from an existing role's code only by case is refused** — checked case-insensitively before the insert, with the index as the exact-match backstop. **No lower-casing**, and **no general code grammar**: there is no evidence one is needed. |
+| **RC2** | **Name and description use the USR-C2 family**, so this story does not start a third validation dialect. Both are **trimmed and stored trimmed**, must contain **no control characters**, and are at most **100 Unicode code points**. **The name must be non-blank; the description may be empty or absent.** The normalised values are what is stored and what is audited. |
+| **RC3** | **No reserved-code mechanism.** A tenant code that a future release claims is detected at deployment by PRV-C2 (`SecuritySemanticDrift`) and remediated then. Inventing a prefix or namespace now would add a lifecycle mechanism to prevent a problem that is already detected safely. |
+| **RC4** | **`POST /api/roles` → `201`**, under `role.manage`, human actors only. It does not disturb `GET /api/roles`, the grant form's list. The body is exactly `{ roleId, code, name, description, isSystemRole, isActive }` — the created role as stored, narrow: no permissions, no members, no counts. |
+| **RC5** | **One refusal for every collision:** *"A role with this code already exists."* — the same sentence whether the clash was exact or case-only, so the API never exposes the database's case semantics. The unique index is mapped to that sentence too, so a race past the pre-check reads the same. |
+| **RC6** | **`RoleCreated` with `After` only**, carrying `Code`, `Name` and `Description`. **`IsSystemRole` is not recorded**: it is a fixed invariant of this command, not change information. No audit catalogue change, and `AuditEventCatalogue.Version` is not bumped. |
+| **RC7** | **The dialog ships with the command.** The Roles administration screen exists, and a backend-only command would leave it unable to do the thing being added. It follows the existing dialog conventions — Name, Code, Description, presence checks, the server's refusal shown word for word, and the list refreshed on success. **No permission assignment in this dialog.** |
+| **RC8** | **Out of scope:** AUT-C4 metadata, AUT-C5/C6 lifecycle, AUT-Q4 members, AUT-C7/C8 permissions, deletion of any kind, and the system-role question that belongs to AUT-C7's gate. |
+| **RC9** | **This is the only application write path for roles, and it cannot create a release-owned one.** The command takes no `IsSystemRole`; the domain sets it false. `IRoleRepository.AddAsync` is infrastructure, not an authorization bypass: the application and domain boundary decides ownership, as PRV-C2 Amendment 1 assumes. |
+
+### The rules, and what each refusal says
+
+| Input | Rule | Refusal |
+| --- | --- | --- |
+| **Code** | required, non-blank | *"A role code is required."* |
+| | no surrounding whitespace (`char.IsWhiteSpace`), never trimmed | *"A role code cannot begin or end with whitespace."* |
+| | unique, and unique ignoring case | *"A role with this code already exists."* |
+| **Name** | trimmed, then required | *"A role name is required."* |
+| | no control characters | *"A role name must not contain control characters."* |
+| | at most 100 code points | *"A role name must be at most 100 characters."* |
+| **Description** | trimmed; empty or absent is allowed | — |
+| | no control characters | *"A role description must not contain control characters."* |
+| | at most 100 code points | *"A role description must be at most 100 characters."* |
+
+**The domain's two existing blank messages are restated into this family.** `Role.Create` says *"Role name cannot be empty."* and *"Role code cannot be empty."* today; no test or caller depends on either wording, and leaving them would put two dialects in one entity.
+
+### Order of work in the handler
+
+1. **Validate** the code, name and description — in the domain, before any lookup, as USR-C3 validates before its uniqueness lookup.
+2. **Refuse a colliding code**, compared case-insensitively. The index remains the guarantee, and is mapped to the same sentence.
+3. **Create** the role: `IsSystemRole = false`, `IsActive = true`, `CreatedBy` the administrator (RC9).
+4. **Declare `RoleCreated`** with `After` only.
+5. **Answer `201`** with the created role.
+
+### Change control
+
+**No workbook is edited.** One item is outstanding change control:
+
+- **RO2** says a code is immutable *once the role is referenced*. The database is already stricter — `role.code` is immutable from creation, by the update guard — and this story does not relax that. Nothing here makes a code editable, and AUT-C4 does not change codes either.
+
+### The dialog (RC7)
+
+- **A New role action on the Roles page**, for `role.manage` holders only, and never shown without it. The page stays read-only for everyone else.
+- **The dialog, titled *"New role"*:** Name, Code and Description (optional).
+  - **Presence only** on Name and Code — the server owns every other rule, and its refusal is shown word for word.
+  - **What is sent** is exactly what was typed, untrimmed, as the Create user form sends a username.
+  - **The unsaved-changes guard**, as Edit profile and Change email use it.
+- **On `201`:** the dialog closes, the page announces *"Role created: {name}."*, and the roles list is re-read. The new row shows **Active**, **0 permissions**, **0 holders**, and **Agent-assignable: Yes** — it has no human-only grant, because it has no grants at all.
+- **Focus** returns to the New role button.
+
+### Acceptance Criteria
+
+**The command**
+
+- **RC-A1** A role is created with the normalised name and description and the code exactly as supplied; `IsSystemRole` is false, `IsActive` is true, and `CreatedBy` is the administrator. The answer carries exactly the six members of RC4.
+- **RC-A2** **One `RoleCreated`** is written, with the administrator as actor, the role as primary entity, `After` carrying exactly `Code`, `Name` and `Description`, and **no `IsSystemRole`**. No other record is written.
+- **RC-A3** **The code:** a blank code, and one with leading or trailing whitespace — each of the 25 whitespace characters, at either end — are refused with their sentences, and nothing is written. An inner space is accepted.
+- **RC-A4** **Name and description:** a blank name, a control character in either, and 101 code points in either are refused with their sentences. A trimmed name and description are stored trimmed, and a description that is absent, empty or whitespace-only is stored as null.
+- **RC-A5** **Collision:** an existing code, and the same code in a different case, are both refused with *"A role with this code already exists."*, and nothing is written. The collision is refused for a **system** role's code and for a **tenant** role's code alike.
+- **RC-A6** **The index is the guarantee:** inserting the same code concurrently — the pre-check passed — surfaces the same sentence, not a `500`.
+- **RC-A7** **Authorisation:** a caller without `role.manage` is refused by the pipeline, and so is a non-human caller. `role.read` alone does not create a role.
+- **RC-A8** **The created role is usable:** it appears in AUT-Q5 with `permissionCount` 0, `activeHolderCount` 0 and `agentAssignable` true, in `GET /api/roles`, and AUT-C1 can grant it.
+- **RC-A9** **Nothing else changes:** no permission, no grant, no assignment, and no other role.
+
+**Over HTTP**
+
+- **RC-A10** `POST /api/roles` answers `201` with the six members. A missing `code` or `name` is `400`. A refusal is `400 { "error": … }` with the sentences above. No carrier is `401`.
+
+**The dialog**
+
+- **RC-U1** New role is offered on the Roles page for `role.manage`, never without it.
+- **RC-U2** Save sends exactly `{ code, name, description }` as typed, untrimmed, to `POST /api/roles`. An empty Name or Code sends nothing and is flagged.
+- **RC-U3** On `201` the dialog announces, re-reads the list, and closes; the new row shows Active, 0 permissions, 0 holders and Agent-assignable Yes. It is busy while sending, and sends once.
+- **RC-U4** A refusal is shown word for word and the dialog stays open with the typed values.
+- **RC-U5** The guard asks before discarding a dirty form, and a clean form closes without asking.
+- **RC-U6** No accessibility violations with the dialog open.
+
+**Browser, in the dev stack (RC-U7),** with the owner's approval, and **each step is permanent**: a created role cannot be deleted or deactivated until AUT-C5 exists, and its audit record is permanent.
+
+1. As Ada, create a role — code `dev-smoke-reviewer`, name `Dev Smoke Reviewer`. It appears Active, 0 permissions, 0 holders, agent-assignable.
+2. Try the same code again: *"A role with this code already exists."*
+3. Try `DEV-SMOKE-REVIEWER`: the same sentence.
+
+### Implementation notes
+
+- **RC2's name and description rules govern TENANT roles only.** `Role.Create` applies them when `isSystemRole` is false and leaves a seed's text alone. This was forced, not chosen: two seeded descriptions are 102 and 158 characters, and PRV-C2 **refuses** role metadata drift rather than reconciling it, so shortening a seed would refuse deployment on every existing database. RC2 governs what a tenant may write; a seed's text is the release's, as the permission catalogue is (PE2). Two mutants attack the gate from both sides — applied to seeds as well, and inverted.
+- **A code is refused, never normalised** (RC1). `ValidateCode` is `Role.Create`'s first statement, so by the time the code reaches the constructor it already equals its own `Trim()`. A mutant that trims it there therefore survives, provably equivalently, and is kept.
+- **The collision pre-check and the index say the same sentence.** `ExistsWithCodeAsync` is raw SQL comparing `lower("code")` database-side, mirroring `IX_role_code`; the index is the guarantee, the pre-check is the courtesy. `PostgresExceptionTranslator` now maps `IX_role_code`, so a caller who loses a race reads *"A role with this code already exists."* rather than a 500 — the same words as the pre-check (RC5).
+  - **One existing test was repointed:** `An_unknown_unique_violation_survives_untranslated` used `IX_role_code` as its example of an unmapped constraint. It now uses `ux_role_permission_active` (RP2), which the translator still deliberately leaves unmapped.
+- **The route answers with what was STORED, not what was sent** (RC4): the result carries the domain's values, so a trimmed name and a null description come back as they will be read. The dialog announces the same stored name; both are pinned by mutants.
+- **`AuditDeclarations` needed the new code.** `RoleCreated` is declared on the command and registered in the catalogue; IMPL-08 verifies the two agree at start-up, and `AuditDeclarationsTests.EveryDeclaredCode` lists it.
+- **The web form sends the typed values untrimmed** (RC-U2) and lets the server own every rule, as the create-user form does for usernames. Zod checks presence only.
+- **New role sits in the page header's `actions` slot**, inline with the heading, as Users and User detail do — it was briefly below the heading, which was the only page out of line with the shared `Page` component.
+
+### Not included
+
+- **AUT-C4–C8**, AUT-Q4, and any deletion or deactivation.
+- **Any permission assignment**, in the command or the dialog.
+- **Any reserved-code mechanism** (RC3), and any general code grammar (RC1).
+- **Any change to `GET /api/roles`**, to PRV-C2, or to the system-role rules.
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.

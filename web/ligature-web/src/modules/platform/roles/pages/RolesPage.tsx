@@ -1,11 +1,15 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "react-router";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ApiError } from "@/shared/api/errors";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { Page } from "@/shared/components/Page";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useCan } from "@/shared/auth/useCan";
+import { Button } from "@/components/ui/button";
+import { CreateRoleDialog } from "../components/CreateRoleDialog";
 import { useRoles } from "../hooks/useRoles";
+import { RolePermissions } from "../permissions";
 
 /**
  * AUT-Q5's screen (docs/requirements.md, "Role administration read", RA-U2).
@@ -18,8 +22,34 @@ export function RolesPage() {
   const [includeInactive, setIncludeInactive] = useState(false);
   const roles = useRoles(includeInactive);
 
+  // AUT-C3 (RC-U1). An affordance, never authorization: the command decides.
+  const canManage = useCan(RolePermissions.manage);
+  const [creating, setCreating] = useState<{ open: boolean } | undefined>(undefined);
+  const [announcement, setAnnouncement] = useState("");
+  const [queued, setQueued] = useState<string | undefined>(undefined);
+  const newRole = useRef<HTMLButtonElement | null>(null);
+
   return (
-    <Page title="Roles">
+    <Page
+      title="Roles"
+      actions={
+        canManage ? (
+          <Button
+            ref={newRole}
+            onClick={() => {
+              setAnnouncement("");
+              setCreating({ open: true });
+            }}
+          >
+            New role
+          </Button>
+        ) : undefined
+      }
+    >
+      <p role="status" className="text-sm empty:hidden">
+        {announcement}
+      </p>
+
       <label className="flex items-center gap-2 text-sm">
         <input
           type="checkbox"
@@ -74,6 +104,27 @@ export function RolesPage() {
             ))}
           </TableBody>
         </Table>
+      )}
+
+      {creating === undefined ? null : (
+        <CreateRoleDialog
+          open={creating.open}
+          returnFocus={newRole}
+          onClose={() => {
+            setCreating({ open: false });
+          }}
+          onCreated={(message) => {
+            setQueued(message);
+          }}
+          onClosed={() => {
+            setCreating(undefined);
+
+            if (queued !== undefined) {
+              setAnnouncement(queued);
+              setQueued(undefined);
+            }
+          }}
+        />
       )}
     </Page>
   );

@@ -20,6 +20,7 @@ using Ligature.Platform.Application.Users.Commands.UpdateUserProfile;
 using Ligature.Platform.Application.Users.Queries.UserIdentities;
 using Ligature.Platform.Application.Users.Queries.MySessions;
 using Ligature.Platform.Application.Users.Queries.UserSessions;
+using Ligature.Platform.Application.Roles.Commands.CreateRole;
 using Ligature.Platform.Application.Roles.Queries.PermissionCatalogue;
 using Ligature.Platform.Application.Roles.Queries.RoleAdministration;
 using Ligature.Platform.Application.Roles.Queries.RolePermissions;
@@ -315,6 +316,11 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<ChangeUserEmailCommand, ChangeUserEmailResult>,
             ChangeUserEmailCommandHandler>();
+
+        // AUT-C3.
+        services.AddScoped<
+            ICommandHandler<CreateRoleCommand, CreateRoleResult>,
+            CreateRoleCommandHandler>();
 
         // USR-C4 / USR-C5.
         services.AddScoped<
