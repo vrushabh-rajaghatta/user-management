@@ -1,3 +1,4 @@
+import { rolesNavigation } from "@/modules/platform/roles";
 import { usersNavigation } from "@/modules/platform/users";
 import type { NavigationArea } from "@/shared/layout/navigation";
 
@@ -15,5 +16,5 @@ export const administrationArea: NavigationArea = {
   to: "/admin",
   title: "Administration",
   description: "Users, authority and evidence. Shared by every module, owned by none.",
-  items: [...usersNavigation],
+  items: [...usersNavigation, ...rolesNavigation],
 };

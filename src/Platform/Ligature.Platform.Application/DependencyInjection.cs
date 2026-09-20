@@ -20,6 +20,9 @@ using Ligature.Platform.Application.Users.Commands.UpdateUserProfile;
 using Ligature.Platform.Application.Users.Queries.UserIdentities;
 using Ligature.Platform.Application.Users.Queries.MySessions;
 using Ligature.Platform.Application.Users.Queries.UserSessions;
+using Ligature.Platform.Application.Roles.Queries.PermissionCatalogue;
+using Ligature.Platform.Application.Roles.Queries.RoleAdministration;
+using Ligature.Platform.Application.Roles.Queries.RolePermissions;
 using Ligature.Platform.Application.Users.Queries.UsernameAvailability;
 using Ligature.Platform.Application.Users.Queries.UserProfile;
 using Ligature.Platform.Application.Users.Commands.RequestPasswordReset;
@@ -361,6 +364,11 @@ public static class DependencyInjection
         services.AddQuery<UserSessionsQuery, UserSessionsResult, UserSessionsQueryHandler>();
         services.AddQuery<MySessionsQuery, MySessionsResult, MySessionsQueryHandler>();
         services.AddQuery<UsernameAvailabilityQuery, UsernameAvailabilityResult, UsernameAvailabilityQueryHandler>();
+
+        // AUT-Q5, AUT-Q3, AUT-Q6 — the role administration reads, all role.read.
+        services.AddQuery<RoleAdministrationQuery, RoleAdministrationResult, RoleAdministrationQueryHandler>();
+        services.AddQuery<RolePermissionsQuery, RolePermissionsResult, RolePermissionsQueryHandler>();
+        services.AddQuery<PermissionCatalogueQuery, PermissionCatalogueResult, PermissionCatalogueQueryHandler>();
 
         // The grantable-role list: a Story 2 dependency of AUT-C1, not AUT-Q5.
         services.AddQuery<GrantableRolesQuery, GrantableRolesResult, GrantableRolesQueryHandler>();
