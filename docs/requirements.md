@@ -1172,7 +1172,8 @@ The specification keeps three timestamp pairs apart on purpose (§6.11): who dec
 
 - **Overlap.** The same user, role and scope may not hold two assignments whose effective periods overlap (invariant 8, UR5). The database enforces it, because two concurrent grants would both pass an application check. The violation is translated to the ordinary refusal *"The user already holds this role for this scope in an overlapping period."*
 - **No four-eyes approval** (open decision A1). A human holding `role.grant` may grant to anyone, including themselves; segregation of duties at action time belongs to the Workflow context (spec §1.2). A1's recommended practice — an external ticket reference — goes in the reason. User Management does not validate its format.
-- **Agents are out of scope** (invariant 17a). The target must be human, so the agent rules (a finite end date, UR8; no human-only permission on the role, UR9) have no reachable path in v1. They remain enforced by the database and the domain for when agents exist.
+- **Agents are out of scope** (invariant 17a). The target must be human, so the agent rules (a finite end date, UR8; no human-only permission on the role, UR9) have no reachable path in v1.
+  - **Corrected at the AUT-C7/C8 gate (RG10).** This previously claimed both "remain enforced by the database and the domain". Only **UR8** is: `ck_user_role_agent_finite` refuses an agent assignment without an end. **UR9 is enforced nowhere** — no constraint, trigger or domain rule references `requires_human_actor`, and GrantRole refuses every non-human target outright without reading the role's permissions. What holds today is that edge's *absence of a reachable path*, plus **UR10**, which is enforced twice: in the authorisation predicate per permission, and in `HumanActorBehavior` per command.
 
 > **Amended by USR-C4/C5 (D6).** GrantRole locks the target's `app_user` row (`SELECT … FOR UPDATE`) before its active-human check, so a grant cannot race a deactivation. The contract above is unchanged; see *USR-C4 / USR-C5*, *Concurrency*.
 
@@ -3873,6 +3874,163 @@ The two system-role sentences are the domain's own, **unchanged**. An unknown ro
 
 ---
 
+## AUT-C7 AddPermissionToRole and AUT-C8 RemovePermissionFromRole — what a role may do
+
+**Status:** Contract frozen 2026-09-20 by owner decision (RG1–RG10). One gate for the pair: they write the same table, share one index, and the release-owned question could not be answered for one without the other.
+
+### Requirement
+
+An administrator holding `role.manage` adds a permission to a **tenant** role, and takes it away. A grant is never deleted: AUT-C8 closes the row by setting `RevokedAt`/`RevokedBy`, and a later re-grant is a **new row** (RP1, invariant 11).
+
+```text
+AddPermissionToRole                    RemovePermissionFromRole
+   role.manage + human actor              role.manage + human actor
+   -> load the role                       -> refuse a blank reason
+   -> refuse the unknown                  -> load the grant
+   -> refuse a system role                -> refuse the unknown
+   -> load the permission                 -> refuse a system role
+   -> refuse the unknown or inactive      -> refuse one already revoked
+   -> refuse an existing live grant       -> close the row
+   -> RP6: refuse if the role has an      -> PermissionRevokedFromRole,
+      ACTIVE agent assignment and the        Before and After, with the reason
+      permission requires a human actor   -> 204
+   -> insert a NEW row
+   -> PermissionGrantedToRole, After only
+   -> 201
+```
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **RG1** | **Both commands refuse a release-owned role**, with the ownership sentence the domain already uses: *"System roles cannot be modified."* The argument is not symmetry but PRV-C2: AUT-C7 on a system role creates `GrantMissingFromSeed` and AUT-C8 creates `RevokedGrantInSeed`, and **both refuse every later deployment**. Allowing either would let one application command produce a state the synchroniser is deliberately forbidden to reconcile (F5, F6). This is **one shared ownership rule**, not two independently invented ones. |
+| **RG2** | **RP6 is an application-level precondition, checked inside the command's transaction, and AUT-C1 is not amended.** Making it atomic would need a lock on the role in **both** AUT-C7 and GrantRole, changing AUT-C1's frozen concurrency contract (RD9, RM5) to close a race that **cannot occur in v1** — agents cannot be created (invariant 17a, AU11). The cross-command race is recorded as a **Known Gap** stating the limit of the guarantee honestly. |
+| **RG3** | **RP6 is implemented literally: an *ACTIVE* agent assignment.** A *future-dated* agent assignment would pass the check and become a mixed role at its own `effective_from`, with no command running — a real hole that no locking closes. **It is not silently widened here.** The frozen catalogue says "active", and the other commands' "live" semantics are not grounds to redefine a frozen invariant while implementing against it. Recorded as a **parked contract amendment** for its own decision. |
+| **RG4** | **An inactive permission cannot be granted.** A new authorization edge may only be created against the **current** catalogue. The resulting state would also be internally misleading: AUT-Q5's `agentAssignable` counts live grants **without** filtering `Permission.IsActive`, while authorisation requires it — so a live grant of a retired human-only permission makes a role non-agent-assignable while authorising nobody. Refusal: *"The permission is not active."* |
+| **RG5** | **AUT-C8 requires a reason; AUT-C7 takes none.** The catalogue gives C8 `RolePermissionId, Reason` and C7 `RoleId, PermissionId`, and the seeds agree — `PermissionRevokedFromRole` is `ReasonRequired: true`, `PermissionGrantedToRole` is `false`. The reason is refused **before any database work** (G6): *"A reason is required to revoke a permission from a role."* **No reason column is added to `role_permission`** — the frozen entity has none, so the reason lives only in the audit record, as AUT-C5's does. |
+| **RG6** | **An application pre-check with the database as the backstop**, exactly as AUT-C3 did once `IX_role_code` became reachable. `ux_role_permission_active` is **mapped in the translator now** — the deferral reserved it for this story — so a race past the pre-check reads the same sentence: *"The role already has this permission."* `ExceptionTranslationTests` must move its unmapped example to another genuinely unreachable constraint. |
+| **RG7** | **Two narrow abstractions, created because the commands need them.** `IRolePermissionRepository` — find a live grant for a pair, find a grant by id (tracked), add. And a **narrow** permission read for the command path, returning only what AUT-C7 decides on: existence, `IsActive`, `RequiresHumanActor`. **The command does not depend on AUT-Q6's DTO reader**, which is query infrastructure and is keyed by neither id nor lock. |
+| **RG8** | **`PermissionGrantedToRole` carries `After` only** — a grant is a newly created edge with no meaningful before-state — and **`PermissionRevokedFromRole` carries `Before` and `After`**, the lifecycle transition of an existing row, plus the reason. Both carry their two **required** entity references: `Role` as `Target`, and `Permission` as `Granted` / `Revoked`. Both events are already seeded and active; **`AuditEventCatalogue.Version` is not bumped.** |
+| **RG9** | **The Role detail page's permissions section becomes operational**: the existing table, an **Add permission** action, and **Revoke** on each live grant row. **No Permissions page is created** — AUT-Q6 stays API-only as a standalone surface and is consumed by the picker, which closes the open point RA recorded. Edit role's description is corrected: it currently says a role's permissions are not its to change, which this story makes false. |
+| **RG10** | **The UR9 claim in this document is corrected, and UR9 is not implemented here.** `docs/requirements.md` states that UR8 and UR9 "remain enforced by the database and the domain". UR8 is (`ck_user_role_agent_finite`); **UR9 is not** — no constraint, trigger or domain rule references `requires_human_actor`, and GrantRole refuses every non-human target without ever reading the role's permissions. The claim is corrected to say what is actually enforced. Implementing UR9 belongs to its own slice. |
+
+### The rules, and what each refusal says
+
+| Command | Input | Rule | Refusal |
+| --- | --- | --- | --- |
+| **Both** | **Role** | exists | *"The role does not exist."* |
+| | | is a **tenant** role (RG1) | *"System roles cannot be modified."* |
+| **AUT-C7** | **Permission** | exists | *"The permission does not exist."* |
+| | | is active (RG4) | *"The permission is not active."* |
+| | **The pair** | has no live grant (RP2, RG6) | *"The role already has this permission."* |
+| | **RP6** | the role has no **active** agent assignment, when the permission requires a human actor | see below |
+| **AUT-C8** | **Reason** | required, before any database work | *"A reason is required to revoke a permission from a role."* |
+| | **Grant** | exists | *"The role permission does not exist."* |
+| | | is not already revoked | *"Role permission has already been revoked."* (the domain's own) |
+
+**RP6's refusal carries the remediation**, because the catalogue's step 3 requires it *in the error message*:
+
+> *"This role is held by an agent, so it cannot be given a permission that requires a human actor. Revoke the agent's assignment, add the permission, then grant the agent an agent-safe role."*
+
+### Order of work in the handlers
+
+**AUT-C7** — no reason, so nothing precedes the transaction.
+
+1. **Load the role** tracked; refuse the unknown, then refuse a **system role** (RG1) — ownership before everything, as AUT-C4 and AUT-C5 order it.
+2. **Load the permission**; refuse the unknown, then the **inactive** (RG4).
+3. **Refuse an existing live grant** (RG6). The index remains the guarantee.
+4. **RP6** (RG2, RG3): if the permission requires a human actor, refuse when the role has an **active** agent assignment.
+5. **Insert a new row** — never an update of a revoked one (RP1).
+6. **`PermissionGrantedToRole`**, `After` only, with both references.
+7. **`201`** with the new grant's id.
+
+**AUT-C8**
+
+1. **Refuse a blank reason**, first, **outside the transaction** (G6).
+2. **Load the grant** tracked; refuse the unknown.
+3. **Refuse a system role** — the grant's role decides (RG1).
+4. **Close the row** through the domain, which refuses one already revoked.
+5. **`PermissionRevokedFromRole`**, `Before` and `After`, with both references and the reason.
+6. **`204`**.
+
+**The answers follow AUT-C1 and AUT-C2**, the grant/revoke pair for `user_role`, rather than the roles module's stored-representation convention: `201 { rolePermissionId }` and `204`. Nothing about the role's own state changes, and the page re-reads AUT-Q3 either way.
+
+### Change control
+
+**No workbook is edited.** Five items are outstanding change control:
+
+- **AUT-C8 has no `Command steps` sequence**; AUT-C7's five steps are followed, with ownership and the permission's state inserted ahead of them because the catalogue's step list begins after authorisation and says nothing about either.
+- **RP6's temporal scope is a recorded defect, parked** (RG3). See the Known Gap.
+- **AUT-C7's step 5 requires cache invalidation. There is no cache** — none in `src/`, and the word appears **zero times** in the frozen specification. Recorded as **non-applicable**; no cache infrastructure is created to satisfy an aspirational sentence.
+- **Neither command's catalogue row mentions system roles**, conspicuously, where AUT-C3, AUT-C4 and AUT-C5 all do. RG1 is decided from PRV-C2's refusal codes, not from the command rows.
+- **AUT-C8 does not cite D1**, and D1's wording is scoped to revoking an *assignment*. RG5 requires the reason on the catalogue's own authority — the `Reason` key input and the event's `ReasonRequired` seed — not by extending D1.
+
+### The permissions section (RG9)
+
+- **On the Role detail page**, for `role.manage` holders and **tenant roles only** — the same `editable` gate the page already applies, so a release-owned role offers nothing to anyone.
+- **Add permission** opens a dialog with a **picker** of the permission catalogue (AUT-Q6), showing each permission's code, name and whether it is human-only. **Permissions the role already holds are not offered.** Retired permissions are not offered (RG4).
+- **Revoke** on each live grant row, in a sixth column appended for `role.manage` holders as the users module appends its Actions column, opening a confirmation with a **required Reason**.
+- **On success:** the dialog closes, the page announces, and the permissions list is re-read. Focus returns to the action that opened the dialog — and, for a revoke, to the table's heading, because the row leaves with the grant.
+- **Edit role's description is corrected** — it says a role's permissions are not its to change.
+
+### Acceptance Criteria
+
+**AUT-C7**
+
+- **RG-A1** A live grant is created on a tenant role: a **new row**, `RevokedAt` null, `GrantedBy` the administrator, and the answer carries its id. The role's own row is untouched.
+- **RG-A2** **One `PermissionGrantedToRole`** with the administrator as actor, the grant as primary entity, `Role`/`Target` and `Permission`/`Granted` references, `After` only and **no reason**. No other record.
+- **RG-A3** **A re-grant after a revocation creates a SECOND row** (RP1) — the revoked row is untouched, both rows survive, and only the new one is live.
+- **RG-A4** **The pair is refused when a live grant exists** (RG6), and the index refuses a race past the pre-check with **the same sentence**, not a 500.
+- **RG-A5** **An unknown permission and an inactive permission are refused** with their sentences, and nothing is written.
+- **RG-A6** **RP6:** granting a human-only permission to a role with an **active agent assignment** is refused, with the remediation in the message, and nothing is written. Granting a **non**-human-only permission to the same role is accepted, and granting a human-only permission to a role whose agent assignment is **revoked or ended** is accepted.
+- **RG-A7** **A system role is refused** (RG1), and so is an unknown role; nothing is written in either case.
+- **RG-A8** **Authorisation:** a caller without `role.manage` is refused, and so is a non-human caller.
+
+**AUT-C8**
+
+- **RG-A9** A live grant is closed: `RevokedAt` and `RevokedBy` set, **the row is not deleted**, and the row count is unchanged.
+- **RG-A10** **One `PermissionRevokedFromRole`** with both references, `Before` and `After` showing the revocation, and **the reason**.
+- **RG-A11** **A blank reason is refused before any database work** (G6): no transaction is opened and no collaborator is touched.
+- **RG-A12** **An unknown grant, an already-revoked grant, and a grant on a system role are each refused**, and nothing is written.
+- **RG-A13** **Authorisation:** as RG-A8.
+
+**Both**
+
+- **RG-A14** **The effect on authorisation is real and immediate:** after AUT-C7 the role's holders gain the permission on both views; after AUT-C8 they lose it. No other holder is affected.
+- **RG-A15** **The derived reads follow** without changing their definitions (RA4): `permissionCount` and `agentAssignable` in AUT-Q5, and AUT-Q3's list. The four frozen member arrays are unchanged.
+- **RG-A16** **Nothing else changes:** no role row, no assignment, no permission, and no other role's grants.
+
+**Over HTTP**
+
+- **RG-A17** `POST /api/roles/{roleId}/permissions` answers `201` with the grant's id; `POST /api/role-permissions/{rolePermissionId}/revoke` answers `204`. A missing permission id or reason is `400`, including for an absent body. Refusals are `400 { "error": … }` with the sentences above. No carrier is `401`. AUT-Q3, AUT-Q5, AUT-Q6 and `GET /api/roles` are undisturbed.
+
+**The screen**
+
+- **RG-U1** Add permission and Revoke are offered on a tenant role's detail page to a `role.manage` holder, and to nobody else — not to a `role.read` holder, and not on a release-owned role.
+- **RG-U2** The picker offers the catalogue **minus the role's live grants**, and minus retired permissions, and shows which permissions are human-only.
+- **RG-U3** A blank reason on the revoke confirmation is flagged and **nothing is sent**.
+- **RG-U4** On success each dialog closes, the page announces, and the permissions list is re-read so the row appears or leaves. Each is busy while sending and sends once.
+- **RG-U5** A refusal is shown word for word — including RP6's remediation — and the dialog stays open.
+- **RG-U6** No accessibility violations with either dialog open.
+- **RG-U7** Focus returns to the action that opened the dialog, and to the permissions heading when the revoked row has left.
+
+**Browser, in the dev stack (RG-U8),** with the owner's approval. A grant can be revoked, so these steps are reversible; **each transition's audit record is permanent**.
+
+1. As Ada, open `dev-smoke-reviewer` and **add** `user.read`. It appears in the permissions table; the role stays agent-assignable.
+2. **Add** `user.create`, which is human-only. The role's AUT-Q5 row now reads **Agent-assignable: No**.
+3. **Revoke** `user.create` with a reason. It leaves the table and the role is agent-assignable again.
+
+### Not included
+
+- **UR9's enforcement** (RG10) — only the documentation claim is corrected.
+- **Any widening of RP6 to future-dated assignments** (RG3).
+- **Any cache**, and any invalidation machinery.
+- **A Permissions page** (RG9), and any change to AUT-Q6's response.
+- **Any change to AUT-C1's concurrency contract** (RG2), to the authorisation predicate, or to the `agentAssignable` derivation.
+- **Any reason column** on `role_permission` (RG5), and any deletion of a grant.
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
@@ -3926,6 +4084,65 @@ authorisation model to prevent an outcome the model already accepts.
 Recorded at the AUT-C5/C6 gate (RD9). If a later requirement makes a fresh
 assignment on a retired role genuinely wrong, the fix belongs with that
 requirement, and it is a lock on the role in both commands.
+
+## RP6 cannot be guaranteed atomically across commands
+
+**Recorded by owner decision at the AUT-C7/C8 gate (RG2).**
+
+AUT-C7 enforces RP6 as an application-level precondition inside its own
+transaction. It reads `user_role` to look for an active agent assignment;
+`GrantRole` writes `user_role`. The two transactions share **no row and no
+constraint**: `GrantRole` locks only the target's `app_user` row (D6), AUT-C7
+locks nothing, isolation is Read Committed, and RP6 spans two tables so no
+index or exclusion constraint can express it.
+
+> **The honest statement of the guarantee:** RP6 is enforced as an
+> application-level precondition, but concurrent `GrantRole` and AUT-C7
+> operations do not share a serialisation point, so the application cannot
+> guarantee RP6 atomically under concurrent writes.
+
+**Deliberately tolerated.** Closing it means locking the role in **both**
+commands, which amends AUT-C1's frozen concurrency contract (RD9, RM5) to
+prevent a race that **cannot occur in v1**: agents cannot be created
+(invariant 17a, AU11), so no agent assignment can be written concurrently with
+anything. The remedy, if a later slice makes it reachable, is a role lock in
+both commands — the same remedy already recorded for the grant/deactivation
+race, and it belongs to the slice that makes agents real.
+
+## RP6 does not cover a future-dated agent assignment
+
+**Recorded by owner decision at the AUT-C7/C8 gate (RG3), as a parked contract
+amendment.**
+
+The frozen catalogue defines the prohibited state as *"ANY **active** Agent
+assignment"*, and AUT-C7 implements that literally. Every definition of
+"active" in this codebase agrees: `revoked_at IS NULL AND effective_from <= now
+< effective_to`. A **future-dated** agent assignment is therefore not active,
+passes AUT-C7's check, and then becomes effective at its own `effective_from`
+— producing the mixed role the catalogue forbids, **with no command running**.
+
+No locking closes this; only widening the rule does. It is **not widened here**,
+because the other commands' "live" semantics are not grounds to redefine a
+frozen invariant while implementing against it.
+
+**The decision to take:** should a future-dated agent assignment block granting
+a `RequiresHumanActor` permission, even though RP6 defines the prohibited
+assignment as active? If yes, RP6's wording changes and AUT-C7 follows it.
+Unreachable in v1 either way, since agents cannot be created.
+
+## AUT-C7's cache invalidation is not applicable
+
+**Recorded at the AUT-C7/C8 gate.** The command catalogue's step 5 for AUT-C7
+is *"Emit audit + invalidate … invalidate effective permissions for ALL holders
+of this role"*, and AUT-Q1's note says to cache the resolver and invalidate on a
+role-permission change.
+
+**There is no cache.** No `IMemoryCache`, no distributed cache, nothing in
+`src/`, and the word does not appear in the frozen specification at all — it
+is a command-catalogue and delivery-slice aspiration. No cache infrastructure
+was created to satisfy it. If one is introduced, invalidation becomes a
+declared consequence of AUT-C7, AUT-C8, AUT-C1, AUT-C2 and the user lifecycle
+commands together, which is that story's work and not this one's.
 
 ## USR-C2 change control: "Admin or self" is two commands
 
