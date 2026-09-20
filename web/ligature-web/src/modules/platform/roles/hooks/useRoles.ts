@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createRole, getRolePermissions, listRoles } from "../api/roles";
+import { createRole, getRolePermissions, listRoles, updateRoleMetadata } from "../api/roles";
 import { roleKeys } from "./roleKeys";
+import type { UpdateRoleForm } from "../schemas/updateRole";
 
 /** AUT-Q5, for the roles list and for the detail page's metadata. */
 export function useRoles(includeInactive: boolean) {
@@ -28,6 +29,19 @@ export function useCreateRole() {
 
   return useMutation({
     mutationFn: createRole,
+    onSuccess: () => client.invalidateQueries({ queryKey: roleKeys.all }),
+  });
+}
+
+/**
+ * AUT-C4. Every 200 is a save, change or not (RM3): the client does not
+ * predict a no-op. The role is re-read rather than patched, as a creation is.
+ */
+export function useUpdateRoleMetadata(roleId: string) {
+  const client = useQueryClient();
+
+  return useMutation({
+    mutationFn: (form: UpdateRoleForm) => updateRoleMetadata(roleId, form),
     onSuccess: () => client.invalidateQueries({ queryKey: roleKeys.all }),
   });
 }

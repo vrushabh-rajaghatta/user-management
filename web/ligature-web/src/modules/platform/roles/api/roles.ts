@@ -1,5 +1,6 @@
 import { api } from "@/shared/api/client";
 import { createdRoleSchema, type CreateRoleForm } from "../schemas/createRole";
+import { type UpdateRoleForm } from "../schemas/updateRole";
 import { rolePermissionsSchema, rolesSchema } from "../schemas/roles";
 
 /** AUT-Q5: GET /api/roles/administration, role.read. Not the grantable-role list. */
@@ -26,3 +27,14 @@ export const getRolePermissions = (roleId: string, signal?: AbortSignal) =>
  */
 export const createRole = (form: CreateRoleForm) =>
   api.post("/api/roles", { body: form, response: createdRoleSchema });
+
+/**
+ * AUT-C4: POST /api/roles/{roleId}/metadata, role.manage. Sends exactly what
+ * was typed; the answer is the role AS STORED (RM6), so the caller reads the
+ * normalised name rather than normalising anything itself.
+ */
+export const updateRoleMetadata = (roleId: string, form: UpdateRoleForm) =>
+  api.post(`/api/roles/${encodeURIComponent(roleId)}/metadata`, {
+    body: form,
+    response: createdRoleSchema,
+  });

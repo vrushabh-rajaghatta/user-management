@@ -3582,9 +3582,185 @@ CreateRole
 
 ---
 
+## AUT-C4 UpdateRoleMetadata — renaming a tenant role
+
+**Status:** Contract frozen 2026-09-20 by owner decision (RM1–RM10). It follows AUT-C3 (#80), which created the tenant role this command edits.
+
+### Requirement
+
+An administrator holding `role.manage` changes a **tenant** role's name and description. Nothing else: not the code, not ownership, not activity, not permissions, not holders.
+
+```text
+UpdateRoleMetadata
+   role.manage + human actor
+   -> load the role
+   -> refuse a system role
+   -> normalise and validate name and description
+   -> no change after normalisation: write nothing, record nothing, answer 200
+   -> otherwise update, RoleUpdated with Before and After
+   -> 200 with the stored role
+```
+
+**Renaming is safe, and the product is already built for it.** The command catalogue's note says so — *"ActorSnapshot captures both RoleId and RoleName at action time"* — and the code already honours it: `AuthorizationService` and `AuthorizingAssignment` both carry the authorising role's **name** beside its id, so renaming a role never rewrites the authority recorded against acts already performed.
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **RM1** | **A role name need not be unique.** No frozen requirement, database constraint, authorization lookup or existing behaviour establishes name uniqueness; the workbook leaves `Name`'s Key column empty while marking `Code` `UNIQUE`. **The code is the identifier; the name is metadata.** Two tenant roles may share a name. **No new uniqueness constraint and no pre-check** — this story does not invent an invariant for AUT-C4. |
+| **RM2** | **The code is not an input.** The frozen command's inputs are `RoleId, Name, Description`, and its precondition says *"Code is NOT updatable here."* AUT-C4 therefore does not expose a code field at all, so **there is no legitimate AUT-C4 request containing a code to refuse**. The catalogue's *"attempting to change Code must be refused, not silently ignored"* binds the domain and database boundary, which already refuses it (the G4 update guard, immutable from creation); it does not require manufacturing a client input the command contract excludes. **The existing PostgreSQL immutability mechanism is not touched by this story.** |
+| **RM3** | **A no-op is a domain rule, not a UI optimisation.** `Role.UpdateMetadata` becomes change-aware and returns `bool changed`, as `User.UpdateProfile` does. After normalisation, the same name and the same description mean **no database write, no audit record, and a successful answer** — the G5 semantics USR-C2 already established. |
+| **RM4** | **A system role is refused with the domain's existing words.** `"System roles cannot be modified."`, unchanged, answered as **`400`**. The UI **does not offer Edit** on a release-owned role: an action the caller cannot legitimately perform is not presented. The server stays authoritative regardless of what the UI shows. |
+| **RM5** | **No row lock, last write wins.** USR-C2 deliberately takes no D6 lock for this class of mutation: the command depends on no lifecycle state, authorization state, token state or other mutable resource. RM1 introduces no uniqueness, so there is no concurrency reason to differ. |
+| **RM6** | **`POST /api/roles/{roleId}/metadata` → `200`** with the **stored representation**, exactly `{ roleId, code, name, description, isSystemRole, isActive }`. The verb and shape follow the command-style convention every user mutation already uses (`POST /api/users/{userId}/profile`); no `PUT`/`PATCH` exists in this host. Returning the stored values — not the submitted ones — resolves the inconsistency between AUT-C3, which announces the server's stored name, and USR-C2, which answers `204` and re-derives from the typed value. The client is thereby independent of client-side normalisation. `code` comes back unchanged and `isSystemRole` reports the role as it is; neither is editable. |
+| **RM7** | **Edit lives on the Role detail page**, in the `actions` slot the shared `Page` already provides. The list is the administration index; editing metadata is a detail-level operation. It is gated on `role.manage` and offered **only for tenant roles**. **RA-U6 is rewritten, not retired:** its present wording ("offers no action on either page") is too broad now, and it becomes a test of the **read-only caller** — a holder of `role.read` without `role.manage` sees no role-management action — with the complementary `role.manage` cases added. |
+| **RM8** | **No reason.** The catalogue gives AUT-C4 no `Reason` input, and `RoleUpdated` is seeded `ReasonRequired: false`. AUT-C5 and AUT-C8 have reasons because their contracts require them; being an administrative mutation is not itself grounds for one. |
+| **RM9** | **No `GET /api/roles/{id}`.** The detail page keeps reading AUT-Q5, as it does today. Adding an individual-role read would turn a metadata mutation into a second read-contract story with no evidence the product needs one; if a later requirement shows it is independently useful, it gets its own query contract. |
+| **RM10** | **`IsSystemRole` is never accepted from the client and cannot be changed here.** The command has no such input and the domain refuses a system role outright. The evidence for this boundary is unusually strong and mutually reinforcing: the domain's refusal, the database's immutability guard, and PRV-C2 Amendment 1's ownership rule all rely on it. |
+
+### The rules, and what each refusal says
+
+The name and description rules are **AUT-C3's, unchanged** (RC2) — this story starts no new dialect, and the values that are stored are the values that are audited.
+
+| Input | Rule | Refusal |
+| --- | --- | --- |
+| **RoleId** | names an existing role | *"The role does not exist."* |
+| | names a **tenant** role | *"System roles cannot be modified."* |
+| **Name** | trimmed, then required | *"A role name is required."* |
+| | no control characters | *"A role name must not contain control characters."* |
+| | at most 100 code points | *"A role name must be at most 100 characters."* |
+| | **need not be unique** (RM1) | — |
+| **Description** | trimmed; empty or absent is allowed, and stored as null | — |
+| | no control characters | *"A role description must not contain control characters."* |
+| | at most 100 code points | *"A role description must be at most 100 characters."* |
+| **Code** | **not an input** (RM2) | — |
+
+**An unknown role is `400`, not `404`,** matching USR-C2's *"The user does not exist."* for the same shape of command. The reads answer `404` for an unknown role; that divergence is already recorded as a Known Gap and this story neither widens nor resolves it.
+
+### Order of work in the handler
+
+1. **Load** the role — tracked, because this one changes it. No row lock (RM5).
+2. **Refuse an unknown role**, then **refuse a system role** (RM4), before any validation: ownership is the coarser gate.
+3. **Capture `Before`** — the stored name and description.
+4. **Normalise and validate** in the domain, which reports whether anything changed (RM3).
+5. **Nothing changed:** return the stored role. **No write, no record.**
+6. **Otherwise** declare **`RoleUpdated`** with `Before` and `After`, each carrying exactly `Name` and `Description`.
+7. **Answer `200`** with the stored role.
+
+**`RoleUpdated` already exists** in the audit catalogue, seeded and active, with `PrimaryEntityType: "Role"`, `"BeforeAfter"` and `ReasonRequired: false`. This story adds the `AuditDeclarations` entry and the hand-maintained declared-code list; **`AuditEventCatalogue.Version` is not bumped.**
+
+### Change control
+
+**No workbook is edited.** Four items are outstanding change control:
+
+- **The `Command steps` sheet has no AUT-C4 sequence**, unlike AUT-C1 and AUT-C7. The order above is this contract's, derived from USR-C2's established shape.
+- **`RO1`–`RO4` are cited by the entity workbook but defined nowhere available.** The workbook points to "Part E of the frozen document"; the frozen specification in that folder has no Part E. Every RO rule this project has relied on comes from the workbook's one-line glosses. Recorded as a Known Gap.
+- **The specification's event list omits every role-definition event.** `RoleCreated`, `RoleUpdated`, `RoleDeactivated` and `RoleReactivated` exist only in the command catalogue. AUT-C3 already shipped against that asymmetry. Recorded as a Known Gap.
+- **The specification says tenants cannot "modify or deactivate" system roles**, which is broader and vaguer than AUT-C4's precondition *"Role is not a system role."* The implemented rule is the stricter reading and satisfies both.
+
+### The Edit dialog (RM7)
+
+- **An Edit action on the Role detail page**, in the page header, for `role.manage` holders only, and **only on a tenant role**. A release-owned role's page offers nothing, for anyone.
+- **The dialog, titled *"Edit role"*:** Name and Description. **The code is shown, read-only, as context** — it is not a field, and the page already tells the reader it cannot be changed.
+- **The form opens on the role's stored values**, so "dirty" means "differs from what the server returned", as Edit profile establishes.
+- **Presence only** on Name — the server owns every other rule, and its refusal is shown word for word.
+- **What is sent** is exactly what was typed, untrimmed, as the New role form sends.
+- **The unsaved-changes guard**, on every close path.
+- **On `200`:** the dialog closes, the page announces *"Role updated: {name}."* using the **server's stored name** (RM6), and the role is re-read. A save that changed nothing is still a save to the client, which does not predict a no-op.
+- **Focus** returns to the Edit button.
+
+### Acceptance Criteria
+
+**The command**
+
+- **RM-A1** A tenant role's name and description are changed to the normalised values; `code`, `isSystemRole`, `isActive`, `createdAt` and `createdBy` are untouched. The answer carries exactly the six members of RM6, read from what was stored.
+- **RM-A2** **One `RoleUpdated`** is written, with the administrator as actor, the role as primary entity, and `Before`/`After` each carrying exactly `Name` and `Description`. No other record is written, and `AuditEventCatalogue.Version` is unchanged.
+- **RM-A3** **A no-op writes and records nothing** (RM3): resubmitting the stored values, and submitting values that normalise to them (padded, or a description that trims to empty when it is already null), answer `200` with the stored role while leaving `updated_at`, `updated_by` and the audit sequence untouched.
+- **RM-A4** **Name and description rules** are AUT-C3's exactly: a blank name, a control character in either, and 101 code points in either are refused with their sentences and nothing is written; values are stored trimmed; a description that is absent, empty or whitespace-only is stored as null.
+- **RM-A5** **A system role is refused** with *"System roles cannot be modified."*, and nothing is written — including when the submitted values are identical to what is stored, so the refusal precedes the no-op check.
+- **RM-A6** **An unknown role is refused** with *"The role does not exist."*, and nothing is written.
+- **RM-A7** **Duplicate names are allowed** (RM1): a tenant role may be renamed to a name another role already holds — a tenant role's **and** a system role's — and both roles keep their own code.
+- **RM-A8** **Authorisation:** a caller without `role.manage` is refused by the pipeline, and so is a non-human caller. `role.read` alone cannot edit a role.
+- **RM-A9** **The code cannot be changed** (RM2, RM10): the command has no code input, and the stored code after any accepted edit is the code before it. Equally, `IsSystemRole` is unchanged and unchangeable.
+- **RM-A10** **Nothing else changes:** no permission, no grant, no assignment, no other role, and an **inactive** tenant role can still be edited — activity is AUT-C5/C6's concern, not this one.
+- **RM-A11** **The rename is visible where it should be and invisible where it should not:** AUT-Q5 reports the new name; an existing audit record's captured role name is unchanged; and AUT-Q3's grants for the role are unaffected.
+
+**Over HTTP**
+
+- **RM-A12** `POST /api/roles/{roleId}/metadata` answers `200` with the six members. A missing `name` is `400`. A refusal is `400 { "error": … }` with the sentences above. No carrier is `401`. `GET /api/roles`, AUT-Q5 and AUT-Q3 are undisturbed.
+
+**The dialog**
+
+- **RM-U1** Edit is offered on the Role detail page for `role.manage` on a **tenant** role, and never otherwise — not for `role.read` alone, and not on a system role for anyone.
+- **RM-U2** The form opens on the role's stored name and description, and sends exactly what was typed, untrimmed, to the metadata route. An empty Name sends nothing and is flagged.
+- **RM-U3** On `200` the dialog closes, the page announces using the **server's stored name**, and the role is re-read. It is busy while sending, and sends once.
+- **RM-U4** A refusal is shown word for word and the dialog stays open with the typed values.
+- **RM-U5** The guard asks before discarding a dirty form, and a clean form closes without asking.
+- **RM-U6** **A read-only caller sees no role-management action** on either the list or the detail page (RA-U6, rewritten).
+- **RM-U7** No accessibility violations with the dialog open.
+
+**Browser, in the dev stack (RM-U8),** with the owner's approval. Unlike AUT-C3, these steps are **reversible** — a role can be renamed back — but **each edit's audit record is permanent**.
+
+1. As Ada, open `dev-smoke-reviewer` and edit its name to `Dev Smoke Reviewer (renamed)`. The detail page and the Roles list both show the new name.
+2. Save again with nothing changed: it succeeds, and no second audit record appears.
+3. Open a **system** role, `access-reviewer`: no Edit action is offered.
+
+### Implementation notes
+
+- **`Role.UpdateMetadata` was dead code before this story**, and so are `Deactivate`/`Reactivate` until AUT-C5/C6. It already refused a system role, which is exactly what PRV-C2 relies on to **refuse** role metadata drift instead of reconciling it; making it change-aware did not disturb that, because the refusal still comes first.
+- **`IRoleRepository.FindTrackedAsync` is new, and is not a row lock.** `FindAsync` is `AsNoTracking` — *"the commands that use it do not change the role"* — so an update path could not use it. The new method only drops the no-tracking, deliberately not `FOR UPDATE`: RM5, and the same reasoning USR-C2 records for taking no D6 lock.
+- **Two test fakes needed the new interface member**, as AUT-C3's two did for `ExistsWithCodeAsync`.
+- **A code or `isSystemRole` in the payload binds to nothing** (RM2, RM10): the request record has only `Name` and `Description`, so extra fields are ignored by model binding rather than treated as an attempted mutation. An endpoint test pins that the stored code and ownership survive such a payload with a `200`.
+- **`RoleUpdated` needed no catalogue change.** It was already seeded and active, with `PrimaryEntityType: "Role"`, `"BeforeAfter"` and `ReasonRequired: false`; the story adds the `AuditDeclarations` entry and the hand-maintained declared-code list. `AuditEventCatalogue.Version` is unchanged.
+- **The no-op is proven by provenance, not by appearance.** `updated_at` and `updated_by` are stamped by an interceptor on every write, so an unchanged pair is positive evidence that no write happened — stronger than observing that the values still look the same. Five mutants attack the comparison from different angles, including one that folds case, which would silently swallow a capitalisation fix.
+- **RM-A11's sharper half is unreachable today, and the test says so.** `audit_record` stores `authorizing_role_name` in its own column beside `authorizing_role_id`, copied at the time, so a rename cannot reach it; a design that joined for the name would fail the test. But renaming *the very role that authorised a recorded act* cannot be staged: only release-owned roles carry permissions, so a tenant role never authorises anything, and a release-owned role cannot be renamed at all (RM4). The test proves the copied-column property and records the gap rather than implying a stronger guarantee.
+  - The check compares the authority captured by the **creation**, not every record for the role — the rename writes a record of its own, so "all records" is not a stable set.
+- **RA-U6 was rewritten, not retired** (RM7). It read *"offers no action on either page"* while rendering with `role.read` alone, so a `role.manage`-gated Edit would have passed it silently: the test would have kept passing while no longer testing its own claim.
+- **The Edit dialog needs no read of its own**, unlike Edit profile, which mounts its editor only after GetUser answers. The detail page already holds the role from AUT-Q5, so the form's defaults are the server's values from the first render — which is what makes `isDirty` mean *"differs from what the server returned"* (RM9: no per-role query key, no GetRole).
+
+### Not included
+
+- **AUT-C5/C6 lifecycle**, AUT-Q4 members, **AUT-C7/C8 permissions**, and deletion of any kind.
+- **Any change to the code**, to `IsSystemRole`, or to the immutability guard (RM2, RM10).
+- **A `GET /api/roles/{id}`** (RM9), any per-role query key, and any change to AUT-Q5, AUT-Q3 or `GET /api/roles`.
+- **Any name-uniqueness rule** (RM1), and any reason input (RM8).
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
+
+## The frozen documents do not define RO1-RO4
+
+The user management entity workbook cites `RO1`, `RO2`, `RO3` and `RO4` against
+the `role` entity and says "Full definitions in Part E of the frozen document".
+The frozen specification in that folder — *User Management, Design
+Specification, v2.1* — **has no Part E**; its sections end at Appendix A.
+
+So every RO rule this project has relied on comes from the workbook's one-line
+glosses, not from a definition: `RO1` unique code, `RO2` a code immutable once
+referenced, `RO3` tenants cannot modify or deactivate system roles, `RO4` retire
+by `IsActive = false` rather than deletion. The implementations are deliberately
+**stricter** than the glosses where they differ — `role.code` is immutable from
+creation, not from first reference — and that is recorded at each site.
+
+Found while gathering evidence for the AUT-C4 gate. Nothing is blocked; an agent
+should cite the gloss and the site, and should not infer a rule the gloss does
+not state.
+
+## The specification's event list omits the role-definition events
+
+Section 7.1 of the frozen specification lists, for authorisation: role granted,
+role revoked, permission granted to role, permission revoked from role.
+`RoleCreated`, `RoleUpdated`, `RoleDeactivated` and `RoleReactivated` appear
+only in the command catalogue, which is where AUT-C3 through AUT-C6 take them
+from — and all four are seeded in `AuditEventCatalogue`.
+
+AUT-C3 shipped against this asymmetry and AUT-C4 does too. The general
+obligation the specification does state is invariant 16, that every lifecycle
+action produces an audit event carrying an actor snapshot, which these satisfy.
+The two documents disagree about completeness, not about content.
 
 ## USR-C2 change control: "Admin or self" is two commands
 

@@ -1,6 +1,7 @@
 using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Roles.Commands.CreateRole;
+using Ligature.Platform.Application.Roles.Commands.UpdateRoleMetadata;
 using Ligature.Platform.Application.Roles.Queries.PermissionCatalogue;
 using Ligature.Platform.Application.Roles.Queries.RoleAdministration;
 using Ligature.Platform.Application.Roles.Queries.RolePermissions;
@@ -44,6 +45,28 @@ public static class RoleEndpoints
                 + "holders. Success is 201 with the created role. An invalid input, "
                 + "a code already in use and a missing permission are 400.")
             .Produces(StatusCodes.Status201Created)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+
+        // AUT-C4. POST /{id}/{noun}, the convention every user mutation uses
+        // (RM6); this host has no PUT or PATCH.
+        routes.MapPost("/api/roles/{roleId:guid}/metadata", UpdateMetadataAsync)
+            .WithTags("Roles")
+            .WithSummary("Change a tenant role's name and description (administrator).")
+            .WithDescription(
+                "Requires a carrier and the 'role.manage' permission, and a human "
+                + "caller. Body: name, required, and description, optional. Both "
+                + "are trimmed, must be free of control characters and at most 100 "
+                + "characters, and the trimmed values are stored; a description "
+                + "that is absent or blank is stored as none. Names need not be "
+                + "unique. The code and the role's ownership are not inputs and do "
+                + "not change. A release-owned role is refused. Success is 200 with "
+                + "the role AS STORED, whether or not this call changed it; an edit "
+                + "that changes nothing writes nothing and records nothing. An "
+                + "invalid input, an unknown role, a release-owned role and a "
+                + "missing permission are 400.")
+            .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
             .WithMetadata(new RequiresCarrier());
@@ -132,6 +155,39 @@ public static class RoleEndpoints
     }
 
     private sealed record CreateRoleRequest(string? Code, string? Name, string? Description);
+
+    private static async Task<IResult> UpdateMetadataAsync(
+        Guid roleId,
+        UpdateRoleMetadataRequest? request,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        if (request?.Name is null)
+            return Results.BadRequest(new { Error = "name is required." });
+
+        var result = await dispatcher.SendAsync<UpdateRoleMetadataCommand, UpdateRoleMetadataResult>(
+            new UpdateRoleMetadataCommand(new RoleId(roleId), request.Name, request.Description),
+            cancellationToken);
+
+        // The role AS STORED (RM6), so the caller learns the normalised values
+        // without normalising anything itself.
+        return Results.Ok(new
+        {
+            RoleId = result.RoleId.Value,
+            result.Code,
+            result.Name,
+            result.Description,
+            result.IsSystemRole,
+            result.IsActive,
+        });
+    }
+
+    /// <summary>
+    /// Name and description only. A code or an ownership flag in the payload
+    /// binds to nothing and changes nothing (RM2, RM10): the command has no
+    /// such input, so there is no attempted mutation to refuse.
+    /// </summary>
+    private sealed record UpdateRoleMetadataRequest(string? Name, string? Description);
 
     private static async Task<IResult> ListAsync(
         HttpRequest request,

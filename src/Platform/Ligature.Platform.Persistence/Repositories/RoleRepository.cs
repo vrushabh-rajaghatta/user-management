@@ -26,6 +26,15 @@ public sealed class RoleRepository : IRoleRepository
             .FirstOrDefaultAsync(x => x.Id == roleId, cancellationToken);
     }
 
+    /// <summary>AUT-C4: tracked, because this one is about to change. No lock (RM5).</summary>
+    public async Task<Role?> FindTrackedAsync(RoleId roleId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(roleId);
+
+        return await _dbContext.Set<Role>()
+            .FirstOrDefaultAsync(x => x.Id == roleId, cancellationToken);
+    }
+
     /// <summary>
     /// AUT-C3 (RC1). PostgreSQL's lower() rather than .NET's fold, as the
     /// username and email pre-checks use, so the comparison the command makes
