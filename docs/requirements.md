@@ -443,6 +443,84 @@ The write path is the correction that matters: a `Transactional` record would be
 
 **`AuditEventCatalogue.Version` is not bumped, and must not be.** It is a whole-catalogue revision identifier, not a per-event one: `EventTypeSeed.Version` returns that same constant, so raising it would insert 49 new event-type rows at version 2, deactivate all 49 version-1 rows, and write every future audit record against `(code, 2)`. Propagation does not depend on it either — `AuditCatalogueSeeder` upserts every seed unconditionally on each `audit-schema` run, so the corrected definition reaches existing databases on the next deployment. The constant's documented consumers are `TenantProvisioned`'s payload and AUD-C3's future comparison.
 
+### Amendment 1 — Tenant-owned roles and grants
+
+**Decided 2026-09-20 by owner decision (PRV1–PRV7).** It removes the dependency that blocks AUT-C3: today the synchroniser refuses **any** role absent from the release seed, so the first tenant-created role would fail the next deployment.
+
+#### Decision
+
+> **The release catalogue reconciles release-owned authorization state. Tenant-owned roles and their grants are application-managed state and lie outside catalogue reconciliation. The permission catalogue itself remains release-owned.**
+
+```text
+                  Release-owned            Tenant-owned
+role              reconciled               outside reconciliation
+role_permission   reconciled               outside reconciliation
+permission        always release-owned (PE2) — no exemption
+```
+
+**Ownership is read from `IsSystemRole`, and nothing else** (PRV1):
+
+```text
+IsSystemRole = true   -> release-owned
+IsSystemRole = false  -> tenant-owned
+```
+
+No new provenance field. That flag already governs who may modify, deactivate or reactivate a role (RO3), it is immutable in the database — the update guard refuses a change, as it does for `code`, `created_at` and `created_by` — and the command catalogue already says AUT-C3 creates roles with it false. **A grant's ownership follows its role** (PRV5): a grant on a tenant role is tenant-owned, whatever permission it grants.
+
+#### What changes, exactly
+
+**Only the database → seed pass** (PRV2). The seed → database pass is untouched.
+
+| Database row | In the release seed | Result |
+| --- | --- | --- |
+| **System** role | No | **Refused**, `RoleMissingFromSeed` (unchanged — PRV3) |
+| **Tenant** role | No | **Allowed**, and ignored entirely |
+| **System** role | Yes | Existing reconciliation (insert, inactive, metadata, drift) |
+| **Tenant** role | Yes | **Refused**, `SecuritySemanticDrift` — the existing seeded-code check (unchanged) |
+| Active grant on a **system** role | No | **Refused**, `GrantMissingFromSeed` (unchanged) |
+| Active grant on a **tenant** role | No | **Allowed**, and ignored entirely |
+| Any **permission** | No | **Refused**, `PermissionMissingFromSeed` (unchanged) |
+
+The fourth row is why the exemption is scoped to one pass: a tenant may not take a code the product later owns and have it silently accepted. A release-owned role that disappears from the seed — the bad merge or rename F2 exists to catch — still carries `IsSystemRole = true` and is still refused.
+
+#### The forbidden mutations, one by one
+
+Tenant state is **outside the reconciliation set**, which is not the same as "the synchroniser may now touch it" (PRV6).
+
+| # | Rule | After this amendment |
+| --- | --- | --- |
+| **F1** | DELETE anything | Unchanged. The synchroniser deletes nothing, tenant or release. |
+| **F2** | A permission or role in the database but not the catalogue | **Amended.** It applies to permissions (all of them) and to **system** roles. A tenant role is not drift; it is state the catalogue never described. |
+| **F3** | Deactivate an existing permission or role | Unchanged. Nothing deactivates anything, and a tenant role is never examined. |
+| **F4** | Reactivate an existing permission or role | Unchanged; `InactiveCatalogueEntry` concerns seeded codes only, which tenant rows are not. |
+| **F5** | Revoke an existing grant | Unchanged as a prohibition. Its refusal — an active grant absent from the seed — now applies to grants on **system** roles. |
+| **F6** | Re-create a revoked grant | Unchanged; `RevokedGrantInSeed` concerns seeded grants, which are grants on system roles. |
+| **F7** | Modify an immutable or security-semantic field, `IsSystemRole` among them | Unchanged, and load-bearing: it is what refuses a tenant role wearing a seeded code. |
+| **F8** | Modify an existing `role_permission` row | Unchanged. The synchroniser modifies no grant, tenant or release. |
+
+**No new refusal reason code, and no change to `PermissionCatalogUpdated`.** Its counts remain counts of what the run committed, which is release-owned work only; tenant state is invisible to the event, as it is to the run.
+
+#### Acceptance Criteria
+
+The frozen criteria this amendment restates are **A5** (a permission or role absent from the catalogue refuses) and the grant half of **A9**/**A15**'s neighbourhood; every other criterion stands as written.
+
+- **PRV-A1** A **system** role in the database and absent from the seed refuses with `RoleMissingFromSeed`, naming it, and the run commits nothing. *(PRV3; the reason code has no test today.)*
+- **PRV-A2** A **tenant** role absent from the seed neither refuses nor is modified: the run succeeds, does its additive work, and leaves the role's row byte for byte as it was.
+- **PRV-A3** A **tenant** role whose code IS in the seed refuses with `SecuritySemanticDrift`, naming the code (PRV2).
+- **PRV-A4** An active grant on a **tenant** role, absent from the seed, neither refuses nor is modified — including a grant of a release-owned permission, and including one whose pair the seed lists for a different role.
+- **PRV-A5** An active grant on a **system** role, absent from the seed, still refuses with `GrantMissingFromSeed` (PRV5).
+- **PRV-A6** A **revoked** grant on a system role that the seed lists still refuses with `RevokedGrantInSeed` (F6), and a seeded grant is never modified (F8), whatever tenant rows exist beside it.
+- **PRV-A7** A **permission** in the database and absent from the seed still refuses with `PermissionMissingFromSeed` (PE2: permissions have no tenant half).
+- **PRV-A8** A run over a database holding tenant roles and tenant grants, with the release catalogue otherwise current, is a **successful no-op**: no insert, no update, and an event whose counts are all zero.
+- **PRV-A9** A refused run still commits nothing to `permission`, `role` or `role_permission` — tenant rows included (A9 unchanged).
+
+#### What this does not decide
+
+- **AUT-C7 on a release-owned role.** Nothing in the command catalogue or the domain stops an administrator adding a permission to a **system** role, and such a grant would then refuse every later deployment as `GrantMissingFromSeed` — correctly, by PRV5. Whether AUT-C7 must refuse system roles outright is **AUT-C7's gate**, not this one. It is recorded as a Known Gap.
+- **AUT-C3 and after.** This amendment removes the blocker; it introduces no command, and nothing here creates a tenant role.
+- **PE2's enforcement.** Unchanged and still a Known Gap.
+
+
 ## USR-Q2 — User List Query
 
 **Requirement ID:** `USR-Q2` SearchUsers, as the UM command catalogue defines it. It was assigned `USR-Q1` by the owner on 2026-09-17 and renumbered by the reconciliation on 2026-09-18 (*Reconciliation: USR-Q1 and USR-Q2*). History before that date calls it `USR-Q1`.
@@ -4348,3 +4426,9 @@ Requirement ID → Story → Implementation plan → Branch → Commit(s) → Pu
 **Recorded by owner decision (RA11 of *Role administration read*, 2026-09-20).** AUT-Q3 answers `404` *"The role does not exist."* for an unknown role, because an empty list must keep meaning "this role has no grants". AUT-Q2, the sibling read, answers `400` *"The user does not exist."* for an unknown user, as every other read and command in the platform does — `ProblemMiddleware` maps refusals to `400`.
 
 **Deferred:** whether unknown-resource reads answer `404` everywhere, which would touch AUT-Q2, USR-Q1 and the middleware's allowlist, and which interacts with the Known Gap *Authorization failures are not distinguishable from validation failures*. AUT-Q3's `404` is deliberate and is not to be "made consistent" inside an unrelated story.
+
+## AUT-C7 may grant a permission to a release-owned role
+
+**Recorded by owner decision (PRV-C2 Amendment 1, 2026-09-20).** Neither the command catalogue's AUT-C7 row nor `RolePermission.Create` prevents an administrator adding a permission to a **system** role. Catalogue synchronisation would then refuse every later deployment with `GrantMissingFromSeed`, which is the correct behaviour for release-owned authorization state (PRV5) — but it means a single application command can stop deployments.
+
+**Deferred to AUT-C7's own gate:** whether AUT-C7 and AUT-C8 refuse system roles outright, as the domain already refuses to modify their metadata (RO3). Nothing is to be relaxed in the synchroniser to accommodate such a grant.
