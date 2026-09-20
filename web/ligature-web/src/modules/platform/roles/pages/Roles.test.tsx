@@ -265,18 +265,25 @@ describe("the read-only caller", () => {
     expect(screen.queryByRole("button", { name: /Actions/ })).toBeNull();
     expect(screen.queryByRole("menuitem")).toBeNull();
 
+    // RD8: the lifecycle lives on the detail page; the list gains nothing.
+    expect(screen.queryByRole("button", { name: "Deactivate" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reactivate" })).toBeNull();
+
     expect(state.lists).toHaveLength(1);
     expect(state.grantReads).toHaveLength(0);
   });
 
-  // The tenant/system matrix lives in EditRole.test.tsx, which has a tenant
-  // role whose grants resolve; this is the read-only half of it.
-  it("is offered no Edit on the detail page", async () => {
+  // The tenant/system matrices live in EditRole.test.tsx and
+  // RoleLifecycle.test.tsx, which have tenant roles whose grants resolve;
+  // this is the read-only half of both.
+  it("is offered no role-management action on the detail page", async () => {
     backend();
     await render([ROLE_READ], `/admin/roles/${REVIEWER.roleId}`);
     await screen.findByRole("table", { name: "Permissions" });
 
     expect(screen.queryByRole("button", { name: "Edit role" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Deactivate" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reactivate" })).toBeNull();
   });
 });
 

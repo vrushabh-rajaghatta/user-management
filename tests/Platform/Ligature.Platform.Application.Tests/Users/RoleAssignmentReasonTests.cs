@@ -1,5 +1,6 @@
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Audit;
+using Ligature.Platform.Application.Roles.Commands.DeactivateRole;
 using Ligature.Platform.Application.Users.Commands.GrantRole;
 using Ligature.Platform.Application.Users.Commands.RevokeRole;
 using Ligature.Platform.Domain.Users;
@@ -10,7 +11,8 @@ namespace Ligature.Platform.Application.Tests.Users;
 
 /// <summary>
 /// "A blank reason is refused BEFORE ANY DATABASE WORK" (docs/requirements.md,
-/// "Role Assignment", G6). The domain would refuse a blank reason too, so the
+/// "Role Assignment", G6), for every command that requires one: AUT-C1,
+/// AUT-C2 and now AUT-C5. The domain would refuse a blank reason too, so the
 /// integration suite cannot tell whether the database was touched first; this
 /// can. Every database interaction goes through the unit of work, so no
 /// transaction opened means no database work. Every other collaborator throws
@@ -48,6 +50,28 @@ public sealed class RoleAssignmentReasonTests
 
         await Assert.ThrowsAsync<BusinessRuleViolationException>(() => handler.Handle(
             new RevokeRoleCommand(UserRoleId.New(), reason),
+            CancellationToken.None));
+
+        Assert.Equal(0, unitOfWork.Calls);
+    }
+
+    /// <summary>
+    /// AUT-C5 (RD5, RD-A4). The same proof for role deactivation, and the
+    /// reason it matters concretely: RoleDeactivated is seeded
+    /// ReasonRequired, so a blank reason that reached the audit assembler
+    /// would fail AR9 as an emission defect — a 500, not a refusal.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task A_blank_deactivation_reason_is_refused_before_a_transaction_opens(string reason)
+    {
+        var unitOfWork = new CountingUnitOfWork();
+
+        var handler = new DeactivateRoleCommandHandler(unitOfWork, new Untouched(), new Untouched());
+
+        await Assert.ThrowsAsync<BusinessRuleViolationException>(() => handler.Handle(
+            new DeactivateRoleCommand(RoleId.New(), reason),
             CancellationToken.None));
 
         Assert.Equal(0, unitOfWork.Calls);
