@@ -582,7 +582,17 @@ public sealed class CatalogueSynchronisationTests
             DELETE FROM role WHERE code = 'access-reviewer';
             """);
 
-        await SeedRoleAsync(database, "access-reviewer", isSystemRole: false);
+        // The row is otherwise IDENTICAL to the seed — same name, same
+        // description — so ownership is the only thing left that can refuse it.
+        // Anything else and the metadata check would refuse it for a second
+        // reason, and this test would pass with the ownership check deleted.
+        await ExecuteAsync(database, $"""
+            INSERT INTO role (id, name, code, description, is_system_role, is_active,
+                              created_at, created_by, updated_at, updated_by)
+            VALUES (gen_random_uuid(), 'Access Reviewer', 'access-reviewer',
+                    'Read-only visibility across users, roles, identities, sessions and policy, for periodic access review.',
+                    false, true, now(), '{SystemActor}', now(), '{SystemActor}');
+            """);
 
         var result = await SynchroniseAsync(database);
 
