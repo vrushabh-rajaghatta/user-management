@@ -3258,6 +3258,7 @@ AUT-Q6 ListPermissions      the release-owned catalogue, read-only
 | **RA8** | **A Roles module owns `role.read`.** The users module carries that code today only because no roles module existed; it now imports it from the roles module's public surface, as one module uses another's. The users module keeps the user-management codes. |
 | **RA9** | **`role.manage` is not used anywhere in this gate.** The three reads are `role.read`. `role.manage` stays reserved for AUT-C3–C8: `role.read` inspects a definition, `role.manage` changes one. |
 | **RA10** | **PRV-C2 is parked.** The catalogue synchroniser refuses any role absent from the release seed (`RoleMissingFromSeed`), with no exemption for tenant roles. That is created by **AUT-C3**, not by this slice, and is resolved before AUT-C3 is implemented — not here. |
+| **RA11** | **An unknown role is `404`, not an empty list** (owner's change). An empty list means *this role exists and currently has no matching grants*; a role that does not exist is a different condition, and the reader must be able to tell them apart. The sentence follows the existing wording: *"The role does not exist."*, as *"The user does not exist."* elsewhere. `asOf` projects the grants only once the role is known to exist. |
 
 ### The routes and their shapes
 
@@ -3293,7 +3294,9 @@ requiresHumanActor, grantedAt, revokedAt
 ```
 
 - The rows are the grants **live at `asOf`** (RA5). `revokedAt` is therefore null for a current read, and may carry a value for a historical one — which is the "granted/revoked info" the catalogue asks for.
-- **Ordered by `code`**, and an unknown role answers an empty list rather than an error: to a reader, a role with no grants and a role that does not exist are the same question, and AUT-Q5 is the authority on which roles exist.
+- **Ordered by `code`.** A role that exists with no live grants answers `200` and an empty list; **an unknown role answers `404` with *"The role does not exist."*** (RA11).
+- **How the `404` is produced.** `ProblemMiddleware` maps exceptions to `400`, `401`, `429` and `500` only, and this story does not widen that allowlist. The query's result distinguishes "no such role" from "no grants", and the route maps that to `404 { "error": … }`. **This is the host's first `404` with a body.**
+- **A recorded divergence:** AUT-Q2, the sibling read, answers `400` *"The user does not exist."* for an unknown user. Aligning the two is not this gate's work; see the Known Gap.
 
 **AUT-Q6** answers `{ "permissions": [ … ] }`, each permission exactly:
 
@@ -3325,7 +3328,7 @@ permissionId, code, name, resource, action, requiresHumanActor, isActive
 
 - **RA-A6** Without `asOf`, the current live grants are returned, each with exactly the nine members above, ordered by code.
 - **RA-A7** With `asOf`, the grants live at that instant are returned: one revoked after `asOf` appears with its `revokedAt`; one granted after `asOf` does not appear; one revoked before `asOf` does not appear.
-- **RA-A8** An unknown role answers an empty list.
+- **RA-A8** **A role with no live grants answers `200` and an empty list; an unknown role answers `404`** with *"The role does not exist."* (RA11). The `404` carries that body, which is what distinguishes it from an unmapped route.
 
 **AUT-Q6**
 
@@ -4325,3 +4328,9 @@ Requirement ID → Story → Implementation plan → Branch → Commit(s) → Pu
 ## CRD-C7 does not serialise against USR-C3
 
 **Recorded by owner decision (CE9).** CRD-C7 Resend activation does not currently serialise against USR-C3 email changes, so an activation token could be issued to the previous address during the race. USR-C3 takes the target's row lock; CRD-C7 does not. Closing this is its own concurrency-hardening story: CRD-C7 taking the same D6 lock. USR-C3 does not change CRD-C7.
+
+## Unknown resources answer 400 in one read and 404 in another
+
+**Recorded by owner decision (RA11 of *Role administration read*, 2026-09-20).** AUT-Q3 answers `404` *"The role does not exist."* for an unknown role, because an empty list must keep meaning "this role has no grants". AUT-Q2, the sibling read, answers `400` *"The user does not exist."* for an unknown user, as every other read and command in the platform does — `ProblemMiddleware` maps refusals to `400`.
+
+**Deferred:** whether unknown-resource reads answer `404` everywhere, which would touch AUT-Q2, USR-Q1 and the middleware's allowlist, and which interacts with the Known Gap *Authorization failures are not distinguishable from validation failures*. AUT-Q3's `404` is deliberate and is not to be "made consistent" inside an unrelated story.
