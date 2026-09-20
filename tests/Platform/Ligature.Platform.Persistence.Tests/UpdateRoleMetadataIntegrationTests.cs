@@ -84,7 +84,7 @@ public sealed class UpdateRoleMetadataIntegrationTests : IClassFixture<Activatio
 
         Assert.Equal("RoleUpdated", record[0]);
         Assert.Equal(admin.Value, record[1]);
-        Assert.Null(record[2]);
+        Assert.Equal(DBNull.Value, record[2]);
 
         Assert.Equal(
             [("Description", "Reviews access."), ("Name", "Quality Reviewer")],
@@ -283,8 +283,16 @@ public sealed class UpdateRoleMetadataIntegrationTests : IClassFixture<Activatio
 
     /// <summary>
     /// The catalogue's claim that renaming is safe, made concrete: the read
-    /// reports the new name, and an ActorSnapshot captured before the rename
-    /// still says what the authority was called AT THE TIME.
+    /// reports the new name, and the authority captured against an act already
+    /// performed is untouched.
+    ///
+    /// WHAT THIS CAN AND CANNOT REACH TODAY. audit_record stores the
+    /// authorising role's NAME in its own column beside the id, so a rename
+    /// cannot reach it — a design that joined for the name would fail here.
+    /// The sharper case, renaming the very role that authorised a recorded
+    /// act, is UNREACHABLE until AUT-C7: only release-owned roles carry
+    /// permissions today, a tenant role therefore never authorises anything,
+    /// and a release-owned role cannot be renamed at all (RM4).
     /// </summary>
     [Fact]
     public async Task The_new_name_reaches_the_read_and_the_old_one_stays_in_the_record()
@@ -292,7 +300,7 @@ public sealed class UpdateRoleMetadataIntegrationTests : IClassFixture<Activatio
         var admin = await SecurityAdminAsync();
         var created = await CreateAsync(admin, "Quality Reviewer", null);
 
-        var captured = await AuthorisingRoleNamesAsync();
+        var captured = await AuthorisingRoleNamesAsync(created.RoleId);
 
         await UpdateAsync(admin, created.RoleId, "Access Reviewer", null);
 
@@ -300,7 +308,7 @@ public sealed class UpdateRoleMetadataIntegrationTests : IClassFixture<Activatio
             await ListAsync(admin),
             x => x.RoleId == created.RoleId.Value && x.Name == "Access Reviewer");
 
-        Assert.Equal(captured, await AuthorisingRoleNamesAsync());
+        Assert.Equal(captured, await AuthorisingRoleNamesAsync(created.RoleId));
     }
 
     // ================================================================ harness
@@ -406,10 +414,20 @@ public sealed class UpdateRoleMetadataIntegrationTests : IClassFixture<Activatio
              WHERE entity_id = '{roleId.Value}' AND event_type = '{eventType}'
             """);
 
-    /// <summary>Every role name an ActorSnapshot has already captured.</summary>
-    private Task<string> AuthorisingRoleNamesAsync()
+    /// <summary>
+    /// The authority captured by the act that CREATED this role — an act
+    /// already performed when the rename happens. The name is a column of its
+    /// own, copied at the time, not a join. (Every record about the role would
+    /// be the wrong set: the rename writes one of its own.)
+    /// </summary>
+    private Task<string> AuthorisingRoleNamesAsync(RoleId roleId)
         => ScalarAsync<string>(
-            "SELECT coalesce(string_agg(actor_snapshot::text, '|' ORDER BY sequence), '') FROM audit.audit_record");
+            $"""
+            SELECT coalesce(string_agg(
+                       concat_ws('|', authorizing_role_id, authorizing_role_name), ';' ORDER BY sequence), '')
+              FROM audit.audit_record
+             WHERE entity_id = '{roleId.Value}' AND event_type = 'RoleCreated'
+            """);
 
     private Task<string> CountsAsync()
         => ScalarAsync<string>(

@@ -21,6 +21,7 @@ using Ligature.Platform.Application.Users.Queries.UserIdentities;
 using Ligature.Platform.Application.Users.Queries.MySessions;
 using Ligature.Platform.Application.Users.Queries.UserSessions;
 using Ligature.Platform.Application.Roles.Commands.CreateRole;
+using Ligature.Platform.Application.Roles.Commands.UpdateRoleMetadata;
 using Ligature.Platform.Application.Roles.Queries.PermissionCatalogue;
 using Ligature.Platform.Application.Roles.Queries.RoleAdministration;
 using Ligature.Platform.Application.Roles.Queries.RolePermissions;
@@ -321,6 +322,11 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<CreateRoleCommand, CreateRoleResult>,
             CreateRoleCommandHandler>();
+
+        // AUT-C4.
+        services.AddScoped<
+            ICommandHandler<UpdateRoleMetadataCommand, UpdateRoleMetadataResult>,
+            UpdateRoleMetadataCommandHandler>();
 
         // USR-C4 / USR-C5.
         services.AddScoped<

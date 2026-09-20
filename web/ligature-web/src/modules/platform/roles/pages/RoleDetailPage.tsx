@@ -1,10 +1,15 @@
+import { useRef, useState } from "react";
 import { useParams } from "react-router";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/shared/api/errors";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { Page } from "@/shared/components/Page";
+import { useCan } from "@/shared/auth/useCan";
+import { EditRoleDialog } from "../components/EditRoleDialog";
 import { useRolePermissions, useRoles } from "../hooks/useRoles";
+import { RolePermissions } from "../permissions";
 
 const NOT_FOUND = "The role does not exist.";
 
@@ -21,6 +26,13 @@ export function RoleDetailPage() {
   const { roleId = "" } = useParams();
   const roles = useRoles(true);
   const grants = useRolePermissions(roleId);
+
+  // AUT-C4 (RM-U1). An affordance, never authorization: the command decides.
+  const canManage = useCan(RolePermissions.manage);
+  const [editing, setEditing] = useState<{ open: boolean } | undefined>(undefined);
+  const [announcement, setAnnouncement] = useState("");
+  const [queued, setQueued] = useState<string | undefined>(undefined);
+  const edit = useRef<HTMLButtonElement | null>(null);
 
   const role = roles.data?.roles.find((candidate) => candidate.roleId === roleId);
   const missing = grants.error instanceof ApiError && grants.error.status === 404;
@@ -69,8 +81,30 @@ export function RoleDetailPage() {
   // one role's grants.
   const { permissions: rows } = grants.data;
 
+  // A release-owned role is nobody's to edit (RM4), so nobody is offered it.
+  const editable = canManage && !role.isSystemRole;
+
   return (
-    <Page title={role.name}>
+    <Page
+      title={role.name}
+      actions={
+        editable ? (
+          <Button
+            ref={edit}
+            onClick={() => {
+              setAnnouncement("");
+              setEditing({ open: true });
+            }}
+          >
+            Edit role
+          </Button>
+        ) : undefined
+      }
+    >
+      <p role="status" className="text-sm empty:hidden">
+        {announcement}
+      </p>
+
       <dl className="grid gap-2 text-sm sm:grid-cols-[10rem_1fr]">
         <dt className="text-muted-foreground">Code</dt>
         <dd>{role.code}</dd>
@@ -113,6 +147,28 @@ export function RoleDetailPage() {
           ))}
         </TableBody>
       </Table>
+
+      {editing === undefined ? null : (
+        <EditRoleDialog
+          role={role}
+          open={editing.open}
+          returnFocus={edit}
+          onClose={() => {
+            setEditing({ open: false });
+          }}
+          onSaved={(message) => {
+            setQueued(message);
+          }}
+          onClosed={() => {
+            setEditing(undefined);
+
+            if (queued !== undefined) {
+              setAnnouncement(queued);
+              setQueued(undefined);
+            }
+          }}
+        />
+      )}
     </Page>
   );
 }

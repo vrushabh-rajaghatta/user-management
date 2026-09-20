@@ -85,6 +85,7 @@ public sealed class RoleAssignmentReasonTests
         public Task AddAsync(User user, CancellationToken cancellationToken) => throw Touched();
         public Task<User?> FindAsync(UserId userId, CancellationToken cancellationToken) => throw Touched();
         public Task<Role?> FindAsync(RoleId roleId, CancellationToken cancellationToken) => throw Touched();
+        public Task<Role?> FindTrackedAsync(RoleId roleId, CancellationToken cancellationToken) => throw Touched();
         public Task<bool> ExistsWithCodeAsync(string code, CancellationToken cancellationToken) => throw Touched();
         public Task AddAsync(Role role, CancellationToken cancellationToken) => throw Touched();
         public Task AddAsync(UserRole assignment, CancellationToken cancellationToken) => throw Touched();

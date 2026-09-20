@@ -10,6 +10,16 @@ public interface IRoleRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// AUT-C4: the same role, TRACKED, so the caller's changes are saved by the
+    /// unit of work. Deliberately NOT a row lock (RM5): the D6 lock orders
+    /// commands that depend on lifecycle state, and metadata does not. Last
+    /// write wins, as USR-C2 does.
+    /// </summary>
+    Task<Role?> FindTrackedAsync(
+        RoleId roleId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// AUT-C3 (RC1): whether any role already holds this code, IGNORING CASE.
     /// The database's index is case-sensitive and stays the guarantee; this is
     /// what makes a case-only clash a refusal rather than a second role.

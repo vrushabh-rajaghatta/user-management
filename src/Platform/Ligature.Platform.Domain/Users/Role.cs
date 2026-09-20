@@ -72,11 +72,35 @@ public sealed class Role : AggregateRoot<RoleId>
     /// AUT-C4 (RM3). Change-aware, as User.UpdateProfile is: false means the
     /// normalised values are the stored ones, and the caller must then write
     /// nothing and record nothing.
+    ///
+    /// OWNERSHIP IS REFUSED FIRST (RM4), before the input rules and before the
+    /// comparison, so identical values on a release-owned role do not slip
+    /// through as a silent success. The code is not a parameter and cannot be
+    /// reached from here (RM2), and neither can IsSystemRole (RM10).
     /// </summary>
     public bool UpdateMetadata(
         string name,
         string? description)
-        => throw new NotImplementedException("AUT-C4 (RM3).");
+    {
+        if (IsSystemRole)
+            throw new DomainException(
+                "System roles cannot be modified.");
+
+        var normalisedName = NormalisedName(name);
+        var normalisedDescription = NormalisedDescription(description);
+
+        var changed =
+            !string.Equals(Name, normalisedName, StringComparison.Ordinal)
+            || !string.Equals(Description, normalisedDescription, StringComparison.Ordinal);
+
+        if (!changed)
+            return false;
+
+        Name = normalisedName;
+        Description = normalisedDescription;
+
+        return true;
+    }
 
 
     /// <summary>The most a role's name or description may hold, in Unicode code points (RC2).</summary>
