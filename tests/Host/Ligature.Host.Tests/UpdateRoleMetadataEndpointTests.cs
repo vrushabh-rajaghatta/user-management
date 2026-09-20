@@ -109,10 +109,19 @@ public sealed class UpdateRoleMetadataEndpointTests
         {
             var role = await CreateAsync(client, security, created);
 
-            // A missing field is refused where the request is bound.
-            Assert.Equal(
-                HttpStatusCode.BadRequest,
-                (await PostAsync(client, security, role.RoleId, new { Description = "No name" })).StatusCode);
+            // A missing field is refused where the request is bound, with the
+            // binding's own sentence -- not the domain's, which would mean the
+            // null had travelled all the way into the command.
+            await AssertErrorAsync(
+                await PostAsync(client, security, role.RoleId, new { Description = "No name" }),
+                "name is required.");
+
+            // An absent body binds the request itself to null. The guard is
+            // what makes that a refusal rather than a dereference on the way
+            // to the command.
+            await AssertErrorAsync(
+                await PostNullBodyAsync(client, security, role.RoleId),
+                "name is required.");
 
             await AssertErrorAsync(
                 await PostAsync(client, security, role.RoleId, new { Name = "   " }),
@@ -246,6 +255,19 @@ public sealed class UpdateRoleMetadataEndpointTests
 
         if (carrier is not null)
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", carrier);
+
+        return await client.SendAsync(request);
+    }
+
+    /// <summary>A literal JSON null, which binds the request record to null.</summary>
+    private static async Task<HttpResponseMessage> PostNullBodyAsync(HttpClient client, string carrier, Guid roleId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, PathFor(roleId))
+        {
+            Content = new StringContent("null", System.Text.Encoding.UTF8, "application/json"),
+        };
+
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", carrier);
 
         return await client.SendAsync(request);
     }

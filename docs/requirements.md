@@ -3705,6 +3705,19 @@ The name and description rules are **AUT-C3's, unchanged** (RC2) — this story 
 2. Save again with nothing changed: it succeeds, and no second audit record appears.
 3. Open a **system** role, `access-reviewer`: no Edit action is offered.
 
+### Implementation notes
+
+- **`Role.UpdateMetadata` was dead code before this story**, and so are `Deactivate`/`Reactivate` until AUT-C5/C6. It already refused a system role, which is exactly what PRV-C2 relies on to **refuse** role metadata drift instead of reconciling it; making it change-aware did not disturb that, because the refusal still comes first.
+- **`IRoleRepository.FindTrackedAsync` is new, and is not a row lock.** `FindAsync` is `AsNoTracking` — *"the commands that use it do not change the role"* — so an update path could not use it. The new method only drops the no-tracking, deliberately not `FOR UPDATE`: RM5, and the same reasoning USR-C2 records for taking no D6 lock.
+- **Two test fakes needed the new interface member**, as AUT-C3's two did for `ExistsWithCodeAsync`.
+- **A code or `isSystemRole` in the payload binds to nothing** (RM2, RM10): the request record has only `Name` and `Description`, so extra fields are ignored by model binding rather than treated as an attempted mutation. An endpoint test pins that the stored code and ownership survive such a payload with a `200`.
+- **`RoleUpdated` needed no catalogue change.** It was already seeded and active, with `PrimaryEntityType: "Role"`, `"BeforeAfter"` and `ReasonRequired: false`; the story adds the `AuditDeclarations` entry and the hand-maintained declared-code list. `AuditEventCatalogue.Version` is unchanged.
+- **The no-op is proven by provenance, not by appearance.** `updated_at` and `updated_by` are stamped by an interceptor on every write, so an unchanged pair is positive evidence that no write happened — stronger than observing that the values still look the same. Five mutants attack the comparison from different angles, including one that folds case, which would silently swallow a capitalisation fix.
+- **RM-A11's sharper half is unreachable today, and the test says so.** `audit_record` stores `authorizing_role_name` in its own column beside `authorizing_role_id`, copied at the time, so a rename cannot reach it; a design that joined for the name would fail the test. But renaming *the very role that authorised a recorded act* cannot be staged: only release-owned roles carry permissions, so a tenant role never authorises anything, and a release-owned role cannot be renamed at all (RM4). The test proves the copied-column property and records the gap rather than implying a stronger guarantee.
+  - The check compares the authority captured by the **creation**, not every record for the role — the rename writes a record of its own, so "all records" is not a stable set.
+- **RA-U6 was rewritten, not retired** (RM7). It read *"offers no action on either page"* while rendering with `role.read` alone, so a `role.manage`-gated Edit would have passed it silently: the test would have kept passing while no longer testing its own claim.
+- **The Edit dialog needs no read of its own**, unlike Edit profile, which mounts its editor only after GetUser answers. The detail page already holds the role from AUT-Q5, so the form's defaults are the server's values from the first render — which is what makes `isDirty` mean *"differs from what the server returned"* (RM9: no per-role query key, no GetRole).
+
 ### Not included
 
 - **AUT-C5/C6 lifecycle**, AUT-Q4 members, **AUT-C7/C8 permissions**, and deletion of any kind.
