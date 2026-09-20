@@ -192,8 +192,8 @@ public sealed class RoleAdministrationReadTests : IClassFixture<ActivationDataba
 
         Assert.NotEqual(Guid.Empty, created.RolePermissionId);
         Assert.NotEqual(Guid.Empty, created.PermissionId);
-        Assert.Equal("user", created.Resource);
-        Assert.Equal("create", created.Action);
+        Assert.Equal("User", created.Resource);
+        Assert.Equal("Create", created.Action);
         Assert.True(created.RequiresHumanActor);
         Assert.Equal(Past, created.GrantedAt);
         Assert.Null(created.RevokedAt);
@@ -256,8 +256,8 @@ public sealed class RoleAdministrationReadTests : IClassFixture<ActivationDataba
         var create = permissions.Single(x => x.Code == "user.create");
 
         Assert.NotEqual(Guid.Empty, create.PermissionId);
-        Assert.Equal("user", create.Resource);
-        Assert.Equal("create", create.Action);
+        Assert.Equal("User", create.Resource);
+        Assert.Equal("Create", create.Action);
         Assert.True(create.RequiresHumanActor);
         Assert.True(create.IsActive);
         Assert.False(string.IsNullOrWhiteSpace(create.Name));
@@ -269,19 +269,19 @@ public sealed class RoleAdministrationReadTests : IClassFixture<ActivationDataba
     {
         var reader = await ReaderAsync();
 
-        var byResource = await CatalogueAsync(reader, resource: "session");
+        var byResource = await CatalogueAsync(reader, resource: "Session");
         Assert.NotEmpty(byResource);
-        Assert.All(byResource, x => Assert.Equal("session", x.Resource));
+        Assert.All(byResource, x => Assert.Equal("Session", x.Resource));
 
         var humanOnly = await CatalogueAsync(reader, requiresHumanActor: true);
         Assert.NotEmpty(humanOnly);
         Assert.All(humanOnly, x => Assert.True(x.RequiresHumanActor));
 
-        var both = await CatalogueAsync(reader, resource: "user", requiresHumanActor: false);
+        var both = await CatalogueAsync(reader, resource: "User", requiresHumanActor: false);
         Assert.NotEmpty(both);
         Assert.All(both, x =>
         {
-            Assert.Equal("user", x.Resource);
+            Assert.Equal("User", x.Resource);
             Assert.False(x.RequiresHumanActor);
         });
     }
@@ -405,7 +405,7 @@ public sealed class RoleAdministrationReadTests : IClassFixture<ActivationDataba
             $"""
              INSERT INTO permission (id, code, name, description, resource, action,
                                      requires_human_actor, is_active, created_at, created_by)
-             VALUES ('{id}', '{code}', 'Seeded {code}', NULL, 'zz-test', 'read',
+             VALUES ('{id}', '{code}', 'Seeded {code}', NULL, 'ZzTest', 'Read',
                      {(requiresHumanActor ? "true" : "false")}, {(isActive ? "true" : "false")},
                      now(), '{system}');
              """);

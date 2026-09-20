@@ -22,9 +22,6 @@ export const UserPermissions = {
   // started from the Users table. No sessions module exists to own it yet.
   revokeSessions: definePermission("session.revoke"),
 
-  // Role assignment (AUT-C1, AUT-C2, AUT-Q2), started from the Users table. No
-  // roles module exists to own them yet.
-  readRoles: definePermission("role.read"),
 
   // IDN-Q1 and CRD-C6, on the User detail page. No identities module exists to
   // own them yet.

@@ -1,3 +1,4 @@
+import { RolePermissions } from "@/modules/platform/roles";
 import { useCan } from "@/shared/auth/useCan";
 import { UserPermissions } from "../permissions";
 import type { UserRow } from "../schemas/users";
@@ -21,7 +22,7 @@ export interface UserActionPermissions {
   readonly deactivate: boolean;
   readonly reactivate: boolean;
 
-  /** role.read (AUT-Q2): whether the caller may see a user's role assignments. */
+  /** role.read (AUT-Q2), owned by the roles module (RA8): whether the caller may see a user's role assignments. */
   readonly manageRoles: boolean;
 
   /** user.update (USR-C2): whether the caller may edit a user's names. */
@@ -122,7 +123,7 @@ export function useUserActionPermissions(): UserActionPermissions {
     revoke: useCan(UserPermissions.revokeSessions),
     deactivate: useCan(UserPermissions.deactivate),
     reactivate: useCan(UserPermissions.reactivate),
-    manageRoles: useCan(UserPermissions.readRoles),
+    manageRoles: useCan(RolePermissions.read),
     editProfile: useCan(UserPermissions.update),
     changeEmail: useCan(UserPermissions.update),
   };

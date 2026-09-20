@@ -197,13 +197,13 @@ public sealed class RoleAdministrationEndpointTests
             Assert.Equal(codes.OrderBy(x => x, StringComparer.Ordinal), codes);
             Assert.Contains("role.manage", codes);
 
-            using var filtered = await JsonAsync(await GetAsync(client, callers.Reviewer, $"{Catalogue}?resource=session&requiresHumanActor=false"));
+            using var filtered = await JsonAsync(await GetAsync(client, callers.Reviewer, $"{Catalogue}?resource=Session&requiresHumanActor=false"));
             var narrowed = filtered.RootElement.GetProperty("permissions").EnumerateArray().ToList();
 
             Assert.NotEmpty(narrowed);
             Assert.All(narrowed, permission =>
             {
-                Assert.Equal("session", permission.GetProperty("resource").GetString());
+                Assert.Equal("Session", permission.GetProperty("resource").GetString());
                 Assert.False(permission.GetProperty("requiresHumanActor").GetBoolean());
             });
         });
