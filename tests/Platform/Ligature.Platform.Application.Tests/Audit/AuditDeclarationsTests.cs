@@ -4,6 +4,7 @@ using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Roles.Commands.CreateRole;
+using Ligature.Platform.Application.Roles.Commands.UpdateRoleMetadata;
 using Ligature.Platform.Application.Users.Commands.ChangeUserEmail;
 using Ligature.Platform.Application.Users.Commands.DeactivateUser;
 using Ligature.Platform.Application.Users.Commands.GrantRole;
@@ -195,6 +196,20 @@ public sealed class AuditDeclarationsTests
     }
 
     /// <summary>
+    /// AUT-C4: one record, and only when the edit changed something (RM3).
+    /// RoleUpdated was already seeded in the catalogue, so nothing here bumps
+    /// AuditEventCatalogue.Version.
+    /// </summary>
+    [Fact]
+    public void AUT_C4_declares_RoleUpdated()
+    {
+        var declaration = AuditDeclarations.For(typeof(UpdateRoleMetadataCommand));
+
+        Assert.Equal("UserManagement", declaration!.OwningContext);
+        Assert.Equal(["RoleUpdated"], declaration.Codes);
+    }
+
+    /// <summary>
     /// USR-C3: one record, and deliberately NOT TokenInvalidated for the links
     /// it invalidates — none is superseded (D13, as USR-C4).
     /// </summary>
@@ -281,7 +296,7 @@ public sealed class AuditDeclarationsTests
                 typeof(GrantRoleCommand), typeof(RevokeRoleCommand),
                 typeof(DeactivateUserCommand), typeof(ReactivateUserCommand),
                 typeof(UpdateUserProfileCommand), typeof(ChangeUserEmailCommand),
-                typeof(CreateRoleCommand),
+                typeof(CreateRoleCommand), typeof(UpdateRoleMetadataCommand),
                 typeof(UnlockAccountCommand),
                 typeof(RevokeSessionCommand), typeof(RevokeUserSessionsCommand),
                 typeof(SignOutEverywhereCommand),

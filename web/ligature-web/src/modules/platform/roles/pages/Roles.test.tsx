@@ -12,9 +12,13 @@ import { TestSessionSource } from "@/test/sessions";
  * The Roles administration screen (docs/requirements.md, "Role administration
  * read", RA-U1 to RA-U7).
  *
- * READ-ONLY. Neither page offers an action, and the only requests either makes
- * are AUT-Q5 and AUT-Q3. The derived values are the server's: the screen shows
- * agentAssignable, it never computes it.
+ * The derived values are the server's: the screen shows agentAssignable, it
+ * never computes it.
+ *
+ * RA-U6 was "neither page offers an action" until AUT-C3 added New role and
+ * AUT-C4 added Edit. It is now what it was always testing for (RM7): a caller
+ * holding role.read and nothing else is offered no role-management action, and
+ * the pages send only their reads.
  */
 
 const at = (path: string) => new URL(path, window.location.origin).href;
@@ -248,20 +252,31 @@ describe("the role detail", () => {
   });
 });
 
-// ---------------------------------------------------------------- RA-U6
+// ------------------------------------------------- RA-U6, rewritten by RM-U6
 
-describe("read-only", () => {
-  it("offers no action on either page, and sends only its reads", async () => {
+describe("the read-only caller", () => {
+  it("is offered no role-management action on the list, and sends only its reads", async () => {
     const state = backend();
     await render([ROLE_READ]);
     await table();
 
     // The only control is the inactive-roles switch; no menus, no buttons that act.
+    expect(screen.queryByRole("button", { name: "New role" })).toBeNull();
     expect(screen.queryByRole("button", { name: /Actions/ })).toBeNull();
     expect(screen.queryByRole("menuitem")).toBeNull();
 
     expect(state.lists).toHaveLength(1);
     expect(state.grantReads).toHaveLength(0);
+  });
+
+  // The tenant/system matrix lives in EditRole.test.tsx, which has a tenant
+  // role whose grants resolve; this is the read-only half of it.
+  it("is offered no Edit on the detail page", async () => {
+    backend();
+    await render([ROLE_READ], `/admin/roles/${REVIEWER.roleId}`);
+    await screen.findByRole("table", { name: "Permissions" });
+
+    expect(screen.queryByRole("button", { name: "Edit role" })).toBeNull();
   });
 });
 
