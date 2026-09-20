@@ -122,6 +122,60 @@ public sealed class ExceptionTranslationTests
         await using var context = CreateContext();
         var unitOfWork = new UnitOfWork(context);
 
+        // RP2's live-grant index, which the translator deliberately does not
+        // map: no command reaches it yet, and it belongs to AUT-C7. It replaces
+        // IX_role_code as this test's example, because AUT-C3 makes that one
+        // reachable, so it is translated now (the test below).
+        var role = NewRole($"dup-grant-{Guid.NewGuid():N}"[..24]);
+
+        try
+        {
+            context.Add(role);
+            await context.SaveChangesAsync(CancellationToken.None);
+
+            var permissionId = await FirstPermissionIdAsync();
+
+            context.Add(RolePermission.Create(
+                RolePermissionId.New(), role.Id, permissionId, Now, User.SystemUserId));
+
+            await context.SaveChangesAsync(CancellationToken.None);
+
+            var failure = await Assert.ThrowsAsync<DbUpdateException>(
+                () => unitOfWork.ExecuteInTransactionAsync(
+                    _ =>
+                    {
+                        context.Add(RolePermission.Create(
+                            RolePermissionId.New(), role.Id, permissionId, Now, User.SystemUserId));
+
+                        return Task.FromResult(role.Id);
+                    },
+                    CancellationToken.None));
+
+            var postgres = Assert.IsType<PostgresException>(failure.InnerException);
+
+            Assert.Equal("23505", postgres.SqlState);
+            Assert.Equal("ux_role_permission_active", postgres.ConstraintName);
+        }
+        finally
+        {
+            await DeleteGrantsAsync(role.Id);
+            await DeleteRoleAsync(role.Id);
+        }
+    }
+
+    /// <summary>
+    /// AUT-C3 (RC5): the loser of a race on a role code reads the command's own
+    /// sentence, not a Postgres error string — the same sentence the
+    /// case-insensitive pre-check gives.
+    /// </summary>
+    [Fact]
+    public async Task A_duplicate_role_code_becomes_a_business_rule_error()
+    {
+        await TestDatabase.EnsureReachableAsync();
+
+        await using var context = CreateContext();
+        var unitOfWork = new UnitOfWork(context);
+
         var code = $"dup-role-{Guid.NewGuid():N}"[..24];
         var first = NewRole(code);
         var duplicate = NewRole(code);
@@ -131,7 +185,7 @@ public sealed class ExceptionTranslationTests
             context.Add(first);
             await context.SaveChangesAsync(CancellationToken.None);
 
-            var failure = await Assert.ThrowsAsync<DbUpdateException>(
+            var failure = await Assert.ThrowsAsync<BusinessRuleViolationException>(
                 () => unitOfWork.ExecuteInTransactionAsync(
                     _ =>
                     {
@@ -141,16 +195,34 @@ public sealed class ExceptionTranslationTests
                     },
                     CancellationToken.None));
 
-            var postgres = Assert.IsType<PostgresException>(failure.InnerException);
-
-            Assert.Equal("23505", postgres.SqlState);
-            Assert.Equal("IX_role_code", postgres.ConstraintName);
+            Assert.Equal("A role with this code already exists.", failure.Message);
         }
         finally
         {
             await DeleteRoleAsync(first.Id);
             await DeleteRoleAsync(duplicate.Id);
         }
+    }
+
+    private static async Task<PermissionId> FirstPermissionIdAsync()
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand("SELECT id FROM permission ORDER BY code LIMIT 1", connection);
+
+        return new PermissionId((Guid)(await command.ExecuteScalarAsync())!);
+    }
+
+    private static async Task DeleteGrantsAsync(RoleId roleId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand("DELETE FROM role_permission WHERE role_id = @id", connection);
+        command.Parameters.AddWithValue("id", roleId.Value);
+
+        await command.ExecuteNonQueryAsync();
     }
 
     /// <summary>
