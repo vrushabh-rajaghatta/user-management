@@ -19,6 +19,10 @@ namespace Ligature.Platform.Persistence.Tests;
 /// state; CatalogueSynchronisationTests proves that synchronisation reaches it,
 /// and that drift it may not resolve is refused instead.
 ///
+/// They read RELEASE-OWNED rows only. PRV-C2 Amendment 1 (PRV1, PRV5) put
+/// tenant roles and their grants outside catalogue reconciliation, and AUT-C3
+/// lets a tenant create one; a database holding tenant roles is not drifted.
+///
 /// Target database comes from LIGATURE_CONNECTION. These tests FAIL rather
 /// than skip when PostgreSQL is unreachable — see TestDatabase.
 /// </summary>
@@ -84,7 +88,11 @@ public sealed class CatalogueDriftTests
         var actual = new Dictionary<string, (string, string?)>(StringComparer.Ordinal);
 
         await using (var command = new NpgsqlCommand(
-            "SELECT code, name, description FROM role", connection))
+            // RELEASE-OWNED ROWS ONLY (PRV-C2 Amendment 1, PRV1). A tenant role
+            // created by AUT-C3 is outside catalogue reconciliation, so it is
+            // outside this postcondition too; counting it here would fail the
+            // suite on every database where someone created one.
+            "SELECT code, name, description FROM role WHERE is_system_role", connection))
         await using (var reader = await command.ExecuteReaderAsync())
         {
             while (await reader.ReadAsync())
@@ -127,7 +135,8 @@ public sealed class CatalogueDriftTests
             FROM role_permission rp
             JOIN role r ON r.id = rp.role_id
             JOIN permission p ON p.id = rp.permission_id
-            WHERE rp.revoked_at IS NULL
+            -- A grant's ownership follows its role (PRV5).
+            WHERE rp.revoked_at IS NULL AND r.is_system_role
             """, connection))
         await using (var reader = await command.ExecuteReaderAsync())
         {

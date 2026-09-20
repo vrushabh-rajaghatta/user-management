@@ -30,13 +30,10 @@ export function RolesPage() {
   const newRole = useRef<HTMLButtonElement | null>(null);
 
   return (
-    <Page title="Roles">
-      <p role="status" className="text-sm empty:hidden">
-        {announcement}
-      </p>
-
-      {canManage ? (
-        <div>
+    <Page
+      title="Roles"
+      actions={
+        canManage ? (
           <Button
             ref={newRole}
             onClick={() => {
@@ -46,8 +43,12 @@ export function RolesPage() {
           >
             New role
           </Button>
-        </div>
-      ) : null}
+        ) : undefined
+      }
+    >
+      <p role="status" className="text-sm empty:hidden">
+        {announcement}
+      </p>
 
       <label className="flex items-center gap-2 text-sm">
         <input

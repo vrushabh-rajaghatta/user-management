@@ -218,6 +218,34 @@ describe("creating", () => {
     });
     expect(state.posts).toHaveLength(1);
   });
+
+  /**
+   * The announcement reports what was STORED, not what was typed. The form
+   * sends the name exactly as typed (RC-U2) and the server trims it (RC2), so
+   * the two differ whenever the name was padded — and only the server's answer
+   * matches the row that then appears in the list.
+   *
+   * textContent, not toHaveTextContent: that matcher collapses whitespace, and
+   * collapsed whitespace is precisely the difference this pins.
+   */
+  it("announces the stored name, not the typed one", async () => {
+    const state = backend();
+    const { user } = await render([ROLE_READ, ROLE_MANAGE]);
+
+    const dialog = await openDialog(user);
+    await fill(user, dialog, { name: "  Quality Reviewer  ", code: "quality-reviewer" });
+    await user.click(within(dialog).getByRole("button", { name: "Create role" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    expect(state.posts).toEqual([
+      { code: "quality-reviewer", name: "  Quality Reviewer  ", description: "" },
+    ]);
+
+    expect(screen.getByRole("status").textContent).toBe("Role created: Quality Reviewer.");
+  });
 });
 
 // ---------------------------------------------------------------- RC-U4

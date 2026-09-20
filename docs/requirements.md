@@ -3562,6 +3562,17 @@ CreateRole
 2. Try the same code again: *"A role with this code already exists."*
 3. Try `DEV-SMOKE-REVIEWER`: the same sentence.
 
+### Implementation notes
+
+- **RC2's name and description rules govern TENANT roles only.** `Role.Create` applies them when `isSystemRole` is false and leaves a seed's text alone. This was forced, not chosen: two seeded descriptions are 102 and 158 characters, and PRV-C2 **refuses** role metadata drift rather than reconciling it, so shortening a seed would refuse deployment on every existing database. RC2 governs what a tenant may write; a seed's text is the release's, as the permission catalogue is (PE2). Two mutants attack the gate from both sides — applied to seeds as well, and inverted.
+- **A code is refused, never normalised** (RC1). `ValidateCode` is `Role.Create`'s first statement, so by the time the code reaches the constructor it already equals its own `Trim()`. A mutant that trims it there therefore survives, provably equivalently, and is kept.
+- **The collision pre-check and the index say the same sentence.** `ExistsWithCodeAsync` is raw SQL comparing `lower("code")` database-side, mirroring `IX_role_code`; the index is the guarantee, the pre-check is the courtesy. `PostgresExceptionTranslator` now maps `IX_role_code`, so a caller who loses a race reads *"A role with this code already exists."* rather than a 500 — the same words as the pre-check (RC5).
+  - **One existing test was repointed:** `An_unknown_unique_violation_survives_untranslated` used `IX_role_code` as its example of an unmapped constraint. It now uses `ux_role_permission_active` (RP2), which the translator still deliberately leaves unmapped.
+- **The route answers with what was STORED, not what was sent** (RC4): the result carries the domain's values, so a trimmed name and a null description come back as they will be read. The dialog announces the same stored name; both are pinned by mutants.
+- **`AuditDeclarations` needed the new code.** `RoleCreated` is declared on the command and registered in the catalogue; IMPL-08 verifies the two agree at start-up, and `AuditDeclarationsTests.EveryDeclaredCode` lists it.
+- **The web form sends the typed values untrimmed** (RC-U2) and lets the server own every rule, as the create-user form does for usernames. Zod checks presence only.
+- **New role sits in the page header's `actions` slot**, inline with the heading, as Users and User detail do — it was briefly below the heading, which was the only page out of line with the shared `Page` component.
+
 ### Not included
 
 - **AUT-C4–C8**, AUT-Q4, and any deletion or deactivation.
