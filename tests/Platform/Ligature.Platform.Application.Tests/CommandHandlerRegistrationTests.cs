@@ -452,6 +452,12 @@ public sealed class CommandHandlerRegistrationTests
     {
         public Task<Role?> FindAsync(RoleId roleId, CancellationToken cancellationToken)
             => throw new NotSupportedException();
+
+        public Task<bool> ExistsWithCodeAsync(string code, CancellationToken cancellationToken)
+            => Task.FromResult(false);
+
+        public Task AddAsync(Domain.Users.Role role, CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 
     private sealed class StubUserRoleRepository : IUserRoleRepository

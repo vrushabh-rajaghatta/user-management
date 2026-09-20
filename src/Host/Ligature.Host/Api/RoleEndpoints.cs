@@ -1,5 +1,6 @@
 using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
+using Ligature.Platform.Application.Roles.Commands.CreateRole;
 using Ligature.Platform.Application.Roles.Queries.PermissionCatalogue;
 using Ligature.Platform.Application.Roles.Queries.RoleAdministration;
 using Ligature.Platform.Application.Roles.Queries.RolePermissions;
@@ -25,6 +26,27 @@ public static class RoleEndpoints
     public static void MapRoleEndpoints(this IEndpointRouteBuilder routes)
     {
         ArgumentNullException.ThrowIfNull(routes);
+
+        // AUT-C3. POST beside the grant form's GET on the same path: a
+        // different verb, a different question, and neither disturbs the other.
+        routes.MapPost("/api/roles", CreateAsync)
+            .WithTags("Roles")
+            .WithSummary("Create a role the tenant owns (administrator).")
+            .WithDescription(
+                "Requires a carrier and the 'role.manage' permission, and a human "
+                + "caller. Body: code and name, both required, and description, "
+                + "optional. The code is stored exactly as supplied and must not "
+                + "begin or end with whitespace; a code that matches an existing "
+                + "one, in any case, is refused. The name and description are "
+                + "trimmed, must be free of control characters and at most 100 "
+                + "characters, and the trimmed values are stored. The role is "
+                + "created active, owned by the tenant, with no permissions and no "
+                + "holders. Success is 201 with the created role. An invalid input, "
+                + "a code already in use and a missing permission are 400.")
+            .Produces(StatusCodes.Status201Created)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
 
         // AUT-Q5.
         routes.MapGet("/api/roles/administration", ListAsync)
@@ -80,6 +102,36 @@ public static class RoleEndpoints
             .Produces(StatusCodes.Status401Unauthorized)
             .WithMetadata(new RequiresCarrier());
     }
+
+    private static async Task<IResult> CreateAsync(
+        CreateRoleRequest? request,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        // Missing inputs are refused where the request is bound, as on the
+        // other endpoints; everything else about them is the domain's.
+        if (request?.Code is null || request.Name is null)
+            return Results.BadRequest(new { Error = "code and name are required." });
+
+        var result = await dispatcher.SendAsync<CreateRoleCommand, CreateRoleResult>(
+            new CreateRoleCommand(request.Code, request.Name, request.Description),
+            cancellationToken);
+
+        // 201 with the created role and NO Location header: AUT-Q5 lists roles
+        // and AUT-Q3 reads one role's permissions, but there is no GetRole to
+        // point at, and a Location that 404s is worse than none.
+        return Results.Created((string?)null, new
+        {
+            RoleId = result.RoleId.Value,
+            result.Code,
+            result.Name,
+            result.Description,
+            result.IsSystemRole,
+            result.IsActive,
+        });
+    }
+
+    private sealed record CreateRoleRequest(string? Code, string? Name, string? Description);
 
     private static async Task<IResult> ListAsync(
         HttpRequest request,

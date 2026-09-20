@@ -3,6 +3,7 @@ using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.CreateUser;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
+using Ligature.Platform.Application.Roles.Commands.CreateRole;
 using Ligature.Platform.Application.Users.Commands.ChangeUserEmail;
 using Ligature.Platform.Application.Users.Commands.DeactivateUser;
 using Ligature.Platform.Application.Users.Commands.GrantRole;
@@ -183,6 +184,16 @@ public sealed class AuditDeclarationsTests
         Assert.Equal(["UserProfileChanged"], declaration.Codes);
     }
 
+    /// <summary>AUT-C3: one record, for a role that was created.</summary>
+    [Fact]
+    public void AUT_C3_declares_RoleCreated()
+    {
+        var declaration = AuditDeclarations.For(typeof(CreateRoleCommand));
+
+        Assert.Equal("UserManagement", declaration!.OwningContext);
+        Assert.Equal(["RoleCreated"], declaration.Codes);
+    }
+
     /// <summary>
     /// USR-C3: one record, and deliberately NOT TokenInvalidated for the links
     /// it invalidates — none is superseded (D13, as USR-C4).
@@ -270,6 +281,7 @@ public sealed class AuditDeclarationsTests
                 typeof(GrantRoleCommand), typeof(RevokeRoleCommand),
                 typeof(DeactivateUserCommand), typeof(ReactivateUserCommand),
                 typeof(UpdateUserProfileCommand), typeof(ChangeUserEmailCommand),
+                typeof(CreateRoleCommand),
                 typeof(UnlockAccountCommand),
                 typeof(RevokeSessionCommand), typeof(RevokeUserSessionsCommand),
                 typeof(SignOutEverywhereCommand),

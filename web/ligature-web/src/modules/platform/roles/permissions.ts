@@ -11,4 +11,7 @@ import { definePermission } from "@/shared/auth/permissions";
  */
 export const RolePermissions = {
   read: definePermission("role.read"),
+
+  /** role.manage (AUT-C3): whether the caller may change role definitions. */
+  manage: definePermission("role.manage"),
 };

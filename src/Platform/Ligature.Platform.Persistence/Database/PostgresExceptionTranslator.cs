@@ -31,6 +31,8 @@ internal static class PostgresExceptionTranslator
     /// Only constraints a command can actually reach today. RP2's live-grant
     /// index is deliberately absent: no command triggers it yet, so its
     /// wording would be written blind and untested. It belongs to AUT-C7.
+    /// IX_role_code joined this list with AUT-C3, which is what made it
+    /// reachable.
     /// </summary>
     private static readonly Dictionary<string, string> KnownViolations =
         new(StringComparer.Ordinal)
@@ -42,6 +44,11 @@ internal static class PostgresExceptionTranslator
             // UI7
             ["ux_user_identity_local_username"] =
                 "A user identity with this username already exists.",
+
+            // AUT-C3 (RC5). One sentence for both paths: the command's
+            // case-insensitive pre-check and this case-sensitive index.
+            ["IX_role_code"] =
+                "A role with this code already exists.",
 
             // UR5 / UR6 (AUT-C1). One question, one answer, for both scopes:
             // the scoped twin is mapped now so it cannot surface as a 500 the

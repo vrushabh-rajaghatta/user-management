@@ -1,6 +1,7 @@
 using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
+using Ligature.Platform.Application.Roles.Commands.CreateRole;
 using Ligature.Platform.Application.Users.Commands.ChangeUserEmail;
 using Ligature.Platform.Application.Users.Commands.GrantRole;
 using Ligature.Platform.Application.Users.Commands.DeactivateUser;
@@ -107,6 +108,9 @@ public static class AuditDeclarations
             // NOT TokenInvalidated for the links it invalidates: none is
             // superseded (D13, as USR-C4).
             [typeof(ChangeUserEmailCommand)] = new("UserManagement", ["UserEmailChanged"]),
+
+            // AUT-C3 — one record, and only for a role that was created.
+            [typeof(CreateRoleCommand)] = new("UserManagement", ["RoleCreated"]),
 
             // USR-C4 — the cascade, one operation caused by UserDeactivated.
             // NOT TokenInvalidated: its frozen definition requires a

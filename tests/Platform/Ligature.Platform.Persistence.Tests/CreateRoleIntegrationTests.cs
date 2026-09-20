@@ -51,7 +51,8 @@ public sealed class CreateRoleIntegrationTests : IClassFixture<ActivationDatabas
         var row = await RowAsync(code);
 
         Assert.Equal(
-            $"{result.RoleId.Value}|Quality Reviewer|{code}|Reviews access.|False|True|{admin.Value}",
+            // PostgreSQL renders booleans as f and t.
+            $"{result.RoleId.Value}|Quality Reviewer|{code}|Reviews access.|f|t|{admin.Value}",
             row);
     }
 
