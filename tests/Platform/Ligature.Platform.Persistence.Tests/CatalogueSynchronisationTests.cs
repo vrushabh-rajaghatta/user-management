@@ -519,6 +519,218 @@ public sealed class CatalogueSynchronisationTests
         Assert.DoesNotContain("database", payload, StringComparison.OrdinalIgnoreCase);
     }
 
+    // ============================================== Amendment 1: ownership
+    //
+    // PRV-C2 Amendment 1 (docs/requirements.md, "Amendment 1 — Tenant-owned
+    // roles and grants", PRV-A1 to PRV-A9). The release catalogue reconciles
+    // RELEASE-OWNED state; a tenant's own roles and grants are not drift.
+    //
+    // The pair that matters is the first two: the same condition — absent from
+    // the seed — refuses for a system role and is ignored for a tenant one.
+    // Everything else exists to show the exemption took nothing with it.
+
+    private const string Tenant = "tenant-quality-reviewer";
+
+    /// <summary>PRV-A1. The reason code exists today and no test asserted it.</summary>
+    [Fact]
+    public async Task A_system_role_the_catalogue_does_not_list_is_refused()
+    {
+        await using var database = await ProvisionedAsync();
+
+        await SeedRoleAsync(database, "ghost-release-role", isSystemRole: true);
+
+        var result = await SynchroniseAsync(database);
+
+        AssertRefused(result, CatalogueRefusalReason.RoleMissingFromSeed, "ghost-release-role");
+
+        Assert.Equal(1, await CountAsync(database, "SELECT count(*) FROM role WHERE code = 'ghost-release-role'"));
+    }
+
+    /// <summary>PRV-A2. The blocker AUT-C3 would otherwise hit.</summary>
+    [Fact]
+    public async Task A_tenant_role_the_catalogue_does_not_list_is_left_alone()
+    {
+        await using var database = await ProvisionedAsync();
+
+        await SeedRoleAsync(database, Tenant, isSystemRole: false);
+
+        var before = await RoleRowAsync(database, Tenant);
+        var result = await SynchroniseAsync(database);
+
+        Assert.Equal(CatalogueSyncOutcome.Succeeded, result.Outcome);
+        Assert.Empty(result.Refusals);
+        Assert.Equal(before, await RoleRowAsync(database, Tenant));
+    }
+
+    /// <summary>
+    /// PRV-A3. The exemption is the drift pass only: a seeded code is still the
+    /// product's, whoever holds it.
+    ///
+    /// The scenario is a tenant that created the code BEFORE a release
+    /// introduced it, so the row is rebuilt rather than flipped: is_system_role
+    /// is immutable in the database (G4 refuses an UPDATE of it), which is what
+    /// makes the flag trustworthy as provenance in the first place.
+    /// </summary>
+    [Fact]
+    public async Task A_tenant_role_wearing_a_seeded_code_is_refused()
+    {
+        await using var database = await ProvisionedAsync();
+
+        await ExecuteAsync(database, """
+            DELETE FROM role_permission WHERE role_id = (SELECT id FROM role WHERE code = 'access-reviewer');
+            DELETE FROM user_role WHERE role_id = (SELECT id FROM role WHERE code = 'access-reviewer');
+            DELETE FROM role WHERE code = 'access-reviewer';
+            """);
+
+        await SeedRoleAsync(database, "access-reviewer", isSystemRole: false);
+
+        var result = await SynchroniseAsync(database);
+
+        AssertRefused(result, CatalogueRefusalReason.SecuritySemanticDrift, "access-reviewer");
+    }
+
+    /// <summary>PRV-A4. Ownership follows the role, whatever permission is granted.</summary>
+    [Fact]
+    public async Task A_grant_on_a_tenant_role_is_left_alone()
+    {
+        await using var database = await ProvisionedAsync();
+
+        await SeedRoleAsync(database, Tenant, isSystemRole: false);
+        await GrantAsync(database, Tenant, "user.read");
+
+        var before = await GrantRowAsync(database, Tenant, "user.read");
+        var result = await SynchroniseAsync(database);
+
+        Assert.Equal(CatalogueSyncOutcome.Succeeded, result.Outcome);
+        Assert.Empty(result.Refusals);
+        Assert.Equal(before, await GrantRowAsync(database, Tenant, "user.read"));
+    }
+
+    /// <summary>PRV-A5. Grants on release-owned roles keep every protection (F5).</summary>
+    [Fact]
+    public async Task A_grant_on_a_system_role_the_catalogue_does_not_list_is_still_refused()
+    {
+        await using var database = await ProvisionedAsync();
+
+        await GrantAsync(database, "access-reviewer", "user.update");
+
+        var result = await SynchroniseAsync(database);
+
+        AssertRefused(result, CatalogueRefusalReason.GrantMissingFromSeed, "access-reviewer/user.update");
+    }
+
+    /// <summary>PRV-A6. F6 and F8 are untouched, tenant rows beside them or not.</summary>
+    [Fact]
+    public async Task A_revoked_seeded_grant_is_still_refused_beside_tenant_state()
+    {
+        await using var database = await ProvisionedAsync();
+
+        await SeedRoleAsync(database, Tenant, isSystemRole: false);
+        await GrantAsync(database, Tenant, "user.read");
+
+        await ExecuteAsync(database, $"""
+            UPDATE role_permission SET revoked_at = now(), revoked_by = '{SystemActor}'
+             WHERE role_id = (SELECT id FROM role WHERE code = 'access-reviewer')
+               AND permission_id = (SELECT id FROM permission WHERE code = 'role.read');
+            """);
+
+        var result = await SynchroniseAsync(database);
+
+        AssertRefused(result, CatalogueRefusalReason.RevokedGrantInSeed, "access-reviewer/role.read");
+    }
+
+    /// <summary>PRV-A7. Permissions have no tenant half (PE2).</summary>
+    [Fact]
+    public async Task A_permission_absent_from_the_seed_is_refused_even_beside_tenant_roles()
+    {
+        await using var database = await ProvisionedAsync();
+
+        await SeedRoleAsync(database, Tenant, isSystemRole: false);
+        await ExecuteAsync(database, """
+            INSERT INTO permission
+                (id, code, name, description, resource, action, requires_human_actor,
+                 is_active, created_at, created_by)
+            SELECT gen_random_uuid(), 'tenant.invented', 'Invented', NULL, 'Tenant', 'Read',
+                   false, true, now(), created_by
+              FROM permission LIMIT 1;
+            """);
+
+        var result = await SynchroniseAsync(database);
+
+        AssertRefused(result, CatalogueRefusalReason.PermissionMissingFromSeed, "tenant.invented");
+    }
+
+    /// <summary>PRV-A8. Tenant state is invisible to the run: nothing to do, and the counts say so.</summary>
+    [Fact]
+    public async Task A_current_database_holding_tenant_state_is_a_successful_no_op()
+    {
+        await using var database = await ProvisionedAsync();
+
+        await SeedRoleAsync(database, Tenant, isSystemRole: false);
+        await GrantAsync(database, Tenant, "user.read");
+        await GrantAsync(database, Tenant, "session.read");
+
+        var result = await SynchroniseAsync(database);
+
+        Assert.Equal(CatalogueSyncOutcome.Succeeded, result.Outcome);
+        Assert.Equal(CatalogueSyncCounts.None, result.Counts);
+    }
+
+    /// <summary>PRV-A9. A refusal still commits nothing — tenant rows included.</summary>
+    [Fact]
+    public async Task A_refusal_beside_tenant_state_commits_nothing()
+    {
+        await using var database = await ProvisionedAsync();
+
+        await SeedRoleAsync(database, Tenant, isSystemRole: false);
+        await SeedRoleAsync(database, "ghost-release-role", isSystemRole: true);
+
+        var tenantBefore = await RoleRowAsync(database, Tenant);
+        var result = await SynchroniseAsync(database);
+
+        AssertRefused(result, CatalogueRefusalReason.RoleMissingFromSeed, "ghost-release-role");
+
+        Assert.Equal(tenantBefore, await RoleRowAsync(database, Tenant));
+        Assert.Equal(1, await CountAsync(database, $"SELECT count(*) FROM role WHERE code = '{Tenant}'"));
+    }
+
+    // ------------------------------------------- Amendment 1: its fixtures
+
+    private static readonly string SystemActor =
+        Ligature.Platform.Domain.Users.User.SystemUserId.Value.ToString();
+
+    private static Task SeedRoleAsync(AuditBoundaryDatabase database, string code, bool isSystemRole)
+        => ExecuteAsync(database, $"""
+            INSERT INTO role (id, name, code, description, is_system_role, is_active,
+                              created_at, created_by, updated_at, updated_by)
+            VALUES (gen_random_uuid(), 'Role {code}', '{code}', NULL, {(isSystemRole ? "true" : "false")}, true,
+                    now(), '{SystemActor}', now(), '{SystemActor}');
+            """);
+
+    private static Task GrantAsync(AuditBoundaryDatabase database, string roleCode, string permissionCode)
+        => ExecuteAsync(database, $"""
+            INSERT INTO role_permission (id, role_id, permission_id, granted_at, granted_by)
+            SELECT gen_random_uuid(), r.id, p.id, now(), '{SystemActor}'
+              FROM role r, permission p
+             WHERE r.code = '{roleCode}' AND p.code = '{permissionCode}';
+            """);
+
+    /// <summary>Everything about the row a reconciliation could have touched.</summary>
+    private static Task<string> RoleRowAsync(AuditBoundaryDatabase database, string code)
+        => ScalarAsync(database, $"""
+            SELECT concat_ws('|', id, name, code, description, is_system_role, is_active, updated_at)
+              FROM role WHERE code = '{code}'
+            """);
+
+    private static Task<string> GrantRowAsync(AuditBoundaryDatabase database, string roleCode, string permissionCode)
+        => ScalarAsync(database, $"""
+            SELECT concat_ws('|', rp.id, rp.granted_at, rp.granted_by, rp.revoked_at, rp.revoked_by)
+              FROM role_permission rp
+              JOIN role r ON r.id = rp.role_id
+              JOIN permission p ON p.id = rp.permission_id
+             WHERE r.code = '{roleCode}' AND p.code = '{permissionCode}'
+            """);
+
     // -------------------------------------------------------------- helpers
 
     /// <summary>
