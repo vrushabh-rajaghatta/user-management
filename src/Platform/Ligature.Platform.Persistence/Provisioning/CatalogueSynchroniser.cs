@@ -31,6 +31,13 @@ namespace Ligature.Platform.Persistence.Provisioning;
 /// database to seed is drift and a refusal. The catalogue is authoritative
 /// about what a release INTRODUCES, never about what may be TAKEN AWAY.
 ///
+/// OWNERSHIP DECIDES WHAT IS RECONCILED AT ALL (Amendment 1). The release
+/// catalogue reconciles release-owned authorization state: permissions, roles
+/// with IsSystemRole, and the grants on those roles. A tenant's own roles and
+/// their grants are application-managed state, outside reconciliation — never
+/// refused as drift, and never touched. A tenant role wearing a code the
+/// release owns is still refused, by the seed -> database pass.
+///
 /// It does not modify ProvisionAsync, and reads its seed lists without changing
 /// them. Catalogue evolution is removed from the first-provision lifecycle
 /// rather than bolted onto it.
@@ -146,12 +153,30 @@ public sealed class CatalogueSynchroniser
             .Where(x => !seededPermissionCodes.Contains(x.Code))
             .Select(x => new CatalogueRefusal(CatalogueRefusalReason.PermissionMissingFromSeed, x.Code)));
 
+        // OWNERSHIP DECIDES WHOSE STATE THIS IS (Amendment 1, PRV1 and PRV5).
+        // A tenant's own role is not drift: it is state the catalogue never
+        // described, and AUT-C3 will create it deliberately. A RELEASE-owned
+        // role absent from the seed is still the bad merge or rename F2 exists
+        // to catch. IsSystemRole is immutable in the database, so this cannot
+        // be flipped after the fact to escape reconciliation.
+        //
+        // Only this, the database -> seed pass, knows about ownership. The
+        // seed -> database pass below is unchanged, and it is what refuses a
+        // tenant role wearing a code the release owns (SecuritySemanticDrift).
         refusals.AddRange(roles
-            .Where(x => !seededRoleCodes.Contains(x.Code))
+            .Where(x => x.IsSystemRole && !seededRoleCodes.Contains(x.Code))
             .Select(x => new CatalogueRefusal(CatalogueRefusalReason.RoleMissingFromSeed, x.Code)));
 
         foreach (var grant in grants.Where(x => x.IsActive))
         {
+            // A grant's ownership follows its role (PRV5), whatever permission
+            // it grants: a tenant role's grants are the tenant's to manage,
+            // and a system role's remain the release's.
+            var role = roles.FirstOrDefault(x => x.Id == grant.RoleId);
+
+            if (role is null || !role.IsSystemRole)
+                continue;
+
             var subject = SubjectOf(grant, roles, permissions);
 
             if (subject is not null && !seededGrants.Contains(subject))
