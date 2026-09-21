@@ -1,0 +1,92 @@
+using SKSMCorp.Platform.Domain.Users;
+
+namespace SKSMCorp.Platform.Application.Abstractions;
+
+public interface IUserIdentityRepository
+{
+    Task<bool> ExistsWithUsernameAsync(
+        string username,
+        CancellationToken cancellationToken);
+
+    Task AddAsync(
+        UserIdentity identity,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resolves a LOCAL identity by username for sign-in (SES-C1 step 1).
+    ///
+    /// Username only — never email. The specification is emphatic that email
+    /// must not be an identity lookup key: a departed employee's address may be
+    /// reassigned, and the new holder would sign straight into the previous
+    /// holder's account and inherit their approval history.
+    ///
+    /// Status is deliberately NOT filtered. An inactive identity has to reach
+    /// the same generic failure as a missing one, and filtering here would make
+    /// the two paths differ in cost as well as in outcome.
+    /// </summary>
+    Task<UserIdentity?> FindLocalByUsernameAsync(
+        string username,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// CRD-C2's subject resolution: every identity eligible to receive a
+    /// password-reset token for this input, which may be an email address or a
+    /// username.
+    ///
+    /// Eligible means ALL of: a human actor, an active user, an active
+    /// identity, a LOCAL identity, a non-null email to send to, and an
+    /// EXISTING CREDENTIAL. An external identity resets at its provider, and
+    /// an identity with no address has nowhere to send the link.
+    ///
+    /// The credential clause arrived with CRD-C3. Absence of a credential is
+    /// the pending-activation state (inv. 15), and CRD-C3 changes an existing
+    /// credential — it never creates one. Without this clause a user who was
+    /// created but never activated could request a reset, and the reset would
+    /// have to either fail on a link that looked valid or become a second
+    /// activation path that bypasses AccountActivated. A never-activated user's
+    /// remedy is a fresh activation token, not a reset.
+    ///
+    /// EMAIL AS A LOOKUP KEY HERE, UNLIKE SIGN-IN. FindLocalByUsernameAsync
+    /// above refuses email deliberately, because a reassigned address would
+    /// let a new joiner authenticate as its previous holder. That reasoning
+    /// does not transfer: this lookup decides where to send a message, the
+    /// token is what authenticates afterwards, and the active-user filter
+    /// means a reassigned address resolves to its CURRENT owner — the person
+    /// who controls the mailbox — never to the departed one.
+    ///
+    /// Returns every match rather than deciding, because "exactly one" is the
+    /// caller's rule and belongs where it can be read: a username and a
+    /// different user's email can both equal one input string — usernames are
+    /// unconstrained labels — and that collision must fail closed rather than
+    /// resolve by an arbitrary precedence.
+    /// </summary>
+    Task<IReadOnlyList<UserIdentityId>> FindPasswordResetCandidatesAsync(
+        string emailOrUsername,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Every LOCAL identity belonging to a user, whatever its status (CRD-C5).
+    ///
+    /// All of them rather than "the" one, and unfiltered by status, because
+    /// both are the caller's rules and must be visible where they are applied.
+    /// No constraint guarantees a user has at most one local identity — no
+    /// command creates a second, but nothing in the schema forbids it — so the
+    /// caller refuses anything other than exactly one rather than this method
+    /// silently choosing.
+    /// </summary>
+    Task<IReadOnlyList<UserIdentity>> FindLocalByUserIdAsync(
+        UserId userId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads an identity by id, or null (SES-C2).
+    /// </summary>
+    Task<UserIdentity?> FindAsync(
+        UserIdentityId userIdentityId,
+        CancellationToken cancellationToken);
+
+    /// <summary>Every identity the user holds, of every type, tracked (USR-C4, USR-C5).</summary>
+    Task<IReadOnlyList<UserIdentity>> FindByUserIdAsync(
+        UserId userId,
+        CancellationToken cancellationToken);
+}

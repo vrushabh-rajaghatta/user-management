@@ -14,7 +14,7 @@
 # the SDK, and mount the working tree. The production stages in
 # docker/Dockerfile are untouched by any of it.
 
-name: ligature
+name: sksmcorp
 
 services:
 
@@ -36,16 +36,16 @@ services:
       # project, named individually: a future project gets no volume by
       # accident, and tooling/docker.test.ts fails until one is added.
       - nuget:/root/.nuget/packages
-      - host-obj:/source/src/Host/Ligature.Host/obj
-      - host-bin:/source/src/Host/Ligature.Host/bin
-      - application-obj:/source/src/Platform/Ligature.Platform.Application/obj
-      - application-bin:/source/src/Platform/Ligature.Platform.Application/bin
-      - domain-obj:/source/src/Platform/Ligature.Platform.Domain/obj
-      - domain-bin:/source/src/Platform/Ligature.Platform.Domain/bin
-      - persistence-obj:/source/src/Platform/Ligature.Platform.Persistence/obj
-      - persistence-bin:/source/src/Platform/Ligature.Platform.Persistence/bin
-      - sharedkernel-obj:/source/src/Shared/Ligature.SharedKernel/obj
-      - sharedkernel-bin:/source/src/Shared/Ligature.SharedKernel/bin
+      - host-obj:/source/src/Host/SKSMCorp.Host/obj
+      - host-bin:/source/src/Host/SKSMCorp.Host/bin
+      - application-obj:/source/src/Platform/SKSMCorp.Platform.Application/obj
+      - application-bin:/source/src/Platform/SKSMCorp.Platform.Application/bin
+      - domain-obj:/source/src/Platform/SKSMCorp.Platform.Domain/obj
+      - domain-bin:/source/src/Platform/SKSMCorp.Platform.Domain/bin
+      - persistence-obj:/source/src/Platform/SKSMCorp.Platform.Persistence/obj
+      - persistence-bin:/source/src/Platform/SKSMCorp.Platform.Persistence/bin
+      - sharedkernel-obj:/source/src/Shared/SKSMCorp.SharedKernel/obj
+      - sharedkernel-bin:/source/src/Shared/SKSMCorp.SharedKernel/bin
 
     environment:
       # The DEVELOPMENT MAIL SINK (docs/architecture.md §8). Activation and
@@ -54,17 +54,17 @@ services:
       # .secrets/ — instead of being sent. up.sh creates the directory; the sink
       # never does. Only this overlay sets it: compose.yaml keeps its production
       # shape, and a Release build refuses the setting outright.
-      LIGATURE_MAIL_DEV_SINK_DIRECTORY: /source/.secrets/mail
+      SKSMCORP_MAIL_DEV_SINK_DIRECTORY: /source/.secrets/mail
 
       # The origin the links are built from: the web client, where /activate
       # and /reset-password are served.
-      LIGATURE_PUBLIC_BASE_URL: https://localhost:5173
+      SKSMCORP_PUBLIC_BASE_URL: https://localhost:5173
 
       # Behaviour 11 (B8, B9). The host believes X-Forwarded-For from exactly
       # one peer: the web container's Vite proxy, pinned below. Not the whole
       # network, so nothing else on it can claim an address. Without this,
       # every browser would reach the rate limit as the web container.
-      LIGATURE_TRUSTED_PROXIES: 172.31.211.200
+      SKSMCORP_TRUSTED_PROXIES: 172.31.211.200
 
     healthcheck:
       # LIVENESS, not readiness. It proves Kestrel is listening and the request
@@ -101,20 +101,20 @@ services:
     networks:
       default:
         # Pinned so the host can trust exactly this container as a proxy
-        # (LIGATURE_TRUSTED_PROXIES above). Outside the dynamic range, so no
+        # (SKSMCORP_TRUSTED_PROXIES above). Outside the dynamic range, so no
         # other container can be handed it.
         ipv4_address: 172.31.211.200
     environment:
       # Over the Compose network, to the API service. changeOrigin stays false
       # in vite.config.ts, so the browser's Host survives both hops and the
       # host's cross-site check still sees localhost:5173.
-      LIGATURE_WEB_API_ORIGIN: "http://host:8080"
+      SKSMCORP_WEB_API_ORIGIN: "http://host:8080"
 
       # Listen on every interface, or the published port reaches nothing.
       # Nothing else sets this, and outside a container it is absent.
-      LIGATURE_WEB_IN_CONTAINER: "true"
+      SKSMCORP_WEB_IN_CONTAINER: "true"
     volumes:
-      - ./web/ligature-web:/app
+      - ./web/sksmcorp-web:/app
 
       # Never the developer's node_modules: those are native binaries built for
       # macOS. Docker seeds this volume from the image, where npm ci ran for
@@ -125,7 +125,7 @@ services:
       # installs or trusts one: mkcert put the authority in the macOS keychain,
       # which is where the browser looks, and the container needs no trust
       # store of its own.
-      - ./web/ligature-web/.certs:/app/.certs:ro
+      - ./web/sksmcorp-web/.certs:/app/.certs:ro
     healthcheck:
       # WHAT THIS EXISTS FOR. ./up.sh proves five criteria at STARTUP and says
       # nothing about the minutes after. A dev server that comes back on plain

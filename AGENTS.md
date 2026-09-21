@@ -1,8 +1,8 @@
-# Ligature — Coding Agent Instructions
+# SKSMCorp — Coding Agent Instructions
 
 ## 1. Purpose
 
-Ligature is being developed as a modular regulatory application.
+SKSMCorp is being developed as a modular regulatory application.
 
 This file defines how coding agents must work in this repository.
 
@@ -57,8 +57,8 @@ In particular, the `Behavious` → `Behaviors` and `Createuser` → `CreateUser`
 folder names are known items: address them only when the owner requests it or
 they are explicitly within an approved story's scope.
 
-The `Ligature.Sharedkernel.csproj` casing was the third such item and is now
-**resolved**: the file is `Ligature.SharedKernel.csproj`, matching both its
+The `SKSMCorp.Sharedkernel.csproj` casing was the third such item and is now
+**resolved**: the file is `SKSMCorp.SharedKernel.csproj`, matching both its
 directory and the two `ProjectReference` paths that always spelled it that way.
 It was fixed because it blocked the Docker build — macOS hides the mismatch, a
 case-sensitive Linux filesystem does not — not as opportunistic clean-up.
@@ -70,13 +70,13 @@ If in doubt whether a change is trivial, it is not.
 ## 3. Working in this Repository
 
 .NET 10 (`net10.0`, SDK 10.0.400), nullable and implicit usings enabled,
-EF Core 10 + Npgsql on PostgreSQL, xUnit. The solution file is `Ligature.slnx`
+EF Core 10 + Npgsql on PostgreSQL, xUnit. The solution file is `SKSMCorp.slnx`
 — the XML solution format, not `.sln`. The host application is
-`src/Host/Ligature.Host`; everything else is class libraries and test projects.
+`src/Host/SKSMCorp.Host`; everything else is class libraries and test projects.
 
 ```bash
-dotnet build Ligature.slnx
-dotnet test  Ligature.slnx
+dotnet build SKSMCorp.slnx
+dotnet test  SKSMCorp.slnx
 ```
 
 The Platform layers have corresponding test projects; SharedKernel currently has
@@ -84,21 +84,21 @@ no separate test project (a source project is not required to have one):
 
 | Project | Kind |
 | --- | --- |
-| `tests/Platform/Ligature.Platform.Domain.Tests` | unit |
-| `tests/Platform/Ligature.Platform.Application.Tests` | unit |
-| `tests/Platform/Ligature.Platform.Persistence.Tests` | integration against PostgreSQL (except `UserTokenServiceTests`, which is pure) |
-| `tests/Host/Ligature.Host.Tests` | HTTP end-to-end against PostgreSQL (except `AccessCarrierTests` and `SigningKeyRingTests`, which are pure) |
-| `tests/Tools/Ligature.Provisioning.Tests` | CLI end-to-end against throwaway PostgreSQL databases (except `ProvisioningOptionsTests`, which is pure) |
+| `tests/Platform/SKSMCorp.Platform.Domain.Tests` | unit |
+| `tests/Platform/SKSMCorp.Platform.Application.Tests` | unit |
+| `tests/Platform/SKSMCorp.Platform.Persistence.Tests` | integration against PostgreSQL (except `UserTokenServiceTests`, which is pure) |
+| `tests/Host/SKSMCorp.Host.Tests` | HTTP end-to-end against PostgreSQL (except `AccessCarrierTests` and `SigningKeyRingTests`, which are pure) |
+| `tests/Tools/SKSMCorp.Provisioning.Tests` | CLI end-to-end against throwaway PostgreSQL databases (except `ProvisioningOptionsTests`, which is pure) |
 
 ### Database connection
 
-Persistence tests read `LIGATURE_CONNECTION` and fall back to:
+Persistence tests read `SKSMCORP_CONNECTION` and fall back to:
 
 ```text
-Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres
+Host=localhost;Port=5432;Database=sksmcorp;Username=postgres;Password=postgres
 ```
 
-**The EF design-time factory reads `LIGATURE_CONNECTION` and has NO fallback.**
+**The EF design-time factory reads `SKSMCORP_CONNECTION` and has NO fallback.**
 It used to hard-code the string above, which meant `dotnet ef database update`
 silently applied migrations to whichever database the default named, no matter
 what the environment said. An unset variable now stops the command and names
@@ -116,11 +116,11 @@ ownership and triggers alike (`docs/architecture.md` §19).
 | --- | --- |
 | `app_role` | The host application |
 | `migration_role` | EF migrations |
-| `provisioning_role` | `Ligature.Provisioning` |
+| `provisioning_role` | `SKSMCorp.Provisioning` |
 | `audit_owner` | Nobody — owns the `audit` schema, `NOLOGIN`, no members |
 | `audit_anonymiser` | The future erasure worker; `NOLOGIN` today |
 
-`docker/roles.sql` creates the first three; `Ligature.AuditSchema` creates the
+`docker/roles.sql` creates the first three; `SKSMCorp.AuditSchema` creates the
 last two and refuses, naming them, if the first three are missing. `./up.sh`
 generates the passwords into `.env`. **There are no defaults and no committed
 development passwords**, for the reason `docs/architecture.md` §17 gives about
@@ -149,14 +149,14 @@ each mismatch. The fix is to deploy the release the database was seeded for, or
 to seed the database for this release — never to remove the declaration.
 
 ```bash
-export LIGATURE_CONNECTION="Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres"
-export LIGATURE_SIGNING_KEY_CURRENT=v1
-export LIGATURE_SIGNING_KEY_V1=$(openssl rand -base64 32)
-dotnet run --project src/Host/Ligature.Host
+export SKSMCORP_CONNECTION="Host=localhost;Port=5432;Database=sksmcorp;Username=postgres;Password=postgres"
+export SKSMCORP_SIGNING_KEY_CURRENT=v1
+export SKSMCORP_SIGNING_KEY_V1=$(openssl rand -base64 32)
+dotnet run --project src/Host/SKSMCorp.Host
 ```
 
-`LIGATURE_SIGNING_KEY_<ID>` configures the key named `<id>`; the accepted set is
-whatever is configured, and `LIGATURE_SIGNING_KEY_CURRENT` names the one that
+`SKSMCORP_SIGNING_KEY_<ID>` configures the key named `<id>`; the accepted set is
+whatever is configured, and `SKSMCORP_SIGNING_KEY_CURRENT` names the one that
 signs. There is no `appsettings.json` carrying secrets, deliberately.
 
 The host suite supplies its own configuration, so none of this is needed to run
@@ -170,12 +170,12 @@ auditable, and eventually separately privileged (PE2).
 Schema now comes in two steps, because the Audit tables cannot be an EF
 migration: whoever runs `CREATE TABLE` owns the table, and an owner can drop
 what it owns and disable its triggers regardless of any `GRANT`
-(`docs/architecture.md` §19). `Ligature.AuditSchema` applies them under a
+(`docs/architecture.md` §19). `SKSMCorp.AuditSchema` applies them under a
 privileged connection that becomes `audit_owner` first. It runs **after** the
 migrator, because the Audit foreign keys reference `app_user`, `role` and
 `user_role`.
 
-`Ligature.AuditSchema` also deploys the **audit event catalogue**, in the same
+`SKSMCorp.AuditSchema` also deploys the **audit event catalogue**, in the same
 step and before the host starts. The catalogue is release infrastructure, not
 tenant seed data: `AuditDeclarations` is verified against it at host start-up
 (IMPL-08), so a host on a database whose catalogue had not been deployed would
@@ -184,17 +184,17 @@ entries a release no longer declares become inactive and are never deleted.
 
 Retention v1 is **not** part of that step. `RT5` makes its `created_by` a
 foreign key to the System actor, which provisioning creates, so it stays with
-`Ligature.Provisioning` below.
+`SKSMCorp.Provisioning` below.
 
 ```bash
-export LIGATURE_CONNECTION="Host=localhost;Port=5432;Database=ligature;Username=migration_role;Password=..."
-dotnet ef database update --project src/Platform/Ligature.Platform.Persistence
+export SKSMCORP_CONNECTION="Host=localhost;Port=5432;Database=sksmcorp;Username=migration_role;Password=..."
+dotnet ef database update --project src/Platform/SKSMCorp.Platform.Persistence
 
-export LIGATURE_PRIVILEGED_CONNECTION="Host=localhost;Port=5432;Database=ligature;Username=postgres;Password=postgres"
-dotnet run --project src/Tools/Ligature.AuditSchema
+export SKSMCORP_PRIVILEGED_CONNECTION="Host=localhost;Port=5432;Database=sksmcorp;Username=postgres;Password=postgres"
+dotnet run --project src/Tools/SKSMCorp.AuditSchema
 
-export LIGATURE_CONNECTION="Host=localhost;Port=5432;Database=ligature;Username=provisioning_role;Password=..."
-dotnet run --project src/Tools/Ligature.Provisioning -- \
+export SKSMCORP_CONNECTION="Host=localhost;Port=5432;Database=sksmcorp;Username=provisioning_role;Password=..."
+dotnet run --project src/Tools/SKSMCorp.Provisioning -- \
     --first-name Ada --last-name Lovelace --display-name "Ada Lovelace" \
     --email ada@example.test --username ada.lovelace \
     --activation-token-out ./bootstrap.token
@@ -228,7 +228,7 @@ it (`docs/architecture.md` §4).
 
 ### Running in Docker
 
-A clean clone to a usable Ligature in the browser, in one command:
+A clean clone to a usable SKSMCorp in the browser, in one command:
 
 ```bash
 ./up.sh
@@ -243,7 +243,7 @@ so `./up.sh` would not produce a running host without it.
 
 | | |
 | --- | --- |
-| Ligature | `https://localhost:5173` |
+| SKSMCorp | `https://localhost:5173` |
 | API | `http://localhost:8080`, reference on `/scalar` |
 | PostgreSQL | `localhost:55432` — your own 5432 is untouched |
 
@@ -295,7 +295,7 @@ run as root and carry toolchains; the production stages are untouched by any of
 it.
 
 **The certificate is yours, and Docker only reads it.** `./up.sh` refuses if
-`web/ligature-web/.certs/` is missing and prints the mkcert commands; it never
+`web/sksmcorp-web/.certs/` is missing and prints the mkcert commands; it never
 creates or installs one, because `mkcert -install` puts a certificate authority
 in your system trust store and needs your password. The container mounts the
 certificate **read-only** and trusts nothing itself: your browser trusts it,
@@ -374,32 +374,32 @@ Validate like this, in order:
    If this fails, stop: the persistence suite cannot validate anything.
 2. **Confirm the schema and seed data are present.** Schema comes from
    `dotnet ef database update` (below); seed data comes from
-   `src/Tools/Ligature.Provisioning` (see "Provisioning a database"). A
+   `src/Tools/SKSMCorp.Provisioning` (see "Provisioning a database"). A
    reachable but unprovisioned database fails `CatalogueDriftTests` with an
    explicit message; that is the one loud signal the suite gives.
-3. Run `dotnet test tests/Platform/Ligature.Platform.Persistence.Tests`.
+3. Run `dotnet test tests/Platform/SKSMCorp.Platform.Persistence.Tests`.
 4. In the report, say which of the above held. "Persistence tests passed" is
    only a true statement if step 1 succeeded. Otherwise write
    "persistence tests not validated — PostgreSQL unreachable."
 
 ### EF Core migrations
 
-`LigatureDbContextFactory` (in `Ligature.Platform.Persistence/Database`) is the
+`SKSMCorpDbContextFactory` (in `SKSMCorp.Platform.Persistence/Database`) is the
 `IDesignTimeDbContextFactory`, so `dotnet ef` works with `--project` alone.
 There is no `--startup-project`; do not go looking for one.
 
 ```bash
-dotnet ef migrations add <Name> --project src/Platform/Ligature.Platform.Persistence
-dotnet ef database update        --project src/Platform/Ligature.Platform.Persistence
+dotnet ef migrations add <Name> --project src/Platform/SKSMCorp.Platform.Persistence
+dotnet ef database update        --project src/Platform/SKSMCorp.Platform.Persistence
 ```
 
 Do not introduce a separate design-time configuration mechanism.
 
-### Web client (`web/ligature-web`)
+### Web client (`web/sksmcorp-web`)
 
 React, TypeScript and Vite, governed by **`docs/frontend-architecture.md`**.
 Read it before changing anything under `web/`. Everything below runs from
-`web/ligature-web`.
+`web/sksmcorp-web`.
 
 **Toolchain.** Node `^22.22.2 || ^24.15.0 || >=26` (jsdom and Vitest set the
 floor) and npm. `.npmrc` sets `engine-strict` and `save-exact`: dependencies are
@@ -515,7 +515,7 @@ certificate at runtime.
 `./up.sh` host). Point it at a host started with `dotnet run` instead:
 
 ```bash
-LIGATURE_WEB_API_ORIGIN=http://localhost:5000 npm run dev
+SKSMCORP_WEB_API_ORIGIN=http://localhost:5000 npm run dev
 ```
 
 The proxy leaves the browser's `Host` header unchanged (no `changeOrigin`) and
@@ -530,7 +530,7 @@ context. Three things about it must not: `.certs/` holds a **private key**,
 `node_modules` holds macOS-native binaries, and `dist/` is rebuilt in the image.
 `.dockerignore` names all three, and `tooling/docker.test.ts` fails if any of
 those rules is lost. Inside the container the dev server binds every interface
-(`LIGATURE_WEB_IN_CONTAINER`), and on your own machine it keeps binding
+(`SKSMCORP_WEB_IN_CONTAINER`), and on your own machine it keeps binding
 loopback; `resolveDevServerHost` refuses a value that is neither true nor false
 rather than defaulting to an unreachable server.
 
@@ -795,7 +795,7 @@ patterns — live in **`docs/architecture.md`** and are not restated here.
 operational workflow — how to analyse, plan, branch, validate, commit and
 review — this file is authoritative.
 
-The short version: Ligature is a modular monolith. A conceptual module does not
+The short version: SKSMCorp is a modular monolith. A conceptual module does not
 automatically get its own .NET project. Follow the patterns already in the
 code before introducing new ones.
 

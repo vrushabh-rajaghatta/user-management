@@ -30,33 +30,33 @@ WORKDIR /source
 # Project files first, so a source-only change does not invalidate the restore
 # layer. Test projects are deliberately absent: nothing here runs tests, and
 # restoring them would pull the whole xUnit graph into every build.
-COPY Ligature.slnx ./
-COPY src/Shared/Ligature.SharedKernel/*.csproj                            src/Shared/Ligature.SharedKernel/
-COPY src/Platform/Ligature.Platform.Domain/*.csproj                     src/Platform/Ligature.Platform.Domain/
-COPY src/Platform/Ligature.Platform.Application/*.csproj                src/Platform/Ligature.Platform.Application/
-COPY src/Platform/Ligature.Platform.Persistence/*.csproj                src/Platform/Ligature.Platform.Persistence/
-COPY src/Host/Ligature.Host/*.csproj                                    src/Host/Ligature.Host/
-COPY src/Tools/Ligature.Provisioning/*.csproj                           src/Tools/Ligature.Provisioning/
-COPY src/Tools/Ligature.AuditSchema/*.csproj                            src/Tools/Ligature.AuditSchema/
-COPY src/Tools/Ligature.CatalogueSync/*.csproj                        src/Tools/Ligature.CatalogueSync/
+COPY SKSMCorp.slnx ./
+COPY src/Shared/SKSMCorp.SharedKernel/*.csproj                            src/Shared/SKSMCorp.SharedKernel/
+COPY src/Platform/SKSMCorp.Platform.Domain/*.csproj                     src/Platform/SKSMCorp.Platform.Domain/
+COPY src/Platform/SKSMCorp.Platform.Application/*.csproj                src/Platform/SKSMCorp.Platform.Application/
+COPY src/Platform/SKSMCorp.Platform.Persistence/*.csproj                src/Platform/SKSMCorp.Platform.Persistence/
+COPY src/Host/SKSMCorp.Host/*.csproj                                    src/Host/SKSMCorp.Host/
+COPY src/Tools/SKSMCorp.Provisioning/*.csproj                           src/Tools/SKSMCorp.Provisioning/
+COPY src/Tools/SKSMCorp.AuditSchema/*.csproj                            src/Tools/SKSMCorp.AuditSchema/
+COPY src/Tools/SKSMCorp.CatalogueSync/*.csproj                        src/Tools/SKSMCorp.CatalogueSync/
 
-RUN dotnet restore src/Host/Ligature.Host/Ligature.Host.csproj \
- && dotnet restore src/Tools/Ligature.Provisioning/Ligature.Provisioning.csproj \
- && dotnet restore src/Tools/Ligature.AuditSchema/Ligature.AuditSchema.csproj \
- && dotnet restore src/Tools/Ligature.CatalogueSync/Ligature.CatalogueSync.csproj
+RUN dotnet restore src/Host/SKSMCorp.Host/SKSMCorp.Host.csproj \
+ && dotnet restore src/Tools/SKSMCorp.Provisioning/SKSMCorp.Provisioning.csproj \
+ && dotnet restore src/Tools/SKSMCorp.AuditSchema/SKSMCorp.AuditSchema.csproj \
+ && dotnet restore src/Tools/SKSMCorp.CatalogueSync/SKSMCorp.CatalogueSync.csproj
 
 COPY src/ src/
 
-RUN dotnet publish src/Host/Ligature.Host/Ligature.Host.csproj \
+RUN dotnet publish src/Host/SKSMCorp.Host/SKSMCorp.Host.csproj \
         --configuration Release --no-restore --output /out/host
 
-RUN dotnet publish src/Tools/Ligature.Provisioning/Ligature.Provisioning.csproj \
+RUN dotnet publish src/Tools/SKSMCorp.Provisioning/SKSMCorp.Provisioning.csproj \
         --configuration Release --no-restore --output /out/provisioner
 
-RUN dotnet publish src/Tools/Ligature.AuditSchema/Ligature.AuditSchema.csproj \
+RUN dotnet publish src/Tools/SKSMCorp.AuditSchema/SKSMCorp.AuditSchema.csproj \
         --configuration Release --no-restore --output /out/audit-schema
 
-RUN dotnet publish src/Tools/Ligature.CatalogueSync/Ligature.CatalogueSync.csproj \
+RUN dotnet publish src/Tools/SKSMCorp.CatalogueSync/SKSMCorp.CatalogueSync.csproj \
         --configuration Release --no-restore --output /out/catalogue-sync
 
 
@@ -67,14 +67,14 @@ RUN dotnet publish src/Tools/Ligature.CatalogueSync/Ligature.CatalogueSync.cspro
 # migration image is a runtime image like the other two, and instead of
 # Database.Migrate() on startup so the host keeps no schema authority.
 #
-# LigatureDbContextFactory is the design-time factory, so --project stands alone
+# SKSMCorpDbContextFactory is the design-time factory, so --project stands alone
 # and there is no --startup-project (AGENTS.md section 3).
 FROM build AS migrations
 ARG EF_VERSION
 ENV PATH="${PATH}:/root/.dotnet/tools"
 
-# Building the bundle instantiates LigatureDbContextFactory, which requires
-# LIGATURE_CONNECTION and has no fallback — deliberately, because a fallback
+# Building the bundle instantiates SKSMCorpDbContextFactory, which requires
+# SKSMCORP_CONNECTION and has no fallback — deliberately, because a fallback
 # silently migrated whichever database the default named.
 #
 # A bundle needs the MODEL, not a database: nothing here connects. So the value
@@ -83,12 +83,12 @@ ENV PATH="${PATH}:/root/.dotnet/tools"
 # The real connection arrives at RUN time, via --connection in the migrator
 # entrypoint; if this placeholder were ever used it would fail to resolve
 # rather than reach a real server.
-ENV LIGATURE_CONNECTION="Host=ef-bundle-build-only.invalid;Database=none;Username=none;Password=none"
+ENV SKSMCORP_CONNECTION="Host=ef-bundle-build-only.invalid;Database=none;Username=none;Password=none"
 
 RUN dotnet tool install --global dotnet-ef --version ${EF_VERSION}
 
 RUN dotnet ef migrations bundle \
-        --project src/Platform/Ligature.Platform.Persistence \
+        --project src/Platform/SKSMCorp.Platform.Persistence \
         --configuration Release \
         --force \
         --output /out/migrator/efbundle
@@ -117,7 +117,7 @@ EXPOSE 8080
 # anything in the filesystem.
 USER $APP_UID
 
-ENTRYPOINT ["dotnet", "Ligature.Host.dll"]
+ENTRYPOINT ["dotnet", "SKSMCorp.Host.dll"]
 
 
 # ------------------------------------------------------------- migrator
@@ -138,9 +138,9 @@ COPY --from=migrations /out/migrator/ ./
 USER $APP_UID
 
 # The bundle takes the connection as an argument rather than configuration, so
-# the shell form expands LIGATURE_CONNECTION — the same variable every other
+# the shell form expands SKSMCORP_CONNECTION — the same variable every other
 # component reads, rather than a second name for the same thing.
-ENTRYPOINT ["/bin/sh", "-c", "exec ./efbundle --connection \"$LIGATURE_CONNECTION\""]
+ENTRYPOINT ["/bin/sh", "-c", "exec ./efbundle --connection \"$SKSMCORP_CONNECTION\""]
 
 
 # ---------------------------------------------------------- provisioner
@@ -162,7 +162,7 @@ COPY --from=build /out/provisioner ./
 # directory it writes into. Compose mounts one and this user is its owner.
 USER $APP_UID
 
-ENTRYPOINT ["dotnet", "Ligature.Provisioning.dll"]
+ENTRYPOINT ["dotnet", "SKSMCorp.Provisioning.dll"]
 
 
 # ------------------------------------------------------------ audit-schema
@@ -185,10 +185,10 @@ USER $APP_UID
 # Runs AFTER the migrator: the Audit foreign keys reference app_user, role and
 # user_role (AR10, AR12), so the User Management schema must already exist.
 #
-# LIGATURE_PRIVILEGED_CONNECTION, not LIGATURE_CONNECTION. This step needs
+# SKSMCORP_PRIVILEGED_CONNECTION, not SKSMCORP_CONNECTION. This step needs
 # authority to create a schema owned by another role, which is deliberately not
 # what the application or the migrator connects with.
-ENTRYPOINT ["dotnet", "Ligature.AuditSchema.dll"]
+ENTRYPOINT ["dotnet", "SKSMCorp.AuditSchema.dll"]
 
 
 # ---------------------------------------------------------- catalogue-sync
@@ -214,10 +214,10 @@ USER $APP_UID
 # synchronisation stops the deployment rather than leaving the API serving
 # against a catalogue the release has determined is unsafe.
 #
-# LIGATURE_CONNECTION as migration_role. NOT the provisioning connection: PE2
+# SKSMCORP_CONNECTION as migration_role. NOT the provisioning connection: PE2
 # puts catalogue writes under a migration role, and provisioning_role's
 # catalogue privileges were deliberately removed by 004.
-ENTRYPOINT ["dotnet", "Ligature.CatalogueSync.dll"]
+ENTRYPOINT ["dotnet", "SKSMCorp.CatalogueSync.dll"]
 
 
 # =====================================================================
@@ -254,7 +254,7 @@ EXPOSE 8080
 
 # Root, deliberately. It writes build output into mounted volumes; the
 # production host stage above runs as $APP_UID and still does.
-ENTRYPOINT ["dotnet", "watch", "--project", "src/Host/Ligature.Host", "run"]
+ENTRYPOINT ["dotnet", "watch", "--project", "src/Host/SKSMCorp.Host", "run"]
 
 
 # ------------------------------------------------------------- web (dev)
@@ -271,13 +271,13 @@ WORKDIR /app
 # Manifests only, so a source change does not reinstall. npm ci runs HERE, for
 # this platform: the developer's own node_modules holds macOS binaries and is
 # never mounted in. Compose seeds the node-modules volume from this layer.
-COPY web/ligature-web/package.json web/ligature-web/package-lock.json web/ligature-web/.npmrc ./
+COPY web/sksmcorp-web/package.json web/sksmcorp-web/package-lock.json web/sksmcorp-web/.npmrc ./
 
 RUN npm ci
 
 EXPOSE 5173
 
 # The same script a developer runs natively. Whether it binds loopback or every
-# interface is decided by LIGATURE_WEB_IN_CONTAINER, which compose.dev.yaml
+# interface is decided by SKSMCORP_WEB_IN_CONTAINER, which compose.dev.yaml
 # sets and nothing else does.
 ENTRYPOINT ["npm", "run", "dev"]

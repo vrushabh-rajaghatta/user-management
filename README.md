@@ -1,4 +1,4 @@
-# Ligature
+# SKSMCorp
 
 Identity and access for a regulated system: user accounts, credentials,
 server-side sessions, roles and permissions.
@@ -48,8 +48,8 @@ and will ask for your password. That is why you run it and no script does it
 for you.
 
 ```bash
-mkdir -p web/ligature-web/.certs
-cd web/ligature-web
+mkdir -p web/sksmcorp-web/.certs
+cd web/sksmcorp-web
 mkcert -cert-file .certs/localhost.pem -key-file .certs/localhost-key.pem localhost
 cd ../..
 ```
@@ -75,7 +75,7 @@ architecture forbids a committed or default one (`docs/architecture.md` §17).
 
 | | |
 | --- | --- |
-| **Ligature** | <https://localhost:5173> |
+| **SKSMCorp** | <https://localhost:5173> |
 | API | <http://localhost:8080> |
 | API reference | <http://localhost:8080/scalar> |
 | OpenAPI document | <http://localhost:8080/openapi/v1.json> |
@@ -146,7 +146,7 @@ Go to <https://localhost:5173/sign-in> and sign in with the username and the
 password you just chose.
 
 A successful sign-in returns **`204` with no body**. The session carrier
-arrives as the `__Host-ligature` cookie — `HttpOnly`, `Secure`,
+arrives as the `__Host-sksmcorp` cookie — `HttpOnly`, `Secure`,
 `SameSite=Strict` — so no script on the page can read it. A caller that is not
 a browser takes the carrier from the `Set-Cookie` header and presents it as
 `Authorization: Bearer <carrier>`.
@@ -162,7 +162,7 @@ docker compose -f compose.yaml -f compose.dev.yaml down -v    # deletes the data
 
 | | |
 | --- | --- |
-| `./up.sh` complains about the certificate | You skipped step 2, or ran mkcert somewhere other than `web/ligature-web/.certs/` |
+| `./up.sh` complains about the certificate | You skipped step 2, or ran mkcert somewhere other than `web/sksmcorp-web/.certs/` |
 | The browser warns the certificate is untrusted | `mkcert -install` did not complete. Run it again and give it your password |
 | A port is already in use | Something else holds 5173, 8080 or 55432 — often a `npm run dev` you left running |
 | A step failed | `docker compose -f compose.yaml -f compose.dev.yaml logs <service>` |
@@ -192,14 +192,14 @@ matches. That is deliberate: distinguishing them would tell a caller which
 usernames, addresses and tokens exist.
 
 The interactive reference at `/scalar` is opt-in and off unless
-`LIGATURE_API_DOCUMENTATION` is `true`. The Docker environment turns it on
+`SKSMCORP_API_DOCUMENTATION` is `true`. The Docker environment turns it on
 because it is a development environment.
 
 ---
 
 ## Working on the code
 
-Editing `src/` or `web/ligature-web/src/` while `./up.sh` is running reloads
+Editing `src/` or `web/sksmcorp-web/src/` while `./up.sh` is running reloads
 automatically — the API through `dotnet watch`, the client through Vite.
 
 ### The test suites
@@ -209,8 +209,8 @@ need the **.NET 10 SDK** and a **PostgreSQL on the default 5432**, not the
 container.
 
 ```bash
-dotnet build Ligature.slnx
-dotnet test  Ligature.slnx
+dotnet build SKSMCorp.slnx
+dotnet test  SKSMCorp.slnx
 ```
 
 A reachable database is not enough for the persistence and host suites: it must
@@ -221,7 +221,7 @@ not evidence.
 The web client's suite needs neither PostgreSQL nor .NET:
 
 ```bash
-cd web/ligature-web
+cd web/sksmcorp-web
 npm ci
 npm run typecheck && npm run lint && npm test && npm run build
 ```
@@ -243,15 +243,15 @@ development environment; this is a proof harness — neither replaces the other.
 ```text
 src/
 ├── Platform/
-│   ├── Ligature.Platform.Domain        aggregates, value objects
-│   ├── Ligature.Platform.Application   commands, handlers, behaviors
-│   └── Ligature.Platform.Persistence   EF Core, repositories, migrations
-├── Host/Ligature.Host                  the deployable application: HTTP, carriers, composition
-├── Tools/Ligature.Provisioning         seeds a database; deliberately NOT part of the host
-├── Tools/Ligature.AuditSchema          deploys the audit schema and event catalogue
-└── Shared/Ligature.SharedKernel        Entity, AggregateRoot, StronglyTypedId, ICommand
+│   ├── SKSMCorp.Platform.Domain        aggregates, value objects
+│   ├── SKSMCorp.Platform.Application   commands, handlers, behaviors
+│   └── SKSMCorp.Platform.Persistence   EF Core, repositories, migrations
+├── Host/SKSMCorp.Host                  the deployable application: HTTP, carriers, composition
+├── Tools/SKSMCorp.Provisioning         seeds a database; deliberately NOT part of the host
+├── Tools/SKSMCorp.AuditSchema          deploys the audit schema and event catalogue
+└── Shared/SKSMCorp.SharedKernel        Entity, AggregateRoot, StronglyTypedId, ICommand
 
-web/ligature-web/                       the React client (see docs/frontend-architecture.md)
+web/sksmcorp-web/                       the React client (see docs/frontend-architecture.md)
 docker/                                 Dockerfile and the database roles script
 compose.yaml                            database, schema and API
 compose.dev.yaml                        adds the web client, bind mounts and hot reload
