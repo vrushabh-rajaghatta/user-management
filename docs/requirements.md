@@ -4321,6 +4321,140 @@ userId, displayName, email, status, roles: [ { roleId, name } ]
 
 ---
 
+## USR-Q3 GetUserAccessSummary — the effective permission set, and its boundary
+
+**Status:** Contract frozen 2026-09-21 by owner decision (UA1–UA9). **Read-only.** No assignment, role, grant or catalogue entry changes, and no audit record is written.
+
+### Requirement
+
+A caller holding **both `user.read` and `role.read`** reads the one question none of the existing reads answer: **what can this person actually do, right now?**
+
+```text
+USR-Q3 GetUserAccessSummary    one user, the flattened effective permission set
+```
+
+USR-Q3 is the **oldest unbuilt item in the frozen catalogue** — a slice 2 query, from the slice whose other work shipped long ago — and it has been recorded as out of scope four times (G8, the USR-Q1 reconciliation table, AUT-Q4's exclusions, RW11). It is built now because the capability it needs finally exists: AUT-Q7 generalised the shared resolver, so the evaluation is a call rather than an implementation.
+
+### Two recorded amendments to the frozen catalogue
+
+Both are deliberate, and both are recorded here rather than made quietly.
+
+> **USR-Q3 permission amendment (UA2, change control).** The catalogue gives USR-Q3 `user.read`. **This repository requires `user.read` AND `role.read`.** The USR-Q1 composition amendment already established that *"`user.read` permits core user detail; role assignments are obtained through AUT-Q2 under `role.read`"*, and **DV-7 and DV-8 are live tests protecting it** — DV-7 proves that without `role.read` no AUT-Q2 request is even made, and DV-8 pins the split against the seeded roles. USR-Q3 exposes the permissions those assignments produce, so serving it to a `user.read`-only caller would be an alternate path around exactly that boundary. **DV-7 and DV-8 are not changed to accommodate the catalogue.**
+
+> **USR-Q3 response narrowing (UA3, change control).** The catalogue returns *"Roles held with scope and dates, plus the flattened permission set"*. **This repository returns the flattened permission set only.** The roles half is **AUT-Q2's**, which already serves the User detail page, and duplicating it would make USR-Q3 a second role-assignment read. Narrower than the catalogue is not a different query — the same rule under which USR-Q1 v1 and USR-Q2 shipped.
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **UA1** | **Build now.** The missing capability is the flattened effective set, which the generalised resolver now supports directly. That the User detail page already shows assignments through AUT-Q2 does not make this redundant: it answers a different question. |
+| **UA2** | **`user.read` AND `role.read`** — the permission amendment above. Third use of the multi-permission classification built for RH13, and the clearest demonstration of why that extension was worth making. |
+| **UA3** | **The flattened permission set only** — the response narrowing above. AUT-Q2 remains the authoritative assignment read for a user. |
+| **UA4** | **The user's CURRENT status is returned, and no empty-reason taxonomy is invented.** An empty set has several causes — no roles, a deactivated user, no active identity, every assignment expired — and status lets a consumer distinguish the case that matters (`Inactive` + empty) from the ordinary one (`Active` + empty) without a second contract. Turning the resolver's several reasons into a classification would be a new contract that then has to be kept true. **Status is current, never historical** — the same limitation RW4 recorded, and for the same schema reason. |
+| **UA5** | **Current instant only; no `asOf`.** The catalogue says *"currently"* and names only `UserId`. AUT-Q7 making point-in-time evaluation available is not a reason to widen this; historical effective access belongs to **REV-Q6**. |
+| **UA6** | **Each permission keeps its `ScopeType` and `ScopeId`.** `EffectivePermission` already carries them, and an effective set that dropped scope would be reporting less than it knows. V1 having one scope value is not a reason to discard the field. |
+| **UA7** | **An unknown user is `400`** — *"The user does not exist."* This is a query about a **user**, as USR-Q1 and AUT-Q2 are, and it follows their convention. The standing `400`/`404` divergence is a recorded Known Gap and is **not** repaired here. |
+| **UA8** | **An Effective permissions section on the User detail page.** No new page. The composition becomes visible: Profile (USR-Q1), Roles (AUT-Q2), Effective permissions (USR-Q3). |
+| **UA9** | **Not audited**, keeping RA-A11. Sensitivity alone does not introduce an audit contract; authorisation controls the disclosure. |
+
+### The relationship it completes
+
+```text
+                    Shared authorisation resolver
+                              |
+        +---------------------+---------------------+
+        |                     |                     |
+     AUT-Q1               AUT-Q7                USR-Q3
+  one user, one       one permission,        one user,
+  permission           all users             all permissions
+        |                     |                     |
+        +---------------------+---------------------+
+                              |
+                       one evaluation
+```
+
+**AUT-Q2 remains the authoritative assignment read** and is not part of this picture: it reports what was *granted*, with provenance, where these three report what is *in effect*.
+
+### The route and its shape
+
+**My choice, not the catalogue's.** It follows AUT-Q2's route, its sibling on the same resource.
+
+| Query | Route |
+| --- | --- |
+| **USR-Q3** | `GET /api/users/{userId:guid}/effective-permissions` |
+
+**Named for what it returns, not for the catalogue's query name.** After UA3's narrowing, *"access summary"* would overstate a response that carries no roles and no dates.
+
+```text
+{ userId, status, permissions: [ { code, scopeType, scopeId } ] }
+```
+
+- **`status` is the user's current status** (UA4), and is what makes an empty list legible.
+- **Ordered by `code`** under the `C` collation — byte order — as AUT-Q3 and AUT-Q6 order permission codes, *"because a code is an identifier, not prose, and byte order is the same on every server"*. Then by `scopeType`, then `scopeId`.
+- **The union is already distinct**: holding two roles that both carry a permission yields **one** entry, because `EffectivePermission` is a record and the resolver distincts structurally.
+- **A carrier is required** (`401`), and **both `user.read` and `role.read`** (`400`), with **one sentence naming neither code**, as RH9 and RW6 established. The order the two codes are checked in is not observable.
+- **An unknown user is `400`** with *"The user does not exist."* (UA7). **The System actor is unknown to this read**, because `IUserProfileReader` already treats it so.
+- **Not audited** (UA9).
+
+### Acceptance Criteria
+
+**The set (UA3, UA5, UA6)**
+
+- **UA-A1** The response carries exactly `userId`, `status` and `permissions`, each permission exactly `code`, `scopeType` and `scopeId`, ordered by code.
+- **UA-A2** **It is a union, not a list per assignment:** a user holding two roles that both carry a permission gets **one** entry for it; a user holding two roles carrying different permissions gets both.
+- **UA-A3** **A deactivated role still contributes** (AUT-C5): its holder keeps the permissions it carries, because deactivation changes eligibility and never access.
+- **UA-A4** **Only assignments in effect now contribute:** future, ended and revoked assignments add nothing, and a revoked grant adds nothing.
+- **UA-A5** **A retired permission is absent from the set**, as the shared predicate requires an active permission.
+- **UA-A6** **No roles are returned**, under any circumstances (UA3). The response has no role member.
+
+**The empty answers (UA4)**
+
+- **UA-A7** **An Active user with no assignments** answers `status: Active` and an empty set.
+- **UA-A8** **A deactivated user** answers `status: Inactive` and an empty set; **a user with no active identity** answers `status: Active` and an empty set. The first two are distinguishable by `status`; the third is deliberately not separately signalled, and no reason taxonomy is invented.
+
+**The boundary (UA2, UA7, UA9)**
+
+- **UA-A9** **Both permissions, and it is AND:** `user.read` without `role.read` is refused; `role.read` without `user.read` is refused; both succeed; no carrier is `401`. **The refusal sentence is identical in both directions and names neither code.**
+- **UA-A10** **The `user.read`-only caller is refused specifically** — the case the amendment exists for, asserted against the **seeded** user-administrator composition, as DV-8 does.
+- **UA-A11** An unknown user and the System actor are both `400` with *"The user does not exist."*
+- **UA-A12** **No audit record is written**, whatever the outcome.
+
+**Agreement with the resolver**
+
+- **UA-A13** **The set agrees with the decision.** For a code **in** the set, `IsAllowedAsync` allows that user; for a code **absent** from it that the catalogue defines, `IsAllowedAsync` denies them. This extends RW-A5's family to the third view and is what keeps USR-Q3 from becoming a second evaluation.
+
+**The screen (UA8)**
+
+- **UA-U1** The Effective permissions section appears only for a caller holding **both** codes, and its request is never made without them.
+- **UA-U2** It lists the permission codes, and shows scope where it is not global.
+- **UA-U3** **An empty set explains itself:** for an inactive user the section says the user is inactive; for an active user with none it says there are no effective permissions.
+- **UA-U4** A failed read shows the server's sentence and a Try again, and leaves the rest of the page standing.
+- **UA-U5** The section offers no action.
+- **UA-U6** No accessibility violations on the page.
+
+**Browser, in the dev stack (UA-U7),** with the owner's approval. As Ada:
+
+1. Open a user with roles: the section lists the codes those roles carry, deduplicated.
+2. Compare with the Roles section above it: the roles explain the codes.
+3. Open a deactivated user: the section is empty and says why.
+
+### Implementation notes
+
+- **No new reader, and no new evaluation.** The handler composes two things that already exist: `IUserProfileReader` for existence and status (it already returns null for an unknown user and for the System actor), and `IAuthorizationService.EnumerateAsync` for the set. USR-Q3 adds a **contract and a boundary**, not a query.
+- **`EnumerateAsync` gains its first consumer other than `/api/me`.** It has always taken any user id; until now it was only ever passed the caller's own. That is the disclosure step this gate is really about, and why UA2 is where the evidence pointed.
+- **The order of the two declared codes is immaterial** and is not asserted: the refusal names neither, so no caller can observe which was checked first.
+- **The profile read comes first**, so an unknown user is refused before any permission set is computed — and so that a `400` is never confused with an empty set.
+
+### Not included
+
+- **Any role, assignment, scope or date in the response** (UA3) — AUT-Q2 owns those.
+- **`asOf` and any historical evaluation** (UA5); **REV-Q6** remains where point-in-time access belongs.
+- **Any empty-reason taxonomy** (UA4), and any historical user status.
+- **Any change to DV-7 or DV-8**, to AUT-Q2, or to the `400`/`404` divergence (UA7).
+- **Any new page** (UA8), and any audit of a read (UA9).
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
