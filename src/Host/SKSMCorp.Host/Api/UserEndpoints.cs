@@ -466,11 +466,32 @@ public static class UserEndpoints
 
     private sealed record UserLifecycleRequest(string? Reason);
 
-    private static Task<IResult> EffectivePermissionsAsync(
+    private static async Task<IResult> EffectivePermissionsAsync(
         Guid userId,
         IQueryDispatcher dispatcher,
         CancellationToken cancellationToken)
-        => throw new NotImplementedException("USR-Q3 is not implemented yet.");
+    {
+        var result = await dispatcher
+            .SendAsync<UserEffectivePermissionsQuery, UserEffectivePermissionsResult>(
+                new UserEffectivePermissionsQuery(new UserId(userId)),
+                cancellationToken);
+
+        // No 404 here, deliberately (UA7): this is a query about a USER, and
+        // an unknown user is the 400 that USR-Q1 and AUT-Q2 already answer.
+        // The standing 400/404 divergence is a recorded Known Gap and is not
+        // repaired from this route.
+        return Results.Ok(new
+        {
+            UserId = result.UserId.Value,
+            Status = result.Status.ToString(),
+            Permissions = result.Permissions.Select(x => new
+            {
+                x.Code,
+                x.ScopeType,
+                x.ScopeId,
+            }),
+        });
+    }
 
     private static async Task<IResult> GetAsync(
 

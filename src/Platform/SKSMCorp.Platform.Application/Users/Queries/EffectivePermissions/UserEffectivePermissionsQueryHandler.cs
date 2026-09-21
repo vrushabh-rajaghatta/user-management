@@ -40,8 +40,72 @@ public sealed class UserEffectivePermissionsQueryHandler
         _clock = clock;
     }
 
-    public Task<UserEffectivePermissionsResult> Handle(
+    public async Task<UserEffectivePermissionsResult> Handle(
         UserEffectivePermissionsQuery query,
         CancellationToken cancellationToken)
-        => throw new NotImplementedException("USR-Q3 is not implemented yet.");
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        // ---- 1. Authenticate.
+        if (!_executionContext.IsAuthenticated)
+            throw new AuthenticationFailedException("An authenticated user is required.");
+
+        var now = _clock.UtcNow;
+
+        // ---- 2. Authorise EVERY declared permission (UA2). AND, not OR, and
+        // driven by the declaration rather than hand-written, so a code
+        // enforced here that the query does not declare is impossible.
+        //
+        // ONE SENTENCE WHATEVER IS MISSING. Which code a caller lacks is not
+        // something a refusal should disclose — and here it would disclose
+        // precisely the boundary being enforced.
+        foreach (var permissionCode in UserEffectivePermissionsQuery.Authorization.PermissionCodes)
+        {
+            var authorization = await _authorizationService.IsAllowedAsync(
+                new AuthorizationRequest(
+                    _executionContext.UserId,
+                    permissionCode,
+                    now,
+                    "Global",
+                    null),
+                cancellationToken);
+
+            if (!authorization.IsAllowed)
+            {
+                throw new BusinessRuleViolationException(
+                    "The current actor does not have permission to view a user's effective permissions.");
+            }
+        }
+
+        // ---- 3. The user, FIRST, so an unknown subject is refused before any
+        // set is computed and a refusal is never confused with an empty set.
+        // IUserProfileReader already answers null for an unknown user AND for
+        // the System actor, so no special rule is introduced for either (UA7,
+        // UA-A11).
+        var user = await _users.ReadAsync(query.UserId, cancellationToken)
+            ?? throw new BusinessRuleViolationException("The user does not exist.");
+
+        // ---- 4. The set, from the shared evaluation (UA1). Not a new
+        // algorithm and not a second role traversal: EnumerateAsync has always
+        // taken any user id, and until now was only ever passed the caller's
+        // own. Pointing it at someone else is the whole of what this adds.
+        var permissions = await _authorizationService.EnumerateAsync(
+            new EffectivePermissionsRequest(query.UserId, now),
+            cancellationToken);
+
+        // Ordered by code in BYTE ORDER, as AUT-Q3 and AUT-Q6 order permission
+        // codes: a code is an identifier, not prose. Scope breaks ties, since
+        // one code may be held in more than one scope once scopes exist.
+        var ordered = permissions
+            .OrderBy(x => x.Code, StringComparer.Ordinal)
+            .ThenBy(x => x.ScopeType, StringComparer.Ordinal)
+            .ThenBy(x => x.ScopeId)
+            .ToList();
+
+        // The status is the USER's, current and never reconstructed (UA4). It
+        // is what tells an inactive user's empty set from an active one's; the
+        // resolver's other reasons for emptiness are deliberately not
+        // classified.
+        return new UserEffectivePermissionsResult(user.UserId, user.Status, ordered);
+    }
 }

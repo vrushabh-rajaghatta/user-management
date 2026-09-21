@@ -23,4 +23,7 @@ export const userKeys = {
 
   /** USR-Q1 GetUser v1: one user's profile names. */
   profile: (userId: string) => ["users", "profile", userId] as const,
+
+  /** USR-Q3: what one user can currently do, flattened across their roles. */
+  effectivePermissions: (userId: string) => ["users", "effective-permissions", userId] as const,
 };
