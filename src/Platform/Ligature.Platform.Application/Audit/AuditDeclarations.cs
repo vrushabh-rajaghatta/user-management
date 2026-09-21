@@ -2,6 +2,8 @@ using Ligature.Platform.Application.Users.Commands.ActivateAccount;
 using Ligature.Platform.Application.Users.Commands.AdminResetPassword;
 using Ligature.Platform.Application.Users.Commands.ChangePassword;
 using Ligature.Platform.Application.Roles.Commands.CreateRole;
+using Ligature.Platform.Application.Roles.Commands.AddPermissionToRole;
+using Ligature.Platform.Application.Roles.Commands.RemovePermissionFromRole;
 using Ligature.Platform.Application.Roles.Commands.DeactivateRole;
 using Ligature.Platform.Application.Roles.Commands.ReactivateRole;
 using Ligature.Platform.Application.Roles.Commands.UpdateRoleMetadata;
@@ -122,6 +124,11 @@ public static class AuditDeclarations
             // transition (RD4). Reaching a state already held records nothing.
             [typeof(DeactivateRoleCommand)] = new("UserManagement", ["RoleDeactivated"]),
             [typeof(ReactivateRoleCommand)] = new("UserManagement", ["RoleReactivated"]),
+
+            // AUT-C7 / AUT-C8 — one record each, both carrying the role and
+            // the permission as required references.
+            [typeof(AddPermissionToRoleCommand)] = new("UserManagement", ["PermissionGrantedToRole"]),
+            [typeof(RemovePermissionFromRoleCommand)] = new("UserManagement", ["PermissionRevokedFromRole"]),
 
             // USR-C4 — the cascade, one operation caused by UserDeactivated.
             // NOT TokenInvalidated: its frozen definition requires a

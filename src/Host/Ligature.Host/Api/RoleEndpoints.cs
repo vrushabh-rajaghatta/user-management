@@ -1,6 +1,8 @@
 using Ligature.Host.Configuration;
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Roles.Commands.CreateRole;
+using Ligature.Platform.Application.Roles.Commands.AddPermissionToRole;
+using Ligature.Platform.Application.Roles.Commands.RemovePermissionFromRole;
 using Ligature.Platform.Application.Roles.Commands.DeactivateRole;
 using Ligature.Platform.Application.Roles.Commands.ReactivateRole;
 using Ligature.Platform.Application.Roles.Commands.UpdateRoleMetadata;
@@ -103,6 +105,40 @@ public static class RoleEndpoints
                 + "nothing. A release-owned role is refused. Success is 200 with the "
                 + "role as stored.")
             .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+
+        // AUT-C7 / AUT-C8. The grant/revoke pair for role_permission, shaped
+        // as AUT-C1/C2 are for user_role: 201 with the new row's id, and 204.
+        routes.MapPost("/api/roles/{roleId:guid}/permissions", AddPermissionAsync)
+            .WithTags("Roles")
+            .WithSummary("Add a permission to a tenant role (administrator).")
+            .WithDescription(
+                "Requires a carrier and the 'role.manage' permission, and a human "
+                + "caller. Body: permissionId, required. The permission must exist "
+                + "and be active, and the role must not already hold it. A role "
+                + "held by an AGENT cannot be given a permission that requires a "
+                + "human actor; that refusal names the remediation. A release-owned "
+                + "role is refused. The grant is a NEW row, never a revived one, so "
+                + "a permission may be granted, revoked and granted again. Success "
+                + "is 201 with the grant's id.")
+            .Produces(StatusCodes.Status201Created)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+
+        routes.MapPost("/api/role-permissions/{rolePermissionId:guid}/revoke", RemovePermissionAsync)
+            .WithTags("Roles")
+            .WithSummary("Take a permission away from a tenant role (administrator).")
+            .WithDescription(
+                "Requires a carrier and the 'role.manage' permission, and a human "
+                + "caller. Body: reason, required and not blank; it is recorded on "
+                + "the audit event, not on the grant, which has no column for it. "
+                + "The grant is CLOSED, never deleted, so what the role could do "
+                + "and when stays answerable. An already-revoked grant and a grant "
+                + "on a release-owned role are refused. Success is 204.")
+            .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
             .WithMetadata(new RequiresCarrier());
@@ -268,6 +304,45 @@ public static class RoleEndpoints
 
     /// <summary>A reason, and nothing else. AUT-C6 has no request body at all (RD5).</summary>
     private sealed record DeactivateRoleRequest(string? Reason);
+
+    private static async Task<IResult> AddPermissionAsync(
+        Guid roleId,
+        AddPermissionRequest? request,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        if (request?.PermissionId is null)
+            return Results.BadRequest(new { Error = "permissionId is required." });
+
+        var result = await dispatcher.SendAsync<AddPermissionToRoleCommand, AddPermissionToRoleResult>(
+            new AddPermissionToRoleCommand(new RoleId(roleId), new PermissionId(request.PermissionId.Value)),
+            cancellationToken);
+
+        // 201 with the new grant's id and no Location header, as AUT-C1
+        // answers a new assignment: AUT-Q3 lists a role's grants, but there is
+        // no read for one grant to point at.
+        return Results.Created((string?)null, new { RolePermissionId = result.RolePermissionId.Value });
+    }
+
+    private static async Task<IResult> RemovePermissionAsync(
+        Guid rolePermissionId,
+        RevokePermissionRequest? request,
+        ICommandDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        if (request?.Reason is null)
+            return Results.BadRequest(new { Error = "A reason is required." });
+
+        await dispatcher.SendAsync<RemovePermissionFromRoleCommand, RemovePermissionFromRoleResult>(
+            new RemovePermissionFromRoleCommand(new RolePermissionId(rolePermissionId), request.Reason),
+            cancellationToken);
+
+        return Results.NoContent();
+    }
+
+    private sealed record AddPermissionRequest(Guid? PermissionId);
+
+    private sealed record RevokePermissionRequest(string? Reason);
 
     private static async Task<IResult> ListAsync(
         HttpRequest request,

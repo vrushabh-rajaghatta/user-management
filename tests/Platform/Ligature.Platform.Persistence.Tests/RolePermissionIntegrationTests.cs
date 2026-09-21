@@ -89,7 +89,7 @@ public sealed class RolePermissionIntegrationTests : IClassFixture<ActivationDat
 
         Assert.Equal(
             [("Granted", permission.Value.ToString()), ("Target", role.RoleId.Value.ToString())],
-            await ReferencesAsync(result.RolePermissionId.Value));
+            await ReferencesAsync(result.RolePermissionId.Value, "PermissionGrantedToRole"));
     }
 
     // ---------------------------------------------------------------- RG-A3
@@ -311,7 +311,7 @@ public sealed class RolePermissionIntegrationTests : IClassFixture<ActivationDat
 
         Assert.Equal(
             [("Revoked", permission.Value.ToString()), ("Target", role.RoleId.Value.ToString())],
-            await ReferencesAsync(granted.RolePermissionId.Value));
+            await ReferencesAsync(granted.RolePermissionId.Value, "PermissionRevokedFromRole"));
     }
 
     // --------------------------------------------------------------- RG-A12
@@ -542,11 +542,10 @@ public sealed class RolePermissionIntegrationTests : IClassFixture<ActivationDat
             $"""
              INSERT INTO user_role (id, user_id, actor_type, role_id, scope_type, scope_id,
                                     effective_from, effective_to, assigned_at, assigned_by,
-                                    assignment_reason, revoked_at, revoked_by, revocation_reason,
-                                    created_at, created_by)
+                                    assignment_reason, revoked_at, revoked_by, revocation_reason)
              VALUES ('{Guid.NewGuid()}', '{agent}', 'Agent', '{roleId.Value}', 'Global', NULL,
                      {effectiveFrom}, {effectiveTo}, now(), '{system}',
-                     'AUT-C7 RP6 fixture', {revocation}, now(), '{system}');
+                     'AUT-C7 RP6 fixture', {revocation});
              """);
     }
 
@@ -570,10 +569,10 @@ public sealed class RolePermissionIntegrationTests : IClassFixture<ActivationDat
 
              INSERT INTO user_role (id, user_id, actor_type, role_id, scope_type, scope_id,
                                     effective_from, effective_to, assigned_at, assigned_by,
-                                    assignment_reason, created_at, created_by)
+                                    assignment_reason)
              VALUES ('{Guid.NewGuid()}', '{id}', 'Human', '{roleId.Value}', 'Global', NULL,
                      now() - interval '1 day', NULL, now(), '{system}',
-                     'AUT-C7 holder fixture', now(), '{system}');
+                     'AUT-C7 holder fixture');
              """);
 
         return new UserId(id);
@@ -582,7 +581,9 @@ public sealed class RolePermissionIntegrationTests : IClassFixture<ActivationDat
     private Task<string> GrantRowAsync(RolePermissionId grantId)
         => ScalarAsync<string>(
             $"""
-            SELECT concat_ws('|', role_id, permission_id, revoked_at, granted_by)
+            -- concat_ws SKIPS nulls rather than leaving an empty field, so the
+            -- revocation is coalesced to keep the shape fixed.
+            SELECT concat_ws('|', role_id, permission_id, coalesce(revoked_at::text, ''), granted_by)
               FROM role_permission WHERE id = '{grantId.Value}'
             """);
 
@@ -605,16 +606,21 @@ public sealed class RolePermissionIntegrationTests : IClassFixture<ActivationDat
     private Task<Guid> RevokedByAsync(RolePermissionId grantId)
         => ScalarAsync<Guid>($"SELECT revoked_by FROM role_permission WHERE id = '{grantId.Value}'");
 
-    private async Task<List<(string Role, string Entity)>> ReferencesAsync(Guid entityId)
+    /// <summary>
+    /// Scoped by event type: after a revocation the grant is the subject of
+    /// TWO records, and reading both would mix the grant's references with
+    /// the revocation's.
+    /// </summary>
+    private async Task<List<(string Role, string Entity)>> ReferencesAsync(Guid entityId, string eventType)
     {
         await using var connection = await _database.OpenAsync();
         await using var command = new NpgsqlCommand(
             $"""
-            SELECT r.entity_role, r.entity_id::text
+            SELECT r.ref_role, r.entity_id::text
               FROM audit.audit_entity_ref r
               JOIN audit.audit_record a ON a.audit_id = r.audit_id
-             WHERE a.entity_id = '{entityId}'
-             ORDER BY r.entity_role
+             WHERE a.entity_id = '{entityId}' AND a.event_type = '{eventType}'
+             ORDER BY r.ref_role
             """, connection);
 
         await using var reader = await command.ExecuteReaderAsync();

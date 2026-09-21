@@ -8,9 +8,16 @@ import { ErrorState } from "@/shared/components/ErrorState";
 import { Page } from "@/shared/components/Page";
 import { useCan } from "@/shared/auth/useCan";
 import { EditRoleDialog } from "../components/EditRoleDialog";
+import { AddPermissionDialog } from "../components/AddPermissionDialog";
+import { RevokePermissionDialog } from "../components/RevokePermissionDialog";
 import { RoleLifecycleDialog } from "../components/RoleLifecycleDialog";
 import { useRolePermissions, useRoles } from "../hooks/useRoles";
+// Aliased: the module also exports a RolePermissions CONST of permission
+// codes, and this is the schema type for one role's grants.
+import type { RolePermissions as RoleGrants } from "../schemas/roles";
 import { RolePermissions } from "../permissions";
+
+type Grant = RoleGrants["permissions"][number];
 
 const NOT_FOUND = "The role does not exist.";
 
@@ -36,6 +43,10 @@ export function RoleDetailPage() {
   const [queued, setQueued] = useState<string | undefined>(undefined);
   const edit = useRef<HTMLButtonElement | null>(null);
   const lifecycleAction = useRef<HTMLButtonElement | null>(null);
+  const addPermission = useRef<HTMLButtonElement | null>(null);
+  const permissionsHeading = useRef<HTMLHeadingElement | null>(null);
+  const [adding, setAdding] = useState<{ open: boolean } | undefined>(undefined);
+  const [revoking, setRevoking] = useState<{ grant: Grant; open: boolean } | undefined>(undefined);
 
   const role = roles.data?.roles.find((candidate) => candidate.roleId === roleId);
   const missing = grants.error instanceof ApiError && grants.error.status === 404;
@@ -143,6 +154,25 @@ export function RoleDetailPage() {
         <dd>{role.activeHolderCount}</dd>
       </dl>
 
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 ref={permissionsHeading} tabIndex={-1} className="text-lg font-semibold">
+          Permissions
+        </h2>
+
+        {editable ? (
+          <Button
+            ref={addPermission}
+            variant="outline"
+            onClick={() => {
+              setAnnouncement("");
+              setAdding({ open: true });
+            }}
+          >
+            Add permission
+          </Button>
+        ) : null}
+      </div>
+
       <Table aria-label="Permissions">
         <TableHeader>
           <TableRow>
@@ -151,6 +181,7 @@ export function RoleDetailPage() {
             <TableHead>Resource</TableHead>
             <TableHead>Action</TableHead>
             <TableHead>Actor</TableHead>
+            {editable ? <TableHead className="text-right">Actions</TableHead> : null}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -161,10 +192,71 @@ export function RoleDetailPage() {
               <TableCell>{permission.resource}</TableCell>
               <TableCell>{permission.action}</TableCell>
               <TableCell>{permission.requiresHumanActor ? "Human only" : "Any actor"}</TableCell>
+              {editable ? (
+                <TableCell className="text-right">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setAnnouncement("");
+                      setRevoking({ grant: permission, open: true });
+                    }}
+                  >
+                    Revoke {permission.code}
+                  </Button>
+                </TableCell>
+              ) : null}
             </TableRow>
           ))}
         </TableBody>
       </Table>
+
+      {adding === undefined ? null : (
+        <AddPermissionDialog
+          role={role}
+          held={rows.map((grant) => grant.permissionId)}
+          open={adding.open}
+          returnFocus={addPermission}
+          onClose={() => {
+            setAdding({ open: false });
+          }}
+          onAdded={(message) => {
+            setQueued(message);
+          }}
+          onClosed={() => {
+            setAdding(undefined);
+
+            if (queued !== undefined) {
+              setAnnouncement(queued);
+              setQueued(undefined);
+            }
+          }}
+        />
+      )}
+
+      {revoking === undefined ? null : (
+        <RevokePermissionDialog
+          key={revoking.grant.rolePermissionId}
+          grant={revoking.grant}
+          roleName={role.name}
+          open={revoking.open}
+          returnFocus={permissionsHeading}
+          onClose={() => {
+            setRevoking({ grant: revoking.grant, open: false });
+          }}
+          onRevoked={(message) => {
+            setQueued(message);
+          }}
+          onClosed={() => {
+            setRevoking(undefined);
+
+            if (queued !== undefined) {
+              setAnnouncement(queued);
+              setQueued(undefined);
+            }
+          }}
+        />
+      )}
 
       {lifecycle === undefined ? null : (
         <RoleLifecycleDialog

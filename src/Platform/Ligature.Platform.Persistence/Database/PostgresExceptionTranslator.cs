@@ -50,6 +50,12 @@ internal static class PostgresExceptionTranslator
             ["IX_role_code"] =
                 "A role with this code already exists.",
 
+            // AUT-C7 (RG6). RP2's live-grant index: one grant per pair at a
+            // time, revoked rows retained. One sentence for both paths, the
+            // command's pre-check and this index, as AUT-C3 does for a code.
+            ["ux_role_permission_active"] =
+                "The role already has this permission.",
+
             // UR5 / UR6 (AUT-C1). One question, one answer, for both scopes:
             // the scoped twin is mapped now so it cannot surface as a 500 the
             // day scoped assignments exist.

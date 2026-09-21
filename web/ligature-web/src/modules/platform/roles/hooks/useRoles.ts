@@ -1,10 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  addPermissionToRole,
   createRole,
   deactivateRole,
   getRolePermissions,
+  listPermissionCatalogue,
   listRoles,
   reactivateRole,
+  revokeRolePermission,
   updateRoleMetadata,
 } from "../api/roles";
 import { roleKeys } from "./roleKeys";
@@ -72,6 +75,38 @@ export function useReactivateRole(roleId: string) {
 
   return useMutation({
     mutationFn: () => reactivateRole(roleId),
+    onSuccess: () => client.invalidateQueries({ queryKey: roleKeys.all }),
+  });
+}
+
+/** AUT-Q6, for AUT-C7's picker. Asked for only when the picker is open. */
+export function usePermissionCatalogue(enabled: boolean) {
+  return useQuery({
+    queryKey: roleKeys.catalogue,
+    queryFn: ({ signal }) => listPermissionCatalogue(signal),
+    enabled,
+  });
+}
+
+/**
+ * AUT-C7/C8. The grants are re-read rather than patched, so the table shows
+ * what the server holds and the derived values stay the server's.
+ */
+export function useAddPermission(roleId: string) {
+  const client = useQueryClient();
+
+  return useMutation({
+    mutationFn: (permissionId: string) => addPermissionToRole(roleId, permissionId),
+    onSuccess: () => client.invalidateQueries({ queryKey: roleKeys.all }),
+  });
+}
+
+export function useRevokePermission() {
+  const client = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ rolePermissionId, reason }: { rolePermissionId: string; reason: string }) =>
+      revokeRolePermission(rolePermissionId, reason),
     onSuccess: () => client.invalidateQueries({ queryKey: roleKeys.all }),
   });
 }
