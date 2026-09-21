@@ -281,6 +281,38 @@ public sealed class WhoCanDoTests : IClassFixture<ActivationDatabase>
         Assert.Single(holders.Single(x => x.UserId == one).Roles);
     }
 
+    /// <summary>
+    /// RW-A4, the collapsing half. A role reaches a permission ONCE even when
+    /// two grants of it were live at the instant.
+    ///
+    /// THIS FABRICATES A STATE NO COMMAND CAN PRODUCE, and that is why it
+    /// exists. ux_role_permission_active is partial on revoked_at IS NULL, so
+    /// it only ever guards the CURRENT state: two grants whose live intervals
+    /// overlap in the past are permitted by the index and unreachable through
+    /// AUT-C7, which stamps granted_at at the moment of granting. Without this
+    /// the DistinctBy is unfalsifiable, and an unfalsifiable guard is one
+    /// nobody can tell is still working.
+    /// </summary>
+    [Fact]
+    public async Task A_role_granted_the_permission_twice_is_named_once()
+    {
+        var code = await SeedPermissionAsync();
+        var role = await SeedRoleAsync();
+        var asOf = Past.AddDays(30);
+
+        // Overlapping live intervals: [Past, Past+60) and [Past+10, forever).
+        await GrantAsync(role, code, grantedAt: Past, revokedAt: Past.AddDays(60));
+        await GrantAsync(role, code, grantedAt: Past.AddDays(10));
+
+        var user = await SeedUserAsync();
+        await AssignAsync(user, role, from: Past, to: null);
+
+        var holder = Assert.Single(await WhoCanDoAsync(code, asOf));
+
+        Assert.Equal(user, holder.UserId);
+        Assert.Equal(role, Assert.Single(holder.Roles).RoleId);
+    }
+
     // =============================================================== RW-A5
 
     /// <summary>
@@ -331,7 +363,7 @@ public sealed class WhoCanDoTests : IClassFixture<ActivationDatabase>
         var resolver = scope.ServiceProvider.GetRequiredService<IAuthorizationService>();
 
         var named = (await resolver.WhoCanDoAsync(
-                new WhoCanDoRequest(code, at, "Global", null), CancellationToken.None))!
+                new WhoCanDoRequest(code, at, "Global", null), CancellationToken.None))
             .Select(x => x.UserId)
             .ToHashSet();
 

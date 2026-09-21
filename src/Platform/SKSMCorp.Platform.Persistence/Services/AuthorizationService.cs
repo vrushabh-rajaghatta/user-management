@@ -131,7 +131,7 @@ public sealed class AuthorizationService : IAuthorizationService
     /// (RW2). The same evaluation as the other two, narrowed by code and not
     /// by user.
     /// </summary>
-    public async Task<IReadOnlyList<PermissionHolder>?> WhoCanDoAsync(
+    public async Task<IReadOnlyList<PermissionHolder>> WhoCanDoAsync(
         WhoCanDoRequest request,
         CancellationToken cancellationToken)
     {
@@ -141,17 +141,12 @@ public sealed class AuthorizationService : IAuthorizationService
         // scope is a malformed request, not an answer about nobody.
         var scopeType = ScopeType.Create(request.ScopeType);
 
-        // Existence is the CATALOGUE's question, not the evaluation's, and the
-        // two answers differ: an unknown code is null, a known one that nobody
-        // holds is empty, and a retired one is empty because the predicate
-        // requires an active permission (RW8, RW9).
-        var exists = await _dbContext.Set<Permission>()
-            .AsNoTracking()
-            .AnyAsync(x => x.Code == request.PermissionCode, cancellationToken);
-
-        if (!exists)
-            return null;
-
+        // EXISTENCE IS NOT ASKED HERE. This is the evaluation, and the
+        // catalogue is IPermissionCatalogueEntryReader's; an unknown code and a
+        // code nobody holds both evaluate to nobody, and only the caller that
+        // has looked the code up can tell those apart (RW8). Answering
+        // existence here as well put the same question in two places, where
+        // each hid the other's absence.
         // The ordering is applied HERE rather than in the shared predicate,
         // whose own ordering decides which assignment IsAllowedAsync REPORTS
         // and must not be disturbed. Ordering in SQL is what lets the grouping

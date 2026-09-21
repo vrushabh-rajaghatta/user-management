@@ -39,12 +39,14 @@ public interface IAuthorizationService
     /// omitting people who can. The actor gates are part of the shared
     /// evaluation for the same reason.
     ///
-    /// Null when the permission code does not exist, which the route answers as
-    /// 404 (RW8); empty when it exists and nobody holds it. A RETIRED
-    /// permission exists and answers empty (RW9) — the shared predicate
-    /// requires an active permission, and this query does not resurrect one.
+    /// IT DOES NOT ANSWER EXISTENCE. An unknown code and a code nobody holds
+    /// both evaluate to nobody, and telling those apart is the catalogue's job
+    /// — IPermissionCatalogueEntryReader — because only a caller that looked
+    /// the code up can report the difference (RW8). A RETIRED permission
+    /// likewise answers empty (RW9): the shared predicate requires an active
+    /// permission, and this view does not resurrect one.
     /// </summary>
-    Task<IReadOnlyList<PermissionHolder>?> WhoCanDoAsync(
+    Task<IReadOnlyList<PermissionHolder>> WhoCanDoAsync(
         WhoCanDoRequest request,
         CancellationToken cancellationToken);
 }

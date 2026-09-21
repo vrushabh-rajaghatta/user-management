@@ -93,15 +93,11 @@ public sealed class WhoCanDoQueryHandler
             return new WhoCanDoResult(asOf, null, null);
 
         // ---- 5. The evaluation, which is the resolver's and not this
-        // handler's (RW2). It answers null only for a code the catalogue does
-        // not have, which step 4 has already excluded; if it ever did, saying
-        // "does not exist" is the honest answer rather than an empty list.
+        // handler's (RW2). It answers who could act, never whether the code
+        // exists — step 4 is the only place that decides that.
         var holders = await _authorizationService.WhoCanDoAsync(
             new WhoCanDoRequest(query.PermissionCode, asOf, GlobalScope, null),
             cancellationToken);
-
-        if (holders is null)
-            return new WhoCanDoResult(asOf, null, null);
 
         return new WhoCanDoResult(asOf, permission, holders);
     }
