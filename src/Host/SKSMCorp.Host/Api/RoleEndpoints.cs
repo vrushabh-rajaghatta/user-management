@@ -9,6 +9,7 @@ using SKSMCorp.Platform.Application.Roles.Commands.UpdateRoleMetadata;
 using SKSMCorp.Platform.Application.Roles.Queries.PermissionCatalogue;
 using SKSMCorp.Platform.Application.Roles.Queries.RoleAdministration;
 using SKSMCorp.Platform.Application.Roles.Queries.RoleMembers;
+using SKSMCorp.Platform.Application.Roles.Queries.WhoCanDo;
 using SKSMCorp.Platform.Application.Roles.Queries.RolePermissions;
 using SKSMCorp.Platform.Domain.Users;
 
@@ -196,6 +197,30 @@ public static class RoleEndpoints
                 + "nobody holds is 200 and an empty list; a role that does not "
                 + "exist is 404. Only the global scope exists, so a 'scopeId' is "
                 + "refused.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status404NotFound)
+            .WithMetadata(new RequiresCarrier());
+
+        // AUT-Q7.
+        routes.MapGet("/api/permissions/{permissionCode}/holders", HoldersAsync)
+            .WithTags("Roles")
+            .WithSummary("Who could exercise a permission, at an instant.")
+            .WithDescription(
+                "Requires a carrier and BOTH the 'role.read' and 'user.read' "
+                + "permissions. Returns { asOf, permission, holders }, each "
+                + "holder exactly { userId, displayName, email, status, roles }, "
+                + "ordered by display name: everyone who could exercise the "
+                + "permission at 'asOf', which defaults to now. ONE ROW PER "
+                + "USER, with every authorising role named. 'asOf' resolves the "
+                + "assignment's period and revocation and the grant's "
+                + "lifecycle; the permission's own IsActive and the holders' "
+                + "status are CURRENT state, which the schema does not record "
+                + "historically. A permission nobody holds is 200 and an empty "
+                + "list, a retired permission is 200 with isActive false and an "
+                + "empty list, and an unknown code is 404. Only the global scope "
+                + "exists.")
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
@@ -507,6 +532,71 @@ public static class RoleEndpoints
                 x.AssignedAt,
                 AssignedBy = new { UserId = x.AssignedBy.UserId.Value, x.AssignedBy.DisplayName },
                 x.AssignmentReason,
+            }),
+        });
+    }
+
+    private static async Task<IResult> HoldersAsync(
+        string permissionCode,
+        HttpRequest request,
+        IQueryDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var instants = request.Query["asOf"];
+        DateTimeOffset? asOf = null;
+
+        if (instants.Count == 1
+            && DateTimeOffset.TryParse(
+                instants[0],
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                out var parsed))
+        {
+            asOf = parsed;
+        }
+        else if (instants.Count != 0)
+        {
+            return Results.BadRequest(new { Error = "asOf must be one ISO-8601 instant." });
+        }
+
+        // RW7: both scope parameters reach the query, which owns the rule.
+        // The route parses them and refuses nothing of its own, so there is
+        // one place that decides what a scope may be.
+        var scopeTypes = request.Query["scopeType"];
+        var scopes = request.Query["scopeId"];
+
+        var scopeType = scopeTypes.Count == 1 ? scopeTypes[0] : null;
+        Guid? scopeId = null;
+
+        if (scopes.Count != 0)
+            scopeId = Guid.TryParse(scopes[0], out var scope) ? scope : Guid.Empty;
+
+        var result = await dispatcher.SendAsync<WhoCanDoQuery, WhoCanDoResult>(
+            new WhoCanDoQuery(permissionCode, asOf, scopeType, scopeId),
+            cancellationToken);
+
+        // RW8, as AUT-Q3 and AUT-Q4 do it. The body is what tells this apart
+        // from a route that does not exist.
+        if (!result.PermissionExists)
+            return Results.NotFound(new { Error = "The permission does not exist." });
+
+        return Results.Ok(new
+        {
+            result.AsOf,
+            Permission = new
+            {
+                result.Permission!.PermissionId,
+                result.Permission.Code,
+                result.Permission.Name,
+                result.Permission.IsActive,
+            },
+            Holders = result.Holders!.Select(x => new
+            {
+                UserId = x.UserId.Value,
+                x.DisplayName,
+                x.Email,
+                Status = x.Status.ToString(),
+                Roles = x.Roles.Select(role => new { RoleId = role.RoleId.Value, role.Name }),
             }),
         });
     }

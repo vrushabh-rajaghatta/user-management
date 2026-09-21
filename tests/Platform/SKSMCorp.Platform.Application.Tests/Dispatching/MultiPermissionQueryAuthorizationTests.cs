@@ -1,6 +1,10 @@
 using SKSMCorp.Platform.Application.Abstractions;
 using SKSMCorp.Platform.Application.Dispatching;
+using SKSMCorp.Platform.Application.Roles.Queries.PermissionCatalogue;
+using SKSMCorp.Platform.Application.Roles.Queries.RoleAdministration;
 using SKSMCorp.Platform.Application.Roles.Queries.RoleMembers;
+using SKSMCorp.Platform.Application.Roles.Queries.RolePermissions;
+using SKSMCorp.Platform.Application.Roles.Queries.WhoCanDo;
 using SKSMCorp.SharedKernel.Abstractions;
 
 namespace SKSMCorp.Platform.Application.Tests.Dispatching;
@@ -126,14 +130,28 @@ public sealed class MultiPermissionQueryAuthorizationTests
     }
 
     /// <summary>
-    /// RH-A12: AUT-Q4 declares both codes, and it is the only query that
-    /// declares more than one. A second multi-permission read is a decision,
-    /// not a default.
+    /// RH-A12: AUT-Q4 declares both codes. A second multi-permission read is a
+    /// decision, not a default — and AUT-Q7 is that decision (RW6), taken for
+    /// the same reason: it answers a question about named people.
     /// </summary>
     [Fact]
-    public void The_role_member_read_declares_both_codes()
+    public void The_reads_that_name_people_declare_both_codes()
     {
         Assert.Equal(["role.read", "user.read"], RoleMembersQuery.Authorization.PermissionCodes);
+        Assert.Equal(["role.read", "user.read"], WhoCanDoQuery.Authorization.PermissionCodes);
+    }
+
+    /// <summary>
+    /// And the reads that do NOT name people still declare one code. This is
+    /// the assertion that keeps two permissions a decision rather than a habit
+    /// the next read copies.
+    /// </summary>
+    [Fact]
+    public void The_reads_that_name_no_people_still_declare_one_code()
+    {
+        Assert.Equal(["role.read"], RoleAdministrationQuery.Authorization.PermissionCodes);
+        Assert.Equal(["role.read"], RolePermissionsQuery.Authorization.PermissionCodes);
+        Assert.Equal(["role.read"], PermissionCatalogueQuery.Authorization.PermissionCodes);
     }
 
     private sealed record DeclaresNothing : IQuery<string>;

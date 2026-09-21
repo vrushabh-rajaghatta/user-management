@@ -800,7 +800,12 @@ public sealed class AuthorizationServiceTests
             RolePermissionId.New(),
             role.Id,
             fixture.PermissionId,
-            Now,
+
+            // Granted no later than the assignment takes effect, for the same
+            // reason assignedAt is below: a role that did not yet carry the
+            // permission authorised nothing, and the predicate now says so
+            // (RW3). Cases here start a day before Now.
+            effectiveFrom < Now ? effectiveFrom : Now,
             User.SystemUserId);
 
         var assignment = UserRole.Create(
@@ -944,7 +949,10 @@ public sealed class AuthorizationServiceTests
             RolePermissionId.New(),
             role.Id,
             permission.Id,
-            Now,
+
+            // Granted no later than the assignment takes effect (RW3), as
+            // assignedAt is below.
+            effectiveFrom < Now ? effectiveFrom : Now,
             User.SystemUserId);
 
         var assignment = UserRole.Create(

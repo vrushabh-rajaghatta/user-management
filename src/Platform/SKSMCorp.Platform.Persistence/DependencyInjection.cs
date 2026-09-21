@@ -56,6 +56,9 @@ public static class DependencyInjection
         // AUT-Q4 — who holds a role.
         services.AddScoped<IRoleMemberReader, RoleMemberReader>();
 
+        // AUT-Q7 — the catalogue entry behind a code, retired or not.
+        services.AddScoped<IPermissionCatalogueEntryReader, PermissionCatalogueEntryReader>();
+
         services.AddScoped<IUserTokenRepository, UserTokenRepository>();
 
         services.AddScoped<INotificationRepository, NotificationRepository>();

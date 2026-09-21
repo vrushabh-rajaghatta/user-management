@@ -313,6 +313,14 @@ public sealed class UsersQueryHandlerTests
             EffectivePermissionsRequest request,
             CancellationToken cancellationToken)
             => throw new InvalidOperationException("USR-Q2 does not enumerate permissions.");
+
+        // AUT-Q7's view. These doubles stand in for the pipeline's decision,
+        // never for the reverse lookup, so calling it here would be a test
+        // reaching for something it was not given.
+        public Task<IReadOnlyList<PermissionHolder>> WhoCanDoAsync(
+            WhoCanDoRequest request,
+            CancellationToken cancellationToken)
+            => throw new NotSupportedException("This double does not answer AUT-Q7.");
     }
 
     /// <summary>

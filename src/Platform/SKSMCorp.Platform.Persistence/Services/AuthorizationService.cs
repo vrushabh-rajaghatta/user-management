@@ -43,6 +43,8 @@ namespace SKSMCorp.Platform.Persistence.Services;
 /// </summary>
 public sealed class AuthorizationService : IAuthorizationService
 {
+    private const string Collation = "unicode";
+
     private readonly SKSMCorpDbContext _dbContext;
 
     public AuthorizationService(SKSMCorpDbContext dbContext)
@@ -65,17 +67,12 @@ public sealed class AuthorizationService : IAuthorizationService
         // different answer to a different question.
         var scopeType = ScopeType.Create(request.ScopeType);
 
-        var actorType = await EligibleActorTypeAsync(request.UserId, cancellationToken);
-
-        if (actorType is null)
-            return AuthorizationResult.Denied;
-
         // The scope and the code are the NARROWING, and only this view applies
-        // them. Everything else is shared with the enumeration.
+        // them. Everything else is shared with the other two views — including
+        // the actor gates, which are now part of the predicate itself (RW2).
         var deciding = await Candidates(
                 request.UserId,
                 request.At,
-                actorType.Value,
                 scopeType,
                 request.ScopeId,
                 request.PermissionCode)
@@ -109,15 +106,9 @@ public sealed class AuthorizationService : IAuthorizationService
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var actorType = await EligibleActorTypeAsync(request.UserId, cancellationToken);
-
-        if (actorType is null)
-            return [];
-
         var held = await Candidates(
                 request.UserId,
                 request.At,
-                actorType.Value,
                 scopeType: null,
                 scopeId: null,
                 permissionCode: null)
@@ -136,39 +127,65 @@ public sealed class AuthorizationService : IAuthorizationService
     }
 
     /// <summary>
-    /// The actor gates, shared by both views: the user must exist and be
-    /// active, and hold at least one active identity. Returns the actor's type,
-    /// which UR10 needs, or null when the actor is not eligible at all.
+    /// AUT-Q7's view: everyone who could exercise one permission at an instant
+    /// (RW2). The same evaluation as the other two, narrowed by code and not
+    /// by user.
     /// </summary>
-    private async Task<ActorType?> EligibleActorTypeAsync(
-        UserId userId,
+    public async Task<IReadOnlyList<PermissionHolder>> WhoCanDoAsync(
+        WhoCanDoRequest request,
         CancellationToken cancellationToken)
     {
-        // Actor state comes from persisted state, never from the caller's own
-        // claim about itself. IExecutionContext.ActorType originates at the
-        // composition boundary; app_user.ActorType is immutable and is what the
-        // assignment-time checks (UR9/RP6) were evaluated against.
-        var actor = await _dbContext.Set<User>()
-            .AsNoTracking()
-            .Where(x => x.Id == userId)
-            .Select(x => new { x.ActorType, x.Status })
-            .FirstOrDefaultAsync(cancellationToken);
+        ArgumentNullException.ThrowIfNull(request);
 
-        if (actor is null || actor.Status != UserStatus.Active)
-            return null;
+        // FIRST, for the same reason the single check does it first: a blank
+        // scope is a malformed request, not an answer about nobody.
+        var scopeType = ScopeType.Create(request.ScopeType);
 
-        // "At least one active identity", per AUT-Q1's parameters, which carry
-        // no identity id. Enforcement against the SPECIFIC identity that
-        // authenticated belongs to the session layer: IDN-C3 revokes the
-        // sessions bound to an identity when it is deactivated.
-        var hasActiveIdentity = await _dbContext.Set<UserIdentity>()
-            .AsNoTracking()
-            .AnyAsync(
-                x => x.UserId == userId
-                    && x.Status == UserStatus.Active,
-                cancellationToken);
+        // EXISTENCE IS NOT ASKED HERE. This is the evaluation, and the
+        // catalogue is IPermissionCatalogueEntryReader's; an unknown code and a
+        // code nobody holds both evaluate to nobody, and only the caller that
+        // has looked the code up can tell those apart (RW8). Answering
+        // existence here as well put the same question in two places, where
+        // each hid the other's absence.
+        // The ordering is applied HERE rather than in the shared predicate,
+        // whose own ordering decides which assignment IsAllowedAsync REPORTS
+        // and must not be disturbed. Ordering in SQL is what lets the grouping
+        // below be a plain in-memory pass: LINQ's GroupBy preserves encounter
+        // order, so the ICU collation still decides the result's order.
+        var rows = await Candidates(
+                userId: null,
+                request.At,
+                scopeType,
+                request.ScopeId,
+                request.PermissionCode,
+                CandidateOrder.Holder)
+            .Select(x => new
+            {
+                x.Holder.Id,
+                x.Holder.DisplayName,
+                x.Holder.Email,
+                x.Holder.Status,
+                RoleId = x.Role.Id,
+                RoleName = x.Role.Name,
+            })
+            .ToListAsync(cancellationToken);
 
-        return hasActiveIdentity ? actor.ActorType : null;
+        // ONE ROW PER USER (RW5), with every authorising role named. A holder
+        // reached through three roles is one row naming three, not three rows:
+        // the question is "who can do this, and why?", and the person is the
+        // who.
+        return rows
+            .GroupBy(x => x.Id)
+            .Select(group => new PermissionHolder(
+                group.Key,
+                group.First().DisplayName,
+                group.First().Email?.Value,
+                group.First().Status,
+                group
+                    .Select(x => new HolderRole(x.RoleId, x.RoleName))
+                    .DistinctBy(x => x.RoleId)
+                    .ToList()))
+            .ToList();
     }
 
     /// <summary>
@@ -189,13 +206,15 @@ public sealed class AuthorizationService : IAuthorizationService
     /// both views.
     /// </summary>
     private IQueryable<Candidate> Candidates(
-        UserId userId,
+        UserId? userId,
         DateTimeOffset at,
-        ActorType actorType,
         ScopeType? scopeType,
         Guid? scopeId,
-        string? permissionCode)
+        string? permissionCode,
+        CandidateOrder order = CandidateOrder.Reporting)
     {
+        var identities = _dbContext.Set<UserIdentity>().AsNoTracking();
+
         // EVERY condition is in this one where clause, and the projection is
         // the last operator. EF cannot translate a filter applied AFTER a
         // projection to a named type, so a caller that narrowed afterwards
@@ -204,14 +223,33 @@ public sealed class AuthorizationService : IAuthorizationService
         //
         // scopeType is the single "no narrowing" signal for the scope: scopeId
         // cannot be, because a Global assignment legitimately has a null id.
-        return from assignment in _dbContext.Set<UserRole>().AsNoTracking()
+        var rows = from assignment in _dbContext.Set<UserRole>().AsNoTracking()
                join grant in _dbContext.Set<RolePermission>().AsNoTracking()
                    on assignment.RoleId equals grant.RoleId
                join permission in _dbContext.Set<Permission>().AsNoTracking()
                    on grant.PermissionId equals permission.Id
                join role in _dbContext.Set<Role>().AsNoTracking()
                    on assignment.RoleId equals role.Id
-               where assignment.UserId == userId
+               join holder in _dbContext.Set<User>().AsNoTracking()
+                   on assignment.UserId equals holder.Id
+
+                   // Null means "every user" — the third view's narrowing, and
+                   // the same convention scope and code already use.
+               where (userId == null || assignment.UserId == userId)
+
+                   // THE ACTOR GATES, here rather than resolved per caller
+                   // beforehand (RW2). Invariant 7: an active assignment
+                   // belonging to a deactivated user must grant nothing.
+                   //
+                   // These are CURRENT state and are not reached by `at`
+                   // (RW4): status is tied to deactivated_at by a CHECK that
+                   // nulls the timestamp again on reactivation, so the schema
+                   // retains no status history to resolve against. The
+                   // contract says so rather than letting today's state pass
+                   // as history.
+                   && holder.Status == UserStatus.Active
+                   && identities.Any(x => x.UserId == holder.Id
+                       && x.Status == UserStatus.Active)
 
                    // Within its effective period at the instant asked about.
                    && assignment.EffectiveFrom <= at
@@ -223,12 +261,29 @@ public sealed class AuthorizationService : IAuthorizationService
                    // be non-null when revoked — not to be in the past. A revoked
                    // row with a future EffectiveTo would otherwise still
                    // authorise.
-                   && assignment.RevokedAt == null
+                   //
+                   // AT THE INSTANT, not merely "ever" (RW3). revoked_at is a
+                   // timestamp, so the model DOES represent this temporally,
+                   // and answering with today's revocation would tell an
+                   // inspection question that nobody ever held the role.
+                   // Unchanged for every existing caller, which passes now.
+                   && (assignment.RevokedAt == null
+                       || at < assignment.RevokedAt)
 
-                   // Live grants only (RP2). Revoked rows are retained so the
-                   // historical meaning of a role stays reconstructable.
-                   && grant.RevokedAt == null
+                   // The grant's own lifecycle, also at the instant (RW3). The
+                   // GrantedAt half was absent altogether, so a permission
+                   // granted AFTER the instant counted towards authority at
+                   // it. This is AUT-Q3's definition of a live grant (RA5),
+                   // and there is now one definition rather than two.
+                   && grant.GrantedAt <= at
+                   && (grant.RevokedAt == null
+                       || at < grant.RevokedAt)
 
+                   // CURRENT catalogue state, like the actor gates above and
+                   // for the same reason: is_active carries no deactivation
+                   // instant, so there is no history to resolve (RW9). A
+                   // retired permission authorises nobody, and AUT-Q7 does not
+                   // resurrect one.
                    && permission.IsActive
 
                    // UR10 — the third edge of the two-edge check. UR9 blocks the
@@ -236,7 +291,7 @@ public sealed class AuthorizationService : IAuthorizationService
                    // Defence in depth: a role that acquired a human-only
                    // permission through some path those two missed still cannot
                    // be exercised by a non-human.
-                   && (actorType == ActorType.Human
+                   && (holder.ActorType == ActorType.Human
                        || !permission.RequiresHumanActor)
 
                    // Exact scope match, when a scope was asked about. V1 is
@@ -249,12 +304,53 @@ public sealed class AuthorizationService : IAuthorizationService
 
                    && (permissionCode == null || permission.Code == permissionCode)
 
-               orderby assignment.EffectiveFrom, assignment.Id
-               select new Candidate(assignment, role, permission);
+               select new
+               {
+                   Assignment = assignment,
+                   Role = role,
+                   Permission = permission,
+                   Holder = holder,
+               };
+
+        // THE ORDERING IS A PARAMETER for exactly the reason the narrowing is:
+        // EF cannot translate an operator applied AFTER a projection to a named
+        // type, so a caller that ordered afterwards would throw at run time
+        // rather than fail to compile. The collation is the case that proves
+        // it — Collate() after the projection does not translate at all.
+        var ordered = order == CandidateOrder.Holder
+
+            // AUT-Q7 reads people, so it orders by person, then by the roles
+            // within them. Ordering here is what lets the grouping be a plain
+            // in-memory pass: GroupBy preserves encounter order.
+            ? rows
+                .OrderBy(x => EF.Functions.Collate(x.Holder.DisplayName, Collation))
+                .ThenBy(x => x.Holder.Id)
+                .ThenBy(x => EF.Functions.Collate(x.Role.Name, Collation))
+                .ThenBy(x => x.Role.Id)
+
+            // The reporting order, and the one that must not change: it decides
+            // WHICH assignment IsAllowedAsync names as the authority, and the
+            // audit record keeps that answer.
+            : rows
+                .OrderBy(x => x.Assignment.EffectiveFrom)
+                .ThenBy(x => x.Assignment.Id);
+
+        return ordered.Select(x => new Candidate(x.Assignment, x.Role, x.Permission, x.Holder));
+    }
+
+    /// <summary>
+    /// Which order a view needs. Not a preference: the reporting order decides
+    /// which assignment is recorded as having authorised an act.
+    /// </summary>
+    private enum CandidateOrder
+    {
+        Reporting,
+        Holder,
     }
 
     private sealed record Candidate(
         UserRole Assignment,
         Role Role,
-        Permission Permission);
+        Permission Permission,
+        User Holder);
 }
