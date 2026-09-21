@@ -4020,6 +4020,19 @@ AddPermissionToRole                    RemovePermissionFromRole
 2. **Add** `user.create`, which is human-only. The role's AUT-Q5 row now reads **Agent-assignable: No**.
 3. **Revoke** `user.create` with a reason. It leaves the table and the role is agent-assignable again.
 
+### Implementation notes
+
+- **This story changes the domain not at all.** `RolePermission.Create` and `Revoke` already said everything the pair needed, and `Revoke` had never been called by anything. The four new rules — RP6, ownership, the live-grant check and the permission's activity — each need a row the aggregate cannot see, so all four are the handler's (RG7). `RolePermissionRulesTests` is green on arrival and pins what AUT-C8 now depends on.
+- **Two abstractions were created, narrow on purpose.** `IRolePermissionRepository` and an `IPermissionRepository` returning existence, `IsActive` and `RequiresHumanActor`. The commands deliberately do **not** use AUT-Q6's reader: it is query infrastructure, keyed by neither id nor lock, shaped for a table.
+- **The RP6 query is the first in this codebase to filter `user_role.actor_type`.** Nothing else reads that column — AUT-Q5's holder count deliberately ignores actor type, and the authorisation predicate takes the actor type from `app_user`. Four mutants attack the query's shape, and one of them found a real gap: without the `ActorType == Agent` filter, **any** holder blocks the grant, so a human-held role could not acquire a human-only permission. A test now covers that ordinary case.
+- **The translator's unmapped example moved for the second time.** `An_unknown_unique_violation_survives_untranslated` used `IX_role_code` until AUT-C3 made it reachable and `ux_role_permission_active` until this story did. It now asks for a second System actor **through the change tracker**, colliding on `PK_app_user`. A first attempt used raw SQL and failed correctly: raw SQL bypasses `SaveChanges`, which is where the translator runs.
+- **A test was passing for the wrong reason.** `A_race_past_the_pre_check_reads_the_same_sentence` inserted the duplicate row *before* calling the command, so the **pre-check** caught it and the index was never reached — which is why unmapping RP2's index survived mutation. It now injects a repository blind to live grants, so the insert genuinely reaches `ux_role_permission_active`.
+  - **One mutant is equivalent and kept:** removing the pre-check leaves the index refusing with the identical sentence, which is RG6 working as designed. The two paths are indistinguishable by construction.
+- **AUT-Q6 had no client consumer at all** until AUT-C7's picker, which is what closed the open point recorded at the role administration slice. It stays API-only as a standalone surface: no Permissions page (RG9).
+- **`EditRoleDialog`'s description said a role's permissions are not its to change.** That is no longer true, and the copy is corrected.
+- **Two web traps worth remembering.** The roles module exports a `RolePermissions` **const** of permission codes *and* a `RolePermissions` **type** for one role's grants; a page needing both must alias one. And **JSX attribute strings do not process escapes** — `busyLabel="Adding\u2026"` is literal text, where `busyLabel={"Adding\u2026"}` is not.
+- **Four PostgreSQL and audit-schema facts caught tests, not the product:** `concat_ws` skips nulls rather than leaving an empty field; `user_role` has no `created_at`/`created_by`; the audit reference column is `ref_role`; and after a revocation a grant is the subject of **two** records, so a references assertion must name the event type.
+
 ### Not included
 
 - **UR9's enforcement** (RG10) — only the documentation claim is corrected.

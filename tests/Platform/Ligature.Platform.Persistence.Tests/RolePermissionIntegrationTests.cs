@@ -6,6 +6,8 @@ using Ligature.Platform.Application.Roles.Commands.CreateRole;
 using Ligature.Platform.Application.Roles.Commands.RemovePermissionFromRole;
 using Ligature.Platform.Application.Roles.Queries.RoleAdministration;
 using Ligature.Platform.Domain.Users;
+using Ligature.Platform.Persistence.Database;
+using Ligature.Platform.Persistence.Repositories;
 using Ligature.SharedKernel.Abstractions;
 using Ligature.SharedKernel.Exceptions;
 using Microsoft.Extensions.DependencyInjection;
@@ -128,7 +130,15 @@ public sealed class RolePermissionIntegrationTests : IClassFixture<ActivationDat
         Assert.Equal(1, await GrantCountAsync(role.RoleId));
     }
 
-    /// <summary>RG6: the index is the guarantee, and it reads the same sentence.</summary>
+    /// <summary>
+    /// RG6: THE INDEX IS THE GUARANTEE, and it answers with the same sentence.
+    ///
+    /// The race is staged rather than described: a repository that always
+    /// reports no live grant puts the command in the position of one whose
+    /// pre-check passed a moment before the row landed. Only then does the
+    /// insert reach ux_role_permission_active, which is the whole reason the
+    /// translator maps it.
+    /// </summary>
     [Fact]
     public async Task A_race_past_the_pre_check_reads_the_same_sentence()
     {
@@ -136,14 +146,30 @@ public sealed class RolePermissionIntegrationTests : IClassFixture<ActivationDat
         var role = await CreateRoleAsync(admin);
         var permission = await PermissionAsync("user.read");
 
-        // The pre-check passes: the row lands between it and the insert.
-        await ExecuteAsync(
-            $"""
-             INSERT INTO role_permission (id, role_id, permission_id, granted_at, granted_by)
-             VALUES ('{Guid.NewGuid()}', '{role.RoleId.Value}', '{permission.Value}', now(), '{User.SystemUserId.Value}');
-             """);
+        await AddAsync(admin, role.RoleId, permission);
 
-        Assert.Equal(AlreadyHeld, await RefusalAsync(() => AddAsync(admin, role.RoleId, permission)));
+        var refusal = await RefusalAsync(() => DispatchBlindAsync(admin, role.RoleId, permission));
+
+        Assert.Equal(AlreadyHeld, refusal);
+        Assert.Equal(1, await GrantCountAsync(role.RoleId));
+    }
+
+    /// <summary>
+    /// RG-A6, the case the actor-type filter exists for: a role held by a
+    /// HUMAN accepts a human-only permission. Without the filter every holder
+    /// would block the grant, which would refuse the ordinary case.
+    /// </summary>
+    [Fact]
+    public async Task A_human_only_permission_is_accepted_while_a_human_holds_the_role()
+    {
+        var admin = await SecurityAdminAsync();
+        var role = await CreateRoleAsync(admin);
+
+        await SeedHumanHolderAsync(role.RoleId);
+
+        await AddAsync(admin, role.RoleId, await PermissionAsync("user.create"));
+
+        Assert.Equal(1, await LiveGrantCountAsync(role.RoleId));
     }
 
     // ---------------------------------------------------------------- RG-A5
@@ -475,6 +501,48 @@ public sealed class RolePermissionIntegrationTests : IClassFixture<ActivationDat
         return await scope.ServiceProvider
             .GetRequiredService<ICommandDispatcher>()
             .SendAsync<TCommand, TResult>(command, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// The command, with its live-grant pre-check blinded, so the insert must
+    /// answer to the database. Everything else is the real stack.
+    /// </summary>
+    private async Task<AddPermissionToRoleResult> DispatchBlindAsync(
+        UserId caller, RoleId roleId, PermissionId permissionId)
+    {
+        var services = new ServiceCollection()
+            .AddPlatformApplication()
+            .AddPlatformPersistence(_database.ConnectionString);
+
+        services.AddScoped<IRolePermissionRepository>(
+            provider => new BlindToLiveGrants(
+                new RolePermissionRepository(provider.GetRequiredService<LigatureDbContext>())));
+
+        await using var provider = services.BuildServiceProvider(validateScopes: true);
+        using var scope = provider.CreateScope();
+
+        scope.ServiceProvider
+            .GetRequiredService<IExecutionContextInitializer>()
+            .Establish(caller, ActorType.Human, TestActorIdentity.Human());
+
+        return await scope.ServiceProvider
+            .GetRequiredService<ICommandDispatcher>()
+            .SendAsync<AddPermissionToRoleCommand, AddPermissionToRoleResult>(
+                new AddPermissionToRoleCommand(roleId, permissionId), CancellationToken.None);
+    }
+
+    private sealed class BlindToLiveGrants(IRolePermissionRepository inner) : IRolePermissionRepository
+    {
+        public Task<RolePermission?> FindLiveAsync(
+            RoleId roleId, PermissionId permissionId, CancellationToken cancellationToken)
+            => Task.FromResult<RolePermission?>(null);
+
+        public Task<RolePermission?> FindTrackedAsync(
+            RolePermissionId rolePermissionId, CancellationToken cancellationToken)
+            => inner.FindTrackedAsync(rolePermissionId, cancellationToken);
+
+        public Task AddAsync(RolePermission grant, CancellationToken cancellationToken)
+            => inner.AddAsync(grant, cancellationToken);
     }
 
     private ServiceProvider Provider()
