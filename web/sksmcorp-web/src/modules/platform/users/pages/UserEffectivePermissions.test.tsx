@@ -28,6 +28,7 @@ const at = (path: string) => new URL(path, window.location.origin).href;
 
 const USER_READ = definePermission("user.read");
 const ROLE_READ = RolePermissions.read;
+const DEACTIVATE = definePermission("user.deactivate");
 
 const ADA = {
   userId: "d1000000-0000-4000-8000-000000000001",
@@ -53,10 +54,13 @@ function backend(
 ): Backend {
   let setReads = 0;
 
+  // The SERVER's state, so a command can change it and the next read sees
+  // something different — which is what a transition test needs.
+  let status = options.status ?? ADA.status;
+  let permissions = options.permissions ?? PERMISSIONS;
+
   server.use(
-    http.get(at("/api/users/:userId"), () =>
-      HttpResponse.json({ ...ADA, status: options.status ?? ADA.status }),
-    ),
+    http.get(at("/api/users/:userId"), () => HttpResponse.json({ ...ADA, status })),
     http.get(at("/api/users/:userId/role-assignments"), () => HttpResponse.json({ assignments: [] })),
     http.get(at("/api/users/:userId/effective-permissions"), () => {
       setReads += 1;
@@ -65,12 +69,22 @@ function backend(
         return HttpResponse.json({ error: "The effective permissions could not be read." }, { status: 400 });
       }
 
-      return HttpResponse.json({
-        userId: ADA.userId,
-        status: options.status ?? ADA.status,
-        permissions: options.permissions ?? PERMISSIONS,
-      });
+      return HttpResponse.json({ userId: ADA.userId, status, permissions });
     }),
+
+    // USR-C4: deactivation empties the set, because the actor gate refuses an
+    // inactive user.
+    http.post(at("/api/users/:userId/deactivate"), () => {
+      status = "Inactive";
+      permissions = [];
+
+      return new HttpResponse(null, { status: 204 });
+    }),
+    http.get(at("/api/users/:userId/identities"), () => HttpResponse.json({ identities: [] })),
+    http.get(at("/api/users/:userId/sessions"), () => HttpResponse.json({ sessions: [] })),
+    http.get(at("/api/users"), () =>
+      HttpResponse.json({ users: [{ ...ADA, status }], page: 1, pageSize: 25, hasMore: false }),
+    ),
   );
 
   return { setReads: () => setReads };
@@ -173,6 +187,43 @@ describe("an empty set explains itself", () => {
 
     // And it must NOT claim the user is inactive, because they are not.
     expect(section.queryByText(/inactive/i)).toBeNull();
+  });
+});
+
+// -------------------------------------------------- the transition (UA-U3)
+
+describe("after a command changes what the user can do", () => {
+  /**
+   * THE DEFECT THIS TEST EXISTS FOR, found in the browser and not by any test
+   * here: after Deactivate, the page showed the user as Inactive while this
+   * section still read "No effective permissions." — the stale answer's
+   * explanation, not merely its data.
+   *
+   * No test in this file could have caught it, because none of them performed
+   * an action: the defect lives entirely in the transition. Nor could the
+   * mutation campaign, because a missing invalidation has no code to delete.
+   */
+  it("re-reads the set after the user is deactivated, and explains the new emptiness", async () => {
+    backend();
+    const { user } = await render([USER_READ, ROLE_READ, DEACTIVATE]);
+
+    const section = within(await screen.findByRole("region", { name: "Effective permissions" }));
+
+    await section.findByText("role.read");
+
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Deactivate" }));
+
+    const dialog = await screen.findByRole("dialog");
+
+    await user.type(within(dialog).getByRole("textbox", { name: /reason/i }), "No longer with us.");
+    await user.click(within(dialog).getByRole("button", { name: "Deactivate" }));
+
+    // The section says WHY it is now empty, rather than keeping the answer it
+    // was given while the user was still active.
+    expect(
+      await within(screen.getByRole("region", { name: "Effective permissions" })).findByText(/inactive/i),
+    ).toBeInTheDocument();
   });
 });
 

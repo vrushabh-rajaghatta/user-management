@@ -39,6 +39,13 @@ export function useReissueActivationLink() {
  * that user's role assignments, which deactivation revoked. Read again, never
  * patched in the cache. Their sessions too (SS8): deactivation ends them, and
  * after a reactivation the re-read is simply unchanged.
+ *
+ * AND THEIR EFFECTIVE PERMISSIONS (USR-Q3). Deactivation empties the set —
+ * the actor gate refuses an inactive user — and, because the section explains
+ * an empty set with the user's STATUS, a stale read does not merely show old
+ * data: it shows the wrong reason. Found in the browser, where the section
+ * still read "No effective permissions." for a user the page had just marked
+ * Inactive.
  */
 function useLifecycleMutation(mutationFn: (input: { userId: string; reason: string }) => Promise<unknown>) {
   const client = useQueryClient();
@@ -50,6 +57,7 @@ function useLifecycleMutation(mutationFn: (input: { userId: string; reason: stri
         client.invalidateQueries({ queryKey: userKeys.lists }),
         client.invalidateQueries({ queryKey: userKeys.roleAssignmentsOf(userId) }),
         client.invalidateQueries({ queryKey: userKeys.sessions(userId) }),
+        client.invalidateQueries({ queryKey: userKeys.effectivePermissions(userId) }),
       ]),
   });
 }

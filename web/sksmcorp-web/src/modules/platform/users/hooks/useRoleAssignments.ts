@@ -23,21 +23,29 @@ export function useGrantableRoles(enabled: boolean) {
  * Both commands change the assignments, so each reads them again from the
  * server afterwards. Nothing is manufactured in the client: the new row, and
  * every state, is the server's.
+ *
+ * AND BOTH CHANGE THE EFFECTIVE SET (USR-Q3), which is the whole point of
+ * granting a role: what the user can do is exactly what these commands
+ * altered. Invalidated here rather than on the page, so the Users list's
+ * Manage roles is covered as well as the detail page's.
  */
-export function useGrantRole(userId: string) {
+function useAssignmentMutation(mutationFn: typeof grantRole | typeof revokeRole, userId: string) {
   const client = useQueryClient();
 
   return useMutation({
-    mutationFn: grantRole,
-    onSuccess: () => client.invalidateQueries({ queryKey: userKeys.roleAssignmentsOf(userId) }),
+    mutationFn,
+    onSuccess: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: userKeys.roleAssignmentsOf(userId) }),
+        client.invalidateQueries({ queryKey: userKeys.effectivePermissions(userId) }),
+      ]),
   });
 }
 
-export function useRevokeRole(userId: string) {
-  const client = useQueryClient();
+export function useGrantRole(userId: string) {
+  return useAssignmentMutation(grantRole, userId);
+}
 
-  return useMutation({
-    mutationFn: revokeRole,
-    onSuccess: () => client.invalidateQueries({ queryKey: userKeys.roleAssignmentsOf(userId) }),
-  });
+export function useRevokeRole(userId: string) {
+  return useAssignmentMutation(revokeRole, userId);
 }
