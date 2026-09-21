@@ -17,6 +17,7 @@ using SKSMCorp.Platform.Application.Users.Commands.ReactivateUser;
 using SKSMCorp.Platform.Application.Users.Commands.RevokeRole;
 using SKSMCorp.Platform.Application.Users.Commands.ChangeUserEmail;
 using SKSMCorp.Platform.Application.Users.Commands.UpdateUserProfile;
+using SKSMCorp.Platform.Application.Users.Queries.EffectivePermissions;
 using SKSMCorp.Platform.Application.Users.Queries.UserIdentities;
 using SKSMCorp.Platform.Application.Users.Queries.MySessions;
 using SKSMCorp.Platform.Application.Users.Queries.UserSessions;
@@ -412,6 +413,11 @@ public static class DependencyInjection
 
         // AUT-Q7 — the reverse lookup, the second read requiring two permissions.
         services.AddQuery<WhoCanDoQuery, WhoCanDoResult, WhoCanDoQueryHandler>();
+
+        // USR-Q3 — one user's effective permission set. Third read requiring
+        // two permissions, and the only one that needed a catalogue amendment
+        // to get there (UA2).
+        services.AddQuery<UserEffectivePermissionsQuery, UserEffectivePermissionsResult, UserEffectivePermissionsQueryHandler>();
 
         // The grantable-role list: a Story 2 dependency of AUT-C1, not AUT-Q5.
         services.AddQuery<GrantableRolesQuery, GrantableRolesResult, GrantableRolesQueryHandler>();

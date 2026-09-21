@@ -17,6 +17,7 @@ import { ChangeEmailDialog } from "../components/ChangeEmailDialog";
 import { EditProfileDialog } from "../components/EditProfileDialog";
 import { ManageRolesDialog } from "../components/ManageRolesDialog";
 import { UserActionDialog, type UserAction } from "../components/UserActionDialog";
+import { UserEffectivePermissionsSection } from "../components/UserEffectivePermissionsSection";
 import { UserIdentitiesSection } from "../components/UserIdentitiesSection";
 import { UserRolesSection } from "../components/UserRolesSection";
 import { UserSessionsSection } from "../components/UserSessionsSection";
@@ -184,6 +185,11 @@ function UserDetail({ detail }: { readonly detail: UserProfile }) {
           }}
         />
       ) : null}
+
+      {/* USR-Q3 (UA2, UA8): BOTH codes. The route already required user.read,
+          so role.read is what this adds — and it is the boundary DV-7 and DV-8
+          established, expressed rather than assumed. */}
+      {can.manageRoles ? <UserEffectivePermissionsSection userId={detail.userId} /> : null}
 
       {canReadIdentities ? <UserIdentitiesSection userId={detail.userId} userStatus={detail.status} /> : null}
 

@@ -5,6 +5,7 @@ using SKSMCorp.Platform.Application.Roles.Queries.RoleAdministration;
 using SKSMCorp.Platform.Application.Roles.Queries.RoleMembers;
 using SKSMCorp.Platform.Application.Roles.Queries.RolePermissions;
 using SKSMCorp.Platform.Application.Roles.Queries.WhoCanDo;
+using SKSMCorp.Platform.Application.Users.Queries.EffectivePermissions;
 using SKSMCorp.SharedKernel.Abstractions;
 
 namespace SKSMCorp.Platform.Application.Tests.Dispatching;
@@ -139,6 +140,24 @@ public sealed class MultiPermissionQueryAuthorizationTests
     {
         Assert.Equal(["role.read", "user.read"], RoleMembersQuery.Authorization.PermissionCodes);
         Assert.Equal(["role.read", "user.read"], WhoCanDoQuery.Authorization.PermissionCodes);
+    }
+
+    /// <summary>
+    /// USR-Q3 is the third, and the only one that needed a CATALOGUE
+    /// AMENDMENT to get here (UA2): the frozen catalogue gives it user.read
+    /// alone, and this repository requires role.read as well because the
+    /// permissions it reports come from role assignments, which DV-7 and DV-8
+    /// already put behind role.read.
+    ///
+    /// The codes are asserted as a SET, because the declaration order decides
+    /// only which check runs first and the refusal names neither.
+    /// </summary>
+    [Fact]
+    public void The_access_summary_declares_both_codes_by_amendment()
+    {
+        Assert.Equal(
+            ["role.read", "user.read"],
+            UserEffectivePermissionsQuery.Authorization.PermissionCodes.OrderBy(x => x, StringComparer.Ordinal));
     }
 
     /// <summary>
