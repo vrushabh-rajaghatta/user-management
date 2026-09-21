@@ -136,6 +136,16 @@ public sealed class AuthorizationService : IAuthorizationService
     }
 
     /// <summary>
+    /// AUT-Q7's view: everyone who could exercise one permission at an instant
+    /// (RW2). The same evaluation as the other two, narrowed by code and not
+    /// by user.
+    /// </summary>
+    public Task<IReadOnlyList<PermissionHolder>?> WhoCanDoAsync(
+        WhoCanDoRequest request,
+        CancellationToken cancellationToken)
+        => throw new NotImplementedException("AUT-Q7 is not implemented yet.");
+
+    /// <summary>
     /// The actor gates, shared by both views: the user must exist and be
     /// active, and hold at least one active identity. Returns the actor's type,
     /// which UR10 needs, or null when the actor is not eligible at all.

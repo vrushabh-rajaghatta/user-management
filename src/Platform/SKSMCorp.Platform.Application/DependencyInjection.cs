@@ -29,6 +29,7 @@ using SKSMCorp.Platform.Application.Roles.Commands.UpdateRoleMetadata;
 using SKSMCorp.Platform.Application.Roles.Queries.PermissionCatalogue;
 using SKSMCorp.Platform.Application.Roles.Queries.RoleAdministration;
 using SKSMCorp.Platform.Application.Roles.Queries.RoleMembers;
+using SKSMCorp.Platform.Application.Roles.Queries.WhoCanDo;
 using SKSMCorp.Platform.Application.Roles.Queries.RolePermissions;
 using SKSMCorp.Platform.Application.Users.Queries.UsernameAvailability;
 using SKSMCorp.Platform.Application.Users.Queries.UserProfile;
@@ -408,6 +409,9 @@ public static class DependencyInjection
         // AUT-Q4 — who holds a role. The only read requiring two permissions
         // (RH9): role.read AND user.read.
         services.AddQuery<RoleMembersQuery, RoleMembersResult, RoleMembersQueryHandler>();
+
+        // AUT-Q7 — the reverse lookup, the second read requiring two permissions.
+        services.AddQuery<WhoCanDoQuery, WhoCanDoResult, WhoCanDoQueryHandler>();
 
         // The grantable-role list: a Story 2 dependency of AUT-C1, not AUT-Q5.
         services.AddQuery<GrantableRolesQuery, GrantableRolesResult, GrantableRolesQueryHandler>();

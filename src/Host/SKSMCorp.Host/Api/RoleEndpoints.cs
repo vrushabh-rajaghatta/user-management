@@ -9,6 +9,7 @@ using SKSMCorp.Platform.Application.Roles.Commands.UpdateRoleMetadata;
 using SKSMCorp.Platform.Application.Roles.Queries.PermissionCatalogue;
 using SKSMCorp.Platform.Application.Roles.Queries.RoleAdministration;
 using SKSMCorp.Platform.Application.Roles.Queries.RoleMembers;
+using SKSMCorp.Platform.Application.Roles.Queries.WhoCanDo;
 using SKSMCorp.Platform.Application.Roles.Queries.RolePermissions;
 using SKSMCorp.Platform.Domain.Users;
 
@@ -196,6 +197,30 @@ public static class RoleEndpoints
                 + "nobody holds is 200 and an empty list; a role that does not "
                 + "exist is 404. Only the global scope exists, so a 'scopeId' is "
                 + "refused.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status404NotFound)
+            .WithMetadata(new RequiresCarrier());
+
+        // AUT-Q7.
+        routes.MapGet("/api/permissions/{permissionCode}/holders", HoldersAsync)
+            .WithTags("Roles")
+            .WithSummary("Who could exercise a permission, at an instant.")
+            .WithDescription(
+                "Requires a carrier and BOTH the 'role.read' and 'user.read' "
+                + "permissions. Returns { asOf, permission, holders }, each "
+                + "holder exactly { userId, displayName, email, status, roles }, "
+                + "ordered by display name: everyone who could exercise the "
+                + "permission at 'asOf', which defaults to now. ONE ROW PER "
+                + "USER, with every authorising role named. 'asOf' resolves the "
+                + "assignment's period and revocation and the grant's "
+                + "lifecycle; the permission's own IsActive and the holders' "
+                + "status are CURRENT state, which the schema does not record "
+                + "historically. A permission nobody holds is 200 and an empty "
+                + "list, a retired permission is 200 with isActive false and an "
+                + "empty list, and an unknown code is 404. Only the global scope "
+                + "exists.")
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
@@ -510,6 +535,13 @@ public static class RoleEndpoints
             }),
         });
     }
+
+    private static Task<IResult> HoldersAsync(
+        string permissionCode,
+        HttpRequest request,
+        IQueryDispatcher dispatcher,
+        CancellationToken cancellationToken)
+        => throw new NotImplementedException("AUT-Q7 is not implemented yet.");
 
     private static async Task<IResult> CatalogueAsync(
         HttpRequest request,

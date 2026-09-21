@@ -23,4 +23,28 @@ public interface IAuthorizationService
     Task<IReadOnlyList<EffectivePermission>> EnumerateAsync(
         EffectivePermissionsRequest request,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// AUT-Q7 — everyone who could exercise one permission, at an instant.
+    ///
+    /// THE THIRD VIEW OVER THE SAME EVALUATION (RW2), and the reason it lives
+    /// here rather than in a reader of its own:
+    ///
+    ///     IsAllowedAsync   one user,  one permission
+    ///     EnumerateAsync   one user,  all permissions
+    ///     WhoCanDoAsync    all users, one permission
+    ///
+    /// A separate reader would be a second authorisation rule, and the drift
+    /// would be silent in both directions — naming people who cannot act, or
+    /// omitting people who can. The actor gates are part of the shared
+    /// evaluation for the same reason.
+    ///
+    /// Null when the permission code does not exist, which the route answers as
+    /// 404 (RW8); empty when it exists and nobody holds it. A RETIRED
+    /// permission exists and answers empty (RW9) — the shared predicate
+    /// requires an active permission, and this query does not resurrect one.
+    /// </summary>
+    Task<IReadOnlyList<PermissionHolder>?> WhoCanDoAsync(
+        WhoCanDoRequest request,
+        CancellationToken cancellationToken);
 }

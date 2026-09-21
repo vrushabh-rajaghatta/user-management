@@ -198,6 +198,13 @@ public sealed class MeQueryHandlerTests
             Calls++;
             return Task.FromResult(_permissions);
         }
+
+        // AUT-Q7's view. /me asks what the CALLER holds; the reverse lookup is
+        // a different question, and this double answers only the first.
+        public Task<IReadOnlyList<PermissionHolder>?> WhoCanDoAsync(
+            WhoCanDoRequest request,
+            CancellationToken cancellationToken)
+            => throw new NotSupportedException("This double does not answer AUT-Q7.");
     }
 
     private sealed class FixedPolicyResolver : ISecurityPolicyResolver
