@@ -1,6 +1,7 @@
 import { api } from "@/shared/api/client";
 import { createdRoleSchema, type CreateRoleForm } from "../schemas/createRole";
 import { type UpdateRoleForm } from "../schemas/updateRole";
+import { grantedPermissionSchema, permissionCatalogueSchema } from "../schemas/permissionCatalogue";
 import { rolePermissionsSchema, rolesSchema } from "../schemas/roles";
 
 /** AUT-Q5: GET /api/roles/administration, role.read. Not the grantable-role list. */
@@ -55,4 +56,21 @@ export const reactivateRole = (roleId: string) =>
   api.post(`/api/roles/${encodeURIComponent(roleId)}/reactivate`, {
     body: {},
     response: createdRoleSchema,
+  });
+
+/** AUT-Q6: GET /api/permissions, role.read. The release-owned catalogue. */
+export const listPermissionCatalogue = (signal?: AbortSignal) =>
+  api.get("/api/permissions", { response: permissionCatalogueSchema, signal });
+
+/** AUT-C7: POST /api/roles/{roleId}/permissions, role.manage. */
+export const addPermissionToRole = (roleId: string, permissionId: string) =>
+  api.post(`/api/roles/${encodeURIComponent(roleId)}/permissions`, {
+    body: { permissionId },
+    response: grantedPermissionSchema,
+  });
+
+/** AUT-C8: POST /api/role-permissions/{id}/revoke, role.manage. 204, so nothing to parse. */
+export const revokeRolePermission = (rolePermissionId: string, reason: string) =>
+  api.post(`/api/role-permissions/${encodeURIComponent(rolePermissionId)}/revoke`, {
+    body: { reason },
   });

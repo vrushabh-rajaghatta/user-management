@@ -1,6 +1,7 @@
 using Ligature.Platform.Application.Abstractions;
 using Ligature.Platform.Application.Audit;
 using Ligature.Platform.Application.Roles.Commands.DeactivateRole;
+using Ligature.Platform.Application.Roles.Commands.RemovePermissionFromRole;
 using Ligature.Platform.Application.Users.Commands.GrantRole;
 using Ligature.Platform.Application.Users.Commands.RevokeRole;
 using Ligature.Platform.Domain.Users;
@@ -77,6 +78,29 @@ public sealed class RoleAssignmentReasonTests
         Assert.Equal(0, unitOfWork.Calls);
     }
 
+    /// <summary>
+    /// AUT-C8 (RG5, RG-A11). PermissionRevokedFromRole is seeded
+    /// ReasonRequired, so a blank reason reaching the audit assembler would
+    /// fail AR9 as an emission defect — a 500 rather than a refusal.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task A_blank_permission_revocation_reason_is_refused_before_a_transaction_opens(string reason)
+    {
+        var unitOfWork = new CountingUnitOfWork();
+
+        var handler = new RemovePermissionFromRoleCommandHandler(
+            unitOfWork, new Untouched(), new Untouched(), new Untouched(),
+            new Untouched(), new Untouched(), new Untouched(), new Untouched());
+
+        await Assert.ThrowsAsync<BusinessRuleViolationException>(() => handler.Handle(
+            new RemovePermissionFromRoleCommand(RolePermissionId.New(), reason),
+            CancellationToken.None));
+
+        Assert.Equal(0, unitOfWork.Calls);
+    }
+
     private sealed class CountingUnitOfWork : IUnitOfWork
     {
         public int Calls { get; private set; }
@@ -92,7 +116,8 @@ public sealed class RoleAssignmentReasonTests
 
     /// <summary>Every collaborator the refusal must not reach.</summary>
     private sealed class Untouched
-        : IExecutionContext, IClock, IUserRepository, IRoleRepository, IUserRoleRepository, IAuditEvents
+        : IExecutionContext, IClock, IUserRepository, IRoleRepository, IUserRoleRepository,
+          IRolePermissionRepository, IPermissionRepository, IAuditEvents
     {
         public Task<User?> FindForUpdateAsync(UserId userId, CancellationToken cancellationToken) => throw new NotImplementedException();
         public Task<IReadOnlyList<UserRole>> FindForUserAsync(UserId userId, CancellationToken cancellationToken) => throw new NotImplementedException();
@@ -110,6 +135,11 @@ public sealed class RoleAssignmentReasonTests
         public Task<User?> FindAsync(UserId userId, CancellationToken cancellationToken) => throw Touched();
         public Task<Role?> FindAsync(RoleId roleId, CancellationToken cancellationToken) => throw Touched();
         public Task<Role?> FindTrackedAsync(RoleId roleId, CancellationToken cancellationToken) => throw Touched();
+        public Task<bool> HasActiveAgentAssignmentAsync(RoleId roleId, DateTimeOffset at, CancellationToken cancellationToken) => throw Touched();
+        public Task<RolePermission?> FindLiveAsync(RoleId roleId, PermissionId permissionId, CancellationToken cancellationToken) => throw Touched();
+        public Task<RolePermission?> FindTrackedAsync(RolePermissionId rolePermissionId, CancellationToken cancellationToken) => throw Touched();
+        public Task AddAsync(RolePermission grant, CancellationToken cancellationToken) => throw Touched();
+        public Task<PermissionFacts?> FindAsync(PermissionId permissionId, CancellationToken cancellationToken) => throw Touched();
         public Task<bool> ExistsWithCodeAsync(string code, CancellationToken cancellationToken) => throw Touched();
         public Task AddAsync(Role role, CancellationToken cancellationToken) => throw Touched();
         public Task AddAsync(UserRole assignment, CancellationToken cancellationToken) => throw Touched();

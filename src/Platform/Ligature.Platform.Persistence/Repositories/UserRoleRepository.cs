@@ -7,6 +7,32 @@ namespace Ligature.Platform.Persistence.Repositories;
 
 public sealed class UserRoleRepository : IUserRoleRepository
 {
+    /// <summary>
+    /// AUT-C7's half of the two-edge check (RP6). ACTIVE is the frozen
+    /// wording, implemented literally (RG3): not revoked, and within the
+    /// half-open period at the instant asked about — the same shape RA2's
+    /// holder count and the authorisation predicate use, with the actor type
+    /// added.
+    ///
+    /// A FUTURE agent assignment therefore does not count. That is a recorded
+    /// gap in RP6 itself, not an oversight here, and it is not quietly widened.
+    /// </summary>
+    public async Task<bool> HasActiveAgentAssignmentAsync(
+        RoleId roleId, DateTimeOffset at, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(roleId);
+
+        return await _dbContext.Set<UserRole>()
+            .AsNoTracking()
+            .AnyAsync(
+                x => x.RoleId == roleId
+                    && x.ActorType == ActorType.Agent
+                    && x.RevokedAt == null
+                    && x.EffectiveFrom <= at
+                    && (x.EffectiveTo == null || at < x.EffectiveTo),
+                cancellationToken);
+    }
+
     private readonly LigatureDbContext _dbContext;
 
     public UserRoleRepository(LigatureDbContext dbContext)

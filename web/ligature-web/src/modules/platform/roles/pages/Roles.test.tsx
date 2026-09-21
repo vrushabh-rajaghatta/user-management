@@ -15,10 +15,11 @@ import { TestSessionSource } from "@/test/sessions";
  * The derived values are the server's: the screen shows agentAssignable, it
  * never computes it.
  *
- * RA-U6 was "neither page offers an action" until AUT-C3 added New role and
- * AUT-C4 added Edit. It is now what it was always testing for (RM7): a caller
- * holding role.read and nothing else is offered no role-management action, and
- * the pages send only their reads.
+ * RA-U6 was "neither page offers an action" until AUT-C3 added New role,
+ * AUT-C4 added Edit, AUT-C5/C6 added the lifecycle and AUT-C7/C8 made the
+ * permissions table operational. It is now what it was always testing for
+ * (RM7): a caller holding role.read and nothing else is offered no
+ * role-management action, and the pages send only their reads.
  */
 
 const at = (path: string) => new URL(path, window.location.origin).href;
@@ -284,6 +285,11 @@ describe("the read-only caller", () => {
     expect(screen.queryByRole("button", { name: "Edit role" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Deactivate" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Reactivate" })).toBeNull();
+
+    // RG9: the permissions table is operational for role.manage, and for
+    // nobody else — neither the add nor any row's revoke.
+    expect(screen.queryByRole("button", { name: "Add permission" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Revoke/ })).toBeNull();
   });
 });
 

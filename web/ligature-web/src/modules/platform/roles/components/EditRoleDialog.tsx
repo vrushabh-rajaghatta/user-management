@@ -70,7 +70,7 @@ export function EditRoleDialog({ role, open, returnFocus, onClose, onClosed, onS
         <DialogHeader>
           <DialogTitle>Edit role</DialogTitle>
           <DialogDescription>
-            The name and description are this role&apos;s to change. Its code and its permissions are not.
+            The name and description are this role&apos;s to change. Its code is not; its permissions are changed below.
           </DialogDescription>
         </DialogHeader>
 

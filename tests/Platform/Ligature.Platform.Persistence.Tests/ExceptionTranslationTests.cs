@@ -111,8 +111,19 @@ public sealed class ExceptionTranslationTests
 
     /// <summary>
     /// A unique violation on a constraint the translator does not know must
-    /// arrive intact. Here it is IX_role_code — a real 23505 that no command
-    /// currently produces, so translating it would be guessing.
+    /// arrive intact.
+    ///
+    /// THIS TEST'S EXAMPLE KEEPS MOVING, AND THAT IS THE POINT. It was
+    /// IX_role_code until AUT-C3 made that reachable, then RP2's live-grant
+    /// index until AUT-C7 made THAT reachable. Each time the constraint was
+    /// mapped by the story whose command could finally reach it, and this test
+    /// moved to one still out of reach — a wording written blind is a wording
+    /// nothing tests.
+    ///
+    /// It is now the app_user primary key, reached by asking for a second
+    /// System actor: User.CreateSystem always uses the one fixed id, so the
+    /// insert collides. No command creates a user with an id it did not
+    /// generate, so nothing but a deliberate act like this one raises it.
     /// </summary>
     [Fact]
     public async Task An_unknown_unique_violation_survives_untranslated()
@@ -122,45 +133,20 @@ public sealed class ExceptionTranslationTests
         await using var context = CreateContext();
         var unitOfWork = new UnitOfWork(context);
 
-        // RP2's live-grant index, which the translator deliberately does not
-        // map: no command reaches it yet, and it belongs to AUT-C7. It replaces
-        // IX_role_code as this test's example, because AUT-C3 makes that one
-        // reachable, so it is translated now (the test below).
-        var role = NewRole($"dup-grant-{Guid.NewGuid():N}"[..24]);
+        var failure = await Assert.ThrowsAsync<DbUpdateException>(
+            () => unitOfWork.ExecuteInTransactionAsync(
+                _ =>
+                {
+                    context.Add(User.CreateSystem(Now));
 
-        try
-        {
-            context.Add(role);
-            await context.SaveChangesAsync(CancellationToken.None);
+                    return Task.FromResult(User.SystemUserId);
+                },
+                CancellationToken.None));
 
-            var permissionId = await FirstPermissionIdAsync();
+        var postgres = Assert.IsType<PostgresException>(failure.InnerException);
 
-            context.Add(RolePermission.Create(
-                RolePermissionId.New(), role.Id, permissionId, Now, User.SystemUserId));
-
-            await context.SaveChangesAsync(CancellationToken.None);
-
-            var failure = await Assert.ThrowsAsync<DbUpdateException>(
-                () => unitOfWork.ExecuteInTransactionAsync(
-                    _ =>
-                    {
-                        context.Add(RolePermission.Create(
-                            RolePermissionId.New(), role.Id, permissionId, Now, User.SystemUserId));
-
-                        return Task.FromResult(role.Id);
-                    },
-                    CancellationToken.None));
-
-            var postgres = Assert.IsType<PostgresException>(failure.InnerException);
-
-            Assert.Equal("23505", postgres.SqlState);
-            Assert.Equal("ux_role_permission_active", postgres.ConstraintName);
-        }
-        finally
-        {
-            await DeleteGrantsAsync(role.Id);
-            await DeleteRoleAsync(role.Id);
-        }
+        Assert.Equal("23505", postgres.SqlState);
+        Assert.Equal("PK_app_user", postgres.ConstraintName);
     }
 
     /// <summary>

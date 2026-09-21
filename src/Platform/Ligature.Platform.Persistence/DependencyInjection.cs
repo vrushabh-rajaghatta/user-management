@@ -112,6 +112,8 @@ public static class DependencyInjection
         services.AddScoped<IRoleRepository, RoleRepository>();
 
         services.AddScoped<IUserRoleRepository, UserRoleRepository>();
+        services.AddScoped<IRolePermissionRepository, RolePermissionRepository>();
+        services.AddScoped<IPermissionRepository, PermissionRepository>();
 
         // The audit writer: scoped, on the same DbContext as the command, so
         // it writes on the transaction behaviour 6 opened. Registered against

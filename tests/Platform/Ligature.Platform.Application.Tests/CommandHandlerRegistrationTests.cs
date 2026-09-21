@@ -248,6 +248,8 @@ public sealed class CommandHandlerRegistrationTests
         services.AddScoped<IUserSessionRepository, StubUserSessionRepository>();
         services.AddScoped<IRoleRepository, StubRoleRepository>();
         services.AddScoped<IUserRoleRepository, StubUserRoleRepository>();
+        services.AddScoped<IRolePermissionRepository, StubRolePermissionRepository>();
+        services.AddScoped<IPermissionRepository, StubPermissionRepository>();
         services.AddScoped<IAuditEventCatalogue, StubAuditEventCatalogue>();
         services.AddScoped<IAuditRecordWriter, StubAuditRecordWriter>();
         services.AddScoped<IAutonomousAuditRecordWriter, StubAutonomousWriter>();
@@ -470,6 +472,27 @@ public sealed class CommandHandlerRegistrationTests
             => throw new NotSupportedException();
 
         public Task<UserRole?> FindAsync(UserRoleId assignmentId, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<bool> HasActiveAgentAssignmentAsync(RoleId roleId, DateTimeOffset at, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+    }
+
+    private sealed class StubRolePermissionRepository : IRolePermissionRepository
+    {
+        public Task<RolePermission?> FindLiveAsync(RoleId roleId, PermissionId permissionId, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<RolePermission?> FindTrackedAsync(RolePermissionId rolePermissionId, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task AddAsync(RolePermission grant, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+    }
+
+    private sealed class StubPermissionRepository : IPermissionRepository
+    {
+        public Task<PermissionFacts?> FindAsync(PermissionId permissionId, CancellationToken cancellationToken)
             => throw new NotSupportedException();
     }
 
