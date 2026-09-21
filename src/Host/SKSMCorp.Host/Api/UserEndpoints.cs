@@ -10,6 +10,7 @@ using SKSMCorp.Platform.Application.Users.Commands.ReissueActivationLink;
 using SKSMCorp.Platform.Application.Users.Commands.RevokeUserSessions;
 using SKSMCorp.Platform.Application.Users.Commands.UpdateUserProfile;
 using SKSMCorp.Platform.Application.Users.Queries.UserList;
+using SKSMCorp.Platform.Application.Users.Queries.EffectivePermissions;
 using SKSMCorp.Platform.Application.Users.Queries.UserProfile;
 using SKSMCorp.Platform.Domain.Users;
 
@@ -149,6 +150,27 @@ public static class UserEndpoints
                 + "from /api/users/{userId}/role-assignments under 'role.read'. "
                 + "Human users only: an unknown user, the System actor and a "
                 + "missing permission are 400. Not audited.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .WithMetadata(new RequiresCarrier());
+
+        // USR-Q3.
+        routes.MapGet("/api/users/{userId:guid}/effective-permissions", EffectivePermissionsAsync)
+            .WithTags("Users")
+            .WithSummary("What one user can currently do.")
+            .WithDescription(
+                "Requires a carrier and BOTH the 'user.read' and 'role.read' "
+                + "permissions — a recorded amendment to the catalogue, which "
+                + "gives this read 'user.read' alone: it exposes the permissions "
+                + "that role assignments produce, and those live behind "
+                + "'role.read'. Returns { userId, status, permissions }, each "
+                + "permission exactly { code, scopeType, scopeId }, ordered by "
+                + "code and deduplicated across roles. NO ROLES: those are read "
+                + "from /api/users/{userId}/role-assignments. The set is the "
+                + "CURRENT one; status is current too, and is what tells an "
+                + "inactive user's empty set from an active user's. An unknown "
+                + "user and the System actor are 400. Not audited.")
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
@@ -444,7 +466,14 @@ public static class UserEndpoints
 
     private sealed record UserLifecycleRequest(string? Reason);
 
+    private static Task<IResult> EffectivePermissionsAsync(
+        Guid userId,
+        IQueryDispatcher dispatcher,
+        CancellationToken cancellationToken)
+        => throw new NotImplementedException("USR-Q3 is not implemented yet.");
+
     private static async Task<IResult> GetAsync(
+
         Guid userId,
         IQueryDispatcher dispatcher,
         CancellationToken cancellationToken)
