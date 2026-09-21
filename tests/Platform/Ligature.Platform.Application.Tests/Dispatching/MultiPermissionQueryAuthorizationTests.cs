@@ -103,18 +103,26 @@ public sealed class MultiPermissionQueryAuthorizationTests
     // ------------------------------------------------ start-up verification
 
     /// <summary>
-    /// RH-A11, the second layer: the verifier refuses the same states, so a
-    /// classification built by some future path that bypassed the factory
-    /// still cannot reach a running application.
+    /// RH-A11, the second layer. The verifier accepts a well-formed set and
+    /// still refuses a missing classification.
+    ///
+    /// THE EMPTY AND BLANK CASES CANNOT BE ASSERTED HERE, and that is the
+    /// design rather than a gap: the factories are the only way to obtain a
+    /// classification, and they now refuse both — so no query type can present
+    /// one to the verifier. Its guards are unreachable by construction,
+    /// exactly as the pre-existing blank single-code guard already was, and
+    /// they are kept for the same reason §11 wants two layers: the first is
+    /// the one that can be bypassed by adding a path, and the second is what
+    /// would catch it.
     /// </summary>
     [Fact]
-    public void The_verifier_refuses_a_set_that_names_no_usable_permission()
+    public void The_verifier_accepts_a_set_and_still_refuses_a_missing_classification()
     {
-        Assert.NotNull(QueryAuthorizationVerification.ProblemWith(
-            typeof(DeclaresNothing), QueryAuthorization.Required("role.read", "  ")));
-
         Assert.Null(QueryAuthorizationVerification.ProblemWith(
             typeof(DeclaresTwo), QueryAuthorization.Required("role.read", "user.read")));
+
+        Assert.NotNull(QueryAuthorizationVerification.ProblemWith(
+            typeof(DeclaresNothing), authorization: null));
     }
 
     /// <summary>

@@ -56,6 +56,32 @@ public sealed record QueryAuthorization
     {
         ArgumentNullException.ThrowIfNull(permissionCodes);
 
+        // An EMPTY SET is the "somebody left this blank" state wearing the
+        // shape of a positive declaration, and it is refused for the same
+        // reason a nullable permission code is: it would make the most
+        // consequential state in the system the one you get by not typing
+        // anything.
+        if (permissionCodes.Length == 0)
+        {
+            throw new ArgumentException(
+                "A required classification must name at least one permission. "
+                + "Declare NotRequired for a query that is deliberately open.",
+                nameof(permissionCodes));
+        }
+
+        // ANYWHERE in the set, not merely the first: a blank code in any
+        // position is a permission nobody can hold, and enforcing it would
+        // refuse every caller for a reason no one declared.
+        foreach (var code in permissionCodes)
+        {
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                throw new ArgumentException(
+                    "A required classification cannot name a blank permission.",
+                    nameof(permissionCodes));
+            }
+        }
+
         return new QueryAuthorization(true, [.. permissionCodes]);
     }
 

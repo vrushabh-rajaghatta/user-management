@@ -7,9 +7,13 @@ import { ApiError } from "@/shared/api/errors";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { Page } from "@/shared/components/Page";
 import { useCan } from "@/shared/auth/useCan";
+// One module using another's public surface, as RA8 established in the
+// other direction: AUT-Q4 needs user.read as well as role.read (RH9).
+import { UserPermissions } from "@/modules/platform/users";
 import { EditRoleDialog } from "../components/EditRoleDialog";
 import { AddPermissionDialog } from "../components/AddPermissionDialog";
 import { RevokePermissionDialog } from "../components/RevokePermissionDialog";
+import { RoleHoldersSection } from "../components/RoleHoldersSection";
 import { RoleLifecycleDialog } from "../components/RoleLifecycleDialog";
 import { useRolePermissions, useRoles } from "../hooks/useRoles";
 // Aliased: the module also exports a RolePermissions CONST of permission
@@ -37,6 +41,10 @@ export function RoleDetailPage() {
 
   // AUT-C4 (RM-U1). An affordance, never authorization: the command decides.
   const canManage = useCan(RolePermissions.manage);
+
+  // RH9: AUT-Q4 requires BOTH codes, so the section is mounted only for a
+  // caller holding both — and the request is never made without them.
+  const canReadUsers = useCan(UserPermissions.read);
   const [editing, setEditing] = useState<{ open: boolean } | undefined>(undefined);
   const [lifecycle, setLifecycle] = useState<{ open: boolean } | undefined>(undefined);
   const [announcement, setAnnouncement] = useState("");
@@ -149,9 +157,6 @@ export function RoleDetailPage() {
 
         <dt className="text-muted-foreground">Agent-assignable</dt>
         <dd>{role.agentAssignable ? "Yes" : "No"}</dd>
-
-        <dt className="text-muted-foreground">Holders</dt>
-        <dd>{role.activeHolderCount}</dd>
       </dl>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -210,6 +215,10 @@ export function RoleDetailPage() {
           ))}
         </TableBody>
       </Table>
+
+      {/* RH10: the count that used to sit dead in the metadata list now names
+          the people, read at one instant with them. RH11: read-only. */}
+      {canReadUsers ? <RoleHoldersSection roleId={roleId} canOpenUsers={canReadUsers} /> : null}
 
       {adding === undefined ? null : (
         <AddPermissionDialog

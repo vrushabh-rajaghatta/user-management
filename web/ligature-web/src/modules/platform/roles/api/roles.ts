@@ -2,6 +2,7 @@ import { api } from "@/shared/api/client";
 import { createdRoleSchema, type CreateRoleForm } from "../schemas/createRole";
 import { type UpdateRoleForm } from "../schemas/updateRole";
 import { grantedPermissionSchema, permissionCatalogueSchema } from "../schemas/permissionCatalogue";
+import { roleMembersSchema } from "../schemas/roleMembers";
 import { rolePermissionsSchema, rolesSchema } from "../schemas/roles";
 
 /** AUT-Q5: GET /api/roles/administration, role.read. Not the grantable-role list. */
@@ -19,6 +20,18 @@ export const listRoles = (includeInactive: boolean, signal?: AbortSignal) =>
 export const getRolePermissions = (roleId: string, signal?: AbortSignal) =>
   api.get(`/api/roles/${encodeURIComponent(roleId)}/permissions`, {
     response: rolePermissionsSchema,
+    signal,
+  });
+
+/**
+ * AUT-Q4: GET /api/roles/{roleId}/members, role.read AND user.read (RH9). The
+ * current instant only: asOf is the contract's, and this screen asks about now
+ * (RH4). A role that does not exist answers 404, which reaches the caller as an
+ * ApiError.
+ */
+export const getRoleMembers = (roleId: string, signal?: AbortSignal) =>
+  api.get(`/api/roles/${encodeURIComponent(roleId)}/members`, {
+    response: roleMembersSchema,
     signal,
   });
 

@@ -106,7 +106,10 @@ public sealed class RoleMembersReadTests : IClassFixture<ActivationDatabase>
         await AssignAsync(active, roleId, from: Past, to: null);
         await AssignAsync(future, roleId, from: asOf.AddDays(1), to: null);
         await AssignAsync(ended, roleId, from: Past, to: asOf.AddDays(-1));
-        await AssignAsync(revoked, roleId, from: Past, to: null, revoked: true);
+        // Revoked BEFORE the instant asked about. A revocation after it is a
+        // different case, and the holding was still held then — see
+        // AsOf_answers_the_holdings_live_at_that_instant.
+        await AssignAsync(revoked, roleId, from: Past, to: null, revokedAt: asOf.AddDays(-1));
 
         var members = (await MembersAsync(caller, roleId, asOf)).Members!;
         var held = members.Select(x => x.UserId).ToList();

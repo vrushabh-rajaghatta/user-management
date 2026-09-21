@@ -131,7 +131,9 @@ describe("who sees the holders", () => {
 
     // NOT MERELY HIDDEN: the request is never made. A section rendered and
     // then discarded would still have disclosed the directory.
-    await waitFor(() => expect(api.memberReads()).toBe(0));
+    await waitFor(() => {
+      expect(api.memberReads()).toBe(0);
+    });
   });
 
   /**
@@ -153,7 +155,9 @@ describe("who sees the holders", () => {
 
     expect(screen.queryByRole("heading", { name: "Holders" })).toBeNull();
     expect(screen.queryByRole("table", { name: "Permissions" })).toBeNull();
-    await waitFor(() => expect(api.memberReads()).toBe(0));
+    await waitFor(() => {
+      expect(api.memberReads()).toBe(0);
+    });
   });
 });
 
@@ -237,7 +241,9 @@ describe("a failed read", () => {
 
     (await screen.findByRole("button", { name: /Try again/i })).click();
 
-    await waitFor(() => expect(api.memberReads()).toBeGreaterThan(before));
+    await waitFor(() => {
+      expect(api.memberReads()).toBeGreaterThan(before);
+    });
   });
 });
 

@@ -8,6 +8,7 @@ using Ligature.Platform.Application.Roles.Commands.ReactivateRole;
 using Ligature.Platform.Application.Roles.Commands.UpdateRoleMetadata;
 using Ligature.Platform.Application.Roles.Queries.PermissionCatalogue;
 using Ligature.Platform.Application.Roles.Queries.RoleAdministration;
+using Ligature.Platform.Application.Roles.Queries.RoleMembers;
 using Ligature.Platform.Application.Roles.Queries.RolePermissions;
 using Ligature.Platform.Domain.Users;
 
@@ -445,12 +446,70 @@ public static class RoleEndpoints
         });
     }
 
-    private static Task<IResult> MembersAsync(
+    private static async Task<IResult> MembersAsync(
         Guid roleId,
         HttpRequest request,
         IQueryDispatcher dispatcher,
         CancellationToken cancellationToken)
-        => throw new NotImplementedException("AUT-Q4 is not implemented yet.");
+    {
+        var instants = request.Query["asOf"];
+        DateTimeOffset? asOf = null;
+
+        if (instants.Count == 1
+            && DateTimeOffset.TryParse(
+                instants[0],
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                out var parsed))
+        {
+            asOf = parsed;
+        }
+        else if (instants.Count != 0)
+        {
+            return Results.BadRequest(new { Error = "asOf must be one ISO-8601 instant." });
+        }
+
+        // RH3: the parameter is part of the frozen contract and no value of it
+        // is valid, so it is parsed only far enough to be refused by the query
+        // — which is where the rule lives. A value that is not even a GUID is
+        // refused for the same reason, and with the same sentence: what is
+        // wrong with it is that it was supplied at all.
+        var scopes = request.Query["scopeId"];
+        Guid? scopeId = null;
+
+        if (scopes.Count != 0)
+        {
+            scopeId = Guid.TryParse(scopes[0], out var scope) ? scope : Guid.Empty;
+        }
+
+        var result = await dispatcher.SendAsync<RoleMembersQuery, RoleMembersResult>(
+            new RoleMembersQuery(new RoleId(roleId), asOf, scopeId),
+            cancellationToken);
+
+        // RH8, as AUT-Q3 does it. The body is what tells this apart from a
+        // route that does not exist, which answers 404 with nothing.
+        if (!result.RoleExists)
+            return Results.NotFound(new { Error = "The role does not exist." });
+
+        return Results.Ok(new
+        {
+            result.AsOf,
+            result.ActiveHolderCount,
+            Members = result.Members!.Select(x => new
+            {
+                AssignmentId = x.AssignmentId.Value,
+                UserId = x.UserId.Value,
+                x.DisplayName,
+                x.Email,
+                Status = x.Status.ToString(),
+                x.EffectiveFrom,
+                x.EffectiveTo,
+                x.AssignedAt,
+                AssignedBy = new { UserId = x.AssignedBy.UserId.Value, x.AssignedBy.DisplayName },
+                x.AssignmentReason,
+            }),
+        });
+    }
 
     private static async Task<IResult> CatalogueAsync(
         HttpRequest request,

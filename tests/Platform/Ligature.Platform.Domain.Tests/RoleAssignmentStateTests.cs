@@ -96,6 +96,27 @@ public sealed class RoleAssignmentStateTests
         Assert.Equal(RoleAssignmentState.Revoked, assignment.StateAt(Start.AddDays(1)));
     }
 
+    /// <summary>
+    /// REVOCATION IS NOT RETROACTIVE. Asked about an instant before the
+    /// revocation, the derivation answers what was true then; asked at it or
+    /// after, Revoked. AUT-Q4 is the first caller to ask about a past instant,
+    /// and it is the access review that depends on the answer: a holder who
+    /// held a role all last year did hold it, whatever was decided since.
+    /// </summary>
+    [Fact]
+    public void A_revocation_does_not_reach_back_before_itself()
+    {
+        var revokedAt = Start.AddDays(10);
+
+        Assert.Equal(RoleAssignmentState.Active, State(Start, null, revokedAt, revokedAt.AddTicks(-1)));
+        Assert.Equal(RoleAssignmentState.Revoked, State(Start, null, revokedAt, revokedAt));
+        Assert.Equal(RoleAssignmentState.Revoked, State(Start, null, revokedAt, revokedAt.AddTicks(1)));
+
+        // Before the period began it is still Future, not Active and not
+        // Revoked: the revocation had not happened, and neither had the grant.
+        Assert.Equal(RoleAssignmentState.Future, State(Start, null, revokedAt, Start.AddTicks(-1)));
+    }
+
     private static RoleAssignmentState State(
         DateTimeOffset from, DateTimeOffset? to, DateTimeOffset? revokedAt, DateTimeOffset now)
         => RoleAssignmentStates.At(from, to, revokedAt, now);
