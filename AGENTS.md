@@ -336,6 +336,14 @@ The activation token is written to `.secrets/bootstrap.token`, which is
 gitignored. Re-running reports that provisioning is already complete and leaves
 any existing token alone.
 
+**It addresses the project with the Compose files that created it**, read back
+from the containers' labels rather than assumed. The development overlay pins
+the default network's subnet, so the base file alone describes a different
+network, and Compose will stop the database to recreate it. A one-off
+`docker compose run` against an environment `./up.sh` started needs both `-f`
+flags for the same reason. With no project yet it uses the base file; when it
+cannot tell, it refuses and changes nothing.
+
 `docker/Dockerfile` builds **four** images from one source tree: `host`,
 `migrator`, `audit-schema` and `provisioner`. They are separate because §4 and this section keep
 schema and seed data out of the host — a host image that migrated on startup

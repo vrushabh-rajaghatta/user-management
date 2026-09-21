@@ -36,15 +36,61 @@ else
     TOKEN_EXISTED=no
 fi
 
+refuse() {
+    echo "    $1" >&2
+    echo >&2
+    echo "    Recreate the environment, which keeps the database, and try again:" >&2
+    echo "      docker compose -f compose.yaml -f compose.dev.yaml down" >&2
+    echo "      ./up.sh" >&2
+    exit 1
+}
+
+# The project must be addressed with the files it was CREATED with. ./up.sh
+# adds compose.dev.yaml, which pins the default network's subnet, so the base
+# file alone describes a different network: Compose stops the database to
+# recreate it, fails because the API and web containers are still attached, and
+# never runs the provisioner. Compose records the files on every container it
+# creates, so they are read back rather than guessed — hard-coding the overlay
+# would break a project started from the base file in exactly the same way.
+COMPOSE=(docker compose)
+
+CONTAINERS="$(docker compose ps --all --quiet)"
+
+if [ -n "$CONTAINERS" ]; then
+    # Unquoted on purpose: one identifier per word.
+    # shellcheck disable=SC2086
+    FILE_SETS="$(docker inspect \
+        --format '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' \
+        $CONTAINERS | sort -u)"
+
+    if [ -z "$FILE_SETS" ]; then
+        refuse "The project's containers do not say which Compose files created them."
+    fi
+
+    if [ "$(printf '%s\n' "$FILE_SETS" | wc -l)" -ne 1 ]; then
+        refuse "The project's containers were created from different sets of Compose files."
+    fi
+
+    IFS=',' read -r -a FILES <<< "$FILE_SETS"
+
+    for file in "${FILES[@]}"; do
+        if [ ! -f "$file" ]; then
+            refuse "The project was created with ${file}, which no longer exists."
+        fi
+
+        COMPOSE+=(-f "$file")
+    done
+fi
+
 # Built explicitly. `docker compose up` and a bare `docker compose build` both
 # skip this service because it sits behind a profile, so without this a source
 # change would leave a stale provisioner image that `run` would happily reuse.
-docker compose --profile bootstrap build provisioner
+"${COMPOSE[@]}" --profile bootstrap build provisioner
 
 # The tool writes the token owner-only and refuses to clobber an existing file.
 # It is idempotent: on an already-provisioned database it reports so, changes
 # nothing, and leaves any previous token alone.
-docker compose --profile bootstrap run --rm provisioner \
+"${COMPOSE[@]}" --profile bootstrap run --rm provisioner \
     "$@" --activation-token-out "/secrets/${TOKEN_FILE}"
 
 echo
