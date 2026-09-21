@@ -4044,6 +4044,151 @@ AddPermissionToRole                    RemovePermissionFromRole
 
 ---
 
+## AUT-Q4 GetRoleMembers — who holds this role, and the Holders section
+
+**Status:** Contract frozen 2026-09-21 by owner decision (RH1–RH14). **Read-only.** No assignment is created, revoked or altered, no role or permission changes, and no audit record is written.
+
+### Requirement
+
+A caller holding **both `role.read` and `user.read`** reads the people who hold one role at an instant, with each holding's dates and the reason it was granted.
+
+```text
+AUT-Q4 GetRoleMembers    the role-scoped read of who holds a role
+```
+
+**The purpose is the access-review question, not a safety check before deactivation.**
+
+> AUT-Q4 is the role-scoped operational read of role assignments. Its primary purpose is role administration and access-review visibility; it is **not** a prerequisite for role deactivation.
+
+This is stated because the query catalogue's note — *"Call before AUT-C5 to warn about stranding holders"* — was examined at the AUT-C5/C6 gate and **rejected**. RD2 took the count from AUT-Q5 instead, and RD3 established that deactivation revokes nobody's access, so there is no stranding to warn about. RA7's deferral of AUT-Q4 *"with AUT-C5/C6"* therefore expired without being needed. The justification that survives is the design specification's own question — *"Who holds which role, where, and for how long?"* — and slice 4's goal of *"access review reports available"*.
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **RH1** | **AUT-Q4 is built now, on the access-review justification above.** The stranding argument is not revived, and does not appear in this contract or in any user-facing copy. |
+| **RH2** | **AUT-Q4 and REV-Q1 are two query contracts over one derivation.** REV-Q1 `GetAccessReviewReport` asks the same question of the same tables (`ScopeId, RoleId, asOf`) under `accessreview.read`, and is the broader, exportable compliance surface. They differ in audience, authorisation and output — legitimately — but **must not maintain independent assignment-state derivations.** Both resolve assignment state through `RoleAssignmentStates.At`, the platform's single derivation, and REV-Q1 is expected to reuse this story's reader rather than write a second one. Recorded now so REV-Q1 cannot reinvent AUT-Q4 by accident. |
+| **RH3** | **`ScopeId` is kept in the query contract, and only the global scope exists.** The catalogue names the parameter, and removing it would be a contract change for no gain. V1 has one scope: `GrantRoleCommandHandler` hardcodes `ScopeType.Global`, and nothing else creates an assignment. **No non-global scope semantics are introduced here:** the query applies no scope predicate, projects no scope, and **refuses a supplied `scopeId`** — a value names a scope that cannot exist. |
+| **RH4** | **`asOf`, and no `includeInactive`.** The catalogue is explicit — *"Active at asOf"*. AUT-Q2's `includeInactive` model is deliberately **not** imported: it answers *"this user's assignments, optionally including inactive ones"*, where AUT-Q4 answers *"who holds this role at this instant"*. Only assignments **Active at `asOf`** are returned. `asOf` defaults to the current instant. |
+| **RH5** | **One row per active assignment; `activeHolderCount` is distinct users.** The dates and the reason are properties of the **assignment**, not of the person, so the assignment is the result identity. The count keeps RA2's meaning — distinct holders — rather than quietly becoming a row count. |
+| **RH6** | **The holder's `status` is returned and never filters.** Membership is determined by the assignment (`user_role`), exactly as RA2 determines the count; `app_user.Status` is projection only. The count deliberately does not join `app_user`, and the member read necessarily does, because it must name the person — **a projection difference, not a change to the membership predicate.** An anomalous holder is therefore made visible rather than hidden. |
+| **RH7** | **No paging**, following AUT-Q5. The complete membership of the requested role at `asOf` is returned. A generic pagination model is not introduced on the strength of a hypothetical large tenant; if evidence later requires paging, that is its own contract decision. |
+| **RH8** | **An unknown role is `404` — *"The role does not exist."*** AUT-Q3 is the direct sibling: both take a role as their primary resource, and RA11 already established the mechanism. The standing divergence with AUT-Q2's `400` is a recorded Known Gap and is **not** reconciled inside this story. |
+| **RH9** | **`role.read` AND `user.read`, both required.** Deliberately stricter than the catalogue's single `role.read`. This is the first read that turns **a role into named people**, and the precedent is already in the platform: PRV-C1 Amendment 1 granted `security-administrator` `user.read` *for visibility*, one-way. `role.read` establishes authority to inspect the role; `user.read` establishes authority to see the people in the answer. **This is AND, not OR** — either alone is refused. It keeps a role-administration permission from becoming an indirect user directory. Recorded as a change-control amendment to the query catalogue. |
+| **RH10** | **A Holders section on the role detail page**, read-only, with no separate Role members page. Each row links to that user's detail page, and **the link states its permission condition explicitly** rather than relying on the incidental fact that RH9 already required `user.read`. |
+| **RH11** | **No action on a holder row.** Revoking belongs to AUT-C2, whose commands and `role.revoke` permission are the users module's. *AUT-Q4 reports who holds the role; AUT-C2 remains responsible for changing that.* |
+| **RH12** | **Not audited**, as every read is (RA-A11). Exposing people does not by itself make a read an audit event; authorisation controls the disclosure. |
+| **RH13** | **A query may declare more than one required permission, and all must hold.** `QueryAuthorization` is single-code by construction, and declaring `role.read` while checking `user.read` inside the handler would make the declaration a half-truth — the precise failure architecture §11 exists to prevent (*"a handler that forgets its authorization check fails silently — it serves the data"*). The classification is therefore extended: a set-based factory beside the existing `Required(string)`, an exposed `PermissionCodes`, and a verifier that rejects an empty set or a blank code anywhere in one. **Existing single-permission queries are unchanged.** Architecture §11 is amended to say an authorised query may declare one or more codes, **all** of which must be satisfied. |
+| **RH14** | **The per-assignment contract stands, and V1 cannot observe the difference.** `ex_user_role_global_no_overlap` excludes overlapping `[effective_from, effective_to)` ranges for the same user, role and scope — revoked rows included — so at global scope **each user contributes at most one active assignment for a role at any instant, and member-row count and distinct-holder count coincide today.** That is a data-model property, not a term of the query contract, and it is recorded so nobody reads RH5 as describing a live defect. The contract stays correct when scope semantics expand. |
+
+### The instant is resolved once (RH14, time alignment)
+
+**`asOf` is the authoritative instant for the whole Holders view.** The count and the rows are never evaluated at two different instants:
+
+- **AUT-Q4 returns its own `activeHolderCount`**, derived from the rows it is returning — `DISTINCT userId` over them — so the list and the count cannot disagree **by construction**, not merely by luck of timing.
+- **The Holders section does not use AUT-Q5's `activeHolderCount`**, which is computed at that query's own instant. The role detail page's `Holders` metadata row is replaced by this section; AUT-Q5's count stays on the roles **list**, where it is that query's own value at that query's own instant, unchanged.
+
+### The route and its shape
+
+**My choice, not the catalogue's** — the query catalogue defines queries, not HTTP. It follows AUT-Q3's route, its sibling on the same resource.
+
+| Query | Route |
+| --- | --- |
+| **AUT-Q4** | `GET /api/roles/{roleId:guid}/members?asOf=&scopeId=` |
+
+The response:
+
+```text
+{ asOf, activeHolderCount, members: [ … ] }
+```
+
+Each member exactly:
+
+```text
+assignmentId, userId, displayName, email, status,
+effectiveFrom, effectiveTo, assignedAt, assignedBy { userId, displayName },
+assignmentReason
+```
+
+- **`asOf` is echoed** because it is the instant the whole answer was judged at, and a caller that sent none cannot otherwise know which instant it received.
+- **No `revokedAt`, `revokedBy` or `revocationReason`.** Only assignments Active at `asOf` are returned (RH4), so all three would be permanently null. A field that is always null is not a contract, it is decoration.
+- **No `actorType`, and no scope member.** Agents cannot exist (invariant 17a, AU11) so `actorType` would always be `Human`, and RH3 introduces no scope semantics. The spec's access-review concern about an agent holding a review role is real, and belongs to the slice that makes agents exist.
+- **`email` is nullable** because the column is, exactly as USR-Q2's row records. It is included so an access reviewer can tell two people with the same display name apart.
+- **Ordered by `displayName`** under ICU `unicode`, then `assignmentId` — as the roles list, the user list and the grantable list are ordered, so the order does not depend on the database's default collation.
+- **Parameters are parsed strictly**, as AUT-Q3's are: `asOf` must be one ISO-8601 instant or the answer is `400`; **a supplied `scopeId` is `400`** — *"Only the global scope exists."* (RH3).
+- **A carrier is required** (`401` without one), and **both `role.read` and `user.read`** (`400` without either). **The refusal does not say which permission was missing**, so it discloses nothing about the caller's own permissions.
+- **A role with no holders answers `200`**, an empty list and a count of zero; **an unknown role answers `404`** with *"The role does not exist."* (RH8), produced by the route from the query result. `ProblemMiddleware`'s allowlist is untouched, exactly as AUT-Q3 leaves it.
+- **Not audited** (RH12).
+
+### The screen (RH10, RH11)
+
+- **`/admin/roles/{roleId}` gains a Holders section**, below Permissions, mirroring its structure: a heading, the count, and a table of rows. There is no separate page and no new route.
+- **The `Holders` row leaves the metadata list** and becomes this section's count, from AUT-Q4 (time alignment, above).
+- **The section is mounted only for a caller holding both `role.read` and `user.read`**, so its request is never made without them. The roles module reads `UserPermissions.read` from the users module's public surface — the mirror of RA8, and the same move `userActions.ts` already makes in the other direction.
+- **Each row's display name links to `/admin/users/{userId}`**, under an explicit `user.read` condition (RH10).
+- **Columns:** Holder, Email, Status, From, To, Reason. `To` reads *"No end date"* when there is none, as the user detail page's roles table already does.
+- **The section offers no action** (RH11). Its loading, error and retry are its own, so a failure there leaves the rest of the page standing — as every other section does.
+
+### Acceptance Criteria
+
+**The read (RH4, RH5, RH6)**
+
+- **RH-A1** Each member is answered with exactly the ten members above, ordered by display name, and `asOf` is echoed.
+- **RH-A2** **Active at `asOf` only:** an assignment whose period contains `asOf` and which is not revoked is returned; **Future, Ended and Revoked assignments are not**, each proven separately.
+- **RH-A3** **`asOf` projects:** an assignment revoked after `asOf` **is** returned, and one that had not yet begun at `asOf` is not. Without `asOf`, the current instant is used.
+- **RH-A4** **`activeHolderCount` is `DISTINCT userId` over the returned rows**, and is not the row count. The member projection is assignment-based, carrying `assignmentId`.
+- **RH-A5** **A holder whose user is Inactive is returned**, with `status` showing it. Nothing about `app_user.Status` removes a row.
+- **RH-A6** A role with no holders answers `200`, an empty list and a count of zero.
+
+**The route (RH3, RH8, RH9, RH12)**
+
+- **RH-A7** **Both permissions are required and it is AND:** a caller with `role.read` and no `user.read` is refused; a caller with `user.read` and no `role.read` is refused; a caller with both succeeds. No carrier is `401`. **The refusal sentence is the same in both directions** and names neither permission.
+- **RH-A8** An unknown role answers **`404`** with *"The role does not exist."*, and that body is what distinguishes it from an unmapped route.
+- **RH-A9** A malformed `asOf` is `400`; **a supplied `scopeId` is `400`** with its own sentence.
+- **RH-A10** **No audit record is written**, whatever the outcome.
+
+**The declaration (RH13)**
+
+- **RH-A11** A query declaring several permissions is accepted by registration and by start-up verification; **an empty set and a blank code anywhere in a set are both refused**, as a blank single code already is.
+- **RH-A12** Every existing single-permission query is unchanged, and start-up verification still passes for all of them.
+
+**The screen (RH10, RH11)**
+
+- **RH-U1** The Holders section appears for a caller holding both permissions, and never when either is absent.
+- **RH-U2** It shows a row per holder with its six columns, and the count from AUT-Q4 — not from the roles list.
+- **RH-U3** A holder's display name links to that user's detail page, under an explicit `user.read` condition.
+- **RH-U4** A role with no holders shows an empty state, not an empty table.
+- **RH-U5** A failed read shows the server's sentence and a Try again that reads again, and leaves the Permissions section standing.
+- **RH-U6** The section offers no action, and sends nothing but its read.
+- **RH-U7** No accessibility violations on the page.
+
+**Browser, in the dev stack (RH-U8),** with the owner's approval. As Ada:
+
+1. Open a role with holders: the Holders section lists them with their dates and reasons, and the count matches the rows.
+2. Follow a holder's link to the user detail page, and come back.
+3. Open a role with no holders: the section shows its empty state and a count of zero.
+
+### Implementation notes
+
+- **One reader, shaped for REV-Q1 to reuse** (RH2). It returns stored facts only — no state, no count — exactly as `UserRoleAssignmentReader` does for AUT-Q2; the handler derives state once through `RoleAssignmentStates.At` and counts distinct holders from the rows it keeps. REV-Q1 later filters the same reader differently and authorises differently.
+- **AUT-Q4 is AUT-Q2 transposed:** the same table, the same join to `app_user` for the granter's display name, the `where` moved from `UserId` to `RoleId`. The revoker join is not needed, because a revoked assignment is never returned.
+- **The role is looked up first** and the handler returns null when it is absent; the route maps that to `404` with its sentence, as AUT-Q3's does. `asOf` projects the membership only once the role is known to exist.
+- **`QueryAuthorization` gains a set** (RH13). `Required(string)` stays, so no existing query's declaration changes; `PermissionCodes` is the member both the handler and the verifier read, and the single-code factory produces a one-element set. `QueryAuthorizationVerification.ProblemWith` refuses an empty set and a blank code in any position.
+- **The handler enforces every declared code**, refusing on the first that fails with a sentence naming none of them.
+- **Why RH14's assertion can still be mutated.** A divergence between distinct holders and row count is unreachable through the command surface, because `GrantRole` writes only global assignments and the exclusion constraint forbids overlap. The persistence test that pins `DISTINCT userId` therefore constructs a second, scoped assignment **directly through the entity**, which `ex_user_role_scoped_no_overlap` permits beside a global one. **That test deliberately fabricates a state no command can produce**, and says so, so that a mutant replacing the distinct count with a row count is killed rather than surviving as equivalent.
+
+### Not included
+
+- **REV-Q1 GetAccessReviewReport** and anything under `accessreview.read`; **AUT-Q7 WhoCanDo**, which asks the reverse question and is its own gate.
+- **Any assignment mutation** (RH11), and any change to AUT-C1/C2.
+- **Any non-global scope behaviour** (RH3), and any scope member in the response.
+- **Paging** (RH7), and any generic paged result.
+- **Any reconciliation of the `400`/`404` divergence** with AUT-Q2 (RH8).
+- **Any change to AUT-Q5**, whose `activeHolderCount` keeps its definition and stays on the roles list.
+- **`actorType` in the response**, which waits for agents to exist.
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.

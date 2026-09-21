@@ -53,8 +53,15 @@ public static class QueryAuthorizationVerification
         if (authorization is null)
             return $"{queryType.FullName} declares a null authorization classification.";
 
-        if (authorization.IsRequired && string.IsNullOrWhiteSpace(authorization.PermissionCode))
+        // The second layer. The factories already refuse both of these, so a
+        // classification reaching here in either state was built by some path
+        // that bypassed them — which is precisely what start-up verification
+        // exists to catch.
+        if (authorization.IsRequired && authorization.PermissionCodes.Count == 0)
             return $"{queryType.FullName} requires a permission but names none.";
+
+        if (authorization.IsRequired && authorization.PermissionCodes.Any(string.IsNullOrWhiteSpace))
+            return $"{queryType.FullName} requires a permission but names a blank one.";
 
         return null;
     }

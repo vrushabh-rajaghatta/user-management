@@ -9,4 +9,7 @@ export const roleKeys = {
 
   /** One role's grants. Named for what they are: role grants, not a caller's effective permissions. */
   grants: (roleId: string) => ["roles", "grants", roleId] as const,
+
+  /** One role's holders (AUT-Q4), with the count derived from those same rows. */
+  members: (roleId: string) => ["roles", "members", roleId] as const,
 };

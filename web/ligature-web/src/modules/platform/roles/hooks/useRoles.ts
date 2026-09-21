@@ -3,6 +3,7 @@ import {
   addPermissionToRole,
   createRole,
   deactivateRole,
+  getRoleMembers,
   getRolePermissions,
   listPermissionCatalogue,
   listRoles,
@@ -26,6 +27,19 @@ export function useRolePermissions(roleId: string) {
   return useQuery({
     queryKey: roleKeys.grants(roleId),
     queryFn: ({ signal }) => getRolePermissions(roleId, signal),
+    retry: false,
+  });
+}
+
+/**
+ * AUT-Q4, the current instant. Its own query, so a failure here leaves the
+ * rest of the page standing; retry is off because a 404 is an answer.
+ */
+export function useRoleMembers(roleId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: roleKeys.members(roleId),
+    queryFn: ({ signal }) => getRoleMembers(roleId, signal),
+    enabled,
     retry: false,
   });
 }

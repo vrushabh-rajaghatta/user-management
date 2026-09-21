@@ -8,6 +8,7 @@ using Ligature.Platform.Application.Roles.Commands.ReactivateRole;
 using Ligature.Platform.Application.Roles.Commands.UpdateRoleMetadata;
 using Ligature.Platform.Application.Roles.Queries.PermissionCatalogue;
 using Ligature.Platform.Application.Roles.Queries.RoleAdministration;
+using Ligature.Platform.Application.Roles.Queries.RoleMembers;
 using Ligature.Platform.Application.Roles.Queries.RolePermissions;
 using Ligature.Platform.Domain.Users;
 
@@ -175,6 +176,26 @@ public static class RoleEndpoints
                 + "revokedAt }, ordered by code: the grants live at 'asOf', which "
                 + "defaults to now. A role with no live grants is 200 and an empty "
                 + "list; a role that does not exist is 404.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status404NotFound)
+            .WithMetadata(new RequiresCarrier());
+
+        // AUT-Q4.
+        routes.MapGet("/api/roles/{roleId:guid}/members", MembersAsync)
+            .WithTags("Roles")
+            .WithSummary("Who holds a role, at an instant.")
+            .WithDescription(
+                "Requires a carrier and BOTH the 'role.read' and 'user.read' "
+                + "permissions. Returns { asOf, activeHolderCount, members }, "
+                + "each member exactly { assignmentId, userId, displayName, "
+                + "email, status, effectiveFrom, effectiveTo, assignedAt, "
+                + "assignedBy, assignmentReason }, ordered by display name: the "
+                + "assignments active at 'asOf', which defaults to now. A role "
+                + "nobody holds is 200 and an empty list; a role that does not "
+                + "exist is 404. Only the global scope exists, so a 'scopeId' is "
+                + "refused.")
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
@@ -421,6 +442,71 @@ public static class RoleEndpoints
                 x.RequiresHumanActor,
                 x.GrantedAt,
                 x.RevokedAt,
+            }),
+        });
+    }
+
+    private static async Task<IResult> MembersAsync(
+        Guid roleId,
+        HttpRequest request,
+        IQueryDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var instants = request.Query["asOf"];
+        DateTimeOffset? asOf = null;
+
+        if (instants.Count == 1
+            && DateTimeOffset.TryParse(
+                instants[0],
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                out var parsed))
+        {
+            asOf = parsed;
+        }
+        else if (instants.Count != 0)
+        {
+            return Results.BadRequest(new { Error = "asOf must be one ISO-8601 instant." });
+        }
+
+        // RH3: the parameter is part of the frozen contract and no value of it
+        // is valid, so it is parsed only far enough to be refused by the query
+        // — which is where the rule lives. A value that is not even a GUID is
+        // refused for the same reason, and with the same sentence: what is
+        // wrong with it is that it was supplied at all.
+        var scopes = request.Query["scopeId"];
+        Guid? scopeId = null;
+
+        if (scopes.Count != 0)
+        {
+            scopeId = Guid.TryParse(scopes[0], out var scope) ? scope : Guid.Empty;
+        }
+
+        var result = await dispatcher.SendAsync<RoleMembersQuery, RoleMembersResult>(
+            new RoleMembersQuery(new RoleId(roleId), asOf, scopeId),
+            cancellationToken);
+
+        // RH8, as AUT-Q3 does it. The body is what tells this apart from a
+        // route that does not exist, which answers 404 with nothing.
+        if (!result.RoleExists)
+            return Results.NotFound(new { Error = "The role does not exist." });
+
+        return Results.Ok(new
+        {
+            result.AsOf,
+            result.ActiveHolderCount,
+            Members = result.Members!.Select(x => new
+            {
+                AssignmentId = x.AssignmentId.Value,
+                UserId = x.UserId.Value,
+                x.DisplayName,
+                x.Email,
+                Status = x.Status.ToString(),
+                x.EffectiveFrom,
+                x.EffectiveTo,
+                x.AssignedAt,
+                AssignedBy = new { UserId = x.AssignedBy.UserId.Value, x.AssignedBy.DisplayName },
+                x.AssignmentReason,
             }),
         });
     }

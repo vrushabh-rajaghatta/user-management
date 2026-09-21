@@ -53,6 +53,9 @@ public static class DependencyInjection
         services.AddScoped<IRolePermissionReader, RolePermissionReader>();
         services.AddScoped<IPermissionCatalogueReader, PermissionCatalogueReader>();
 
+        // AUT-Q4 — who holds a role.
+        services.AddScoped<IRoleMemberReader, RoleMemberReader>();
+
         services.AddScoped<IUserTokenRepository, UserTokenRepository>();
 
         services.AddScoped<INotificationRepository, NotificationRepository>();

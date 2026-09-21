@@ -28,6 +28,7 @@ using Ligature.Platform.Application.Roles.Commands.ReactivateRole;
 using Ligature.Platform.Application.Roles.Commands.UpdateRoleMetadata;
 using Ligature.Platform.Application.Roles.Queries.PermissionCatalogue;
 using Ligature.Platform.Application.Roles.Queries.RoleAdministration;
+using Ligature.Platform.Application.Roles.Queries.RoleMembers;
 using Ligature.Platform.Application.Roles.Queries.RolePermissions;
 using Ligature.Platform.Application.Users.Queries.UsernameAvailability;
 using Ligature.Platform.Application.Users.Queries.UserProfile;
@@ -403,6 +404,10 @@ public static class DependencyInjection
         services.AddQuery<RoleAdministrationQuery, RoleAdministrationResult, RoleAdministrationQueryHandler>();
         services.AddQuery<RolePermissionsQuery, RolePermissionsResult, RolePermissionsQueryHandler>();
         services.AddQuery<PermissionCatalogueQuery, PermissionCatalogueResult, PermissionCatalogueQueryHandler>();
+
+        // AUT-Q4 — who holds a role. The only read requiring two permissions
+        // (RH9): role.read AND user.read.
+        services.AddQuery<RoleMembersQuery, RoleMembersResult, RoleMembersQueryHandler>();
 
         // The grantable-role list: a Story 2 dependency of AUT-C1, not AUT-Q5.
         services.AddQuery<GrantableRolesQuery, GrantableRolesResult, GrantableRolesQueryHandler>();
