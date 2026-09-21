@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -420,5 +421,93 @@ describe("the developer environment's prerequisite check", () => {
     });
 
     expect(existsSync(directory)).toBe(false);
+  });
+});
+
+describe("the bootstrap script's choice of Compose files", () => {
+  /**
+   * ./bootstrap.sh must address the project with the files it was CREATED with.
+   * The overlay pins the default network's subnet, so the base file alone
+   * describes a different network: Compose stops the database to recreate it,
+   * fails because the API and web containers are still attached, and never runs
+   * the provisioner. That happened, and it left an API up against a stopped
+   * database.
+   *
+   * Driven through a stand-in `docker` that records its arguments, so this
+   * needs no Docker and changes nothing.
+   */
+  const ARGUMENTS = ["--first-name", "Ada", "--username", "ada.lovelace"];
+
+  function bootstrap(containers: string[], labels: string[]) {
+    const directory = mkdtempSync(path.join(tmpdir(), "ligature-web-bootstrap-"));
+    const log = path.join(directory, "docker.log");
+
+    writeFileSync(
+      path.join(directory, "docker"),
+      [
+        "#!/bin/bash",
+        'printf \'%s\\n\' "$*" >> "$STUB_LOG"',
+        'case "$*" in',
+        '  "compose ps --all --quiet") printf \'%s\' "$STUB_CONTAINERS" ;;',
+        '  inspect*) printf \'%s\\n\' "$STUB_LABELS" ;;',
+        "esac",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(path.join(directory, "docker"), 0o755);
+
+    const result = spawnSync("./bootstrap.sh", ARGUMENTS, {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        PATH: `${directory}${path.delimiter}${process.env.PATH ?? ""}`,
+        STUB_LOG: log,
+        STUB_CONTAINERS: containers.join("\n"),
+        STUB_LABELS: labels.join("\n"),
+      },
+      encoding: "utf8",
+    });
+
+    const calls = existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [];
+
+    return { result, calls, mutating: calls.filter((call) => / (build|run) /.test(call)) };
+  }
+
+  it("uses the files a running project was created with", () => {
+    const { result, mutating } = bootstrap(["c1", "c2"], [`${BASE},${OVERLAY}`, `${BASE},${OVERLAY}`]);
+
+    expect(result.status).toBe(0);
+    expect(mutating).toHaveLength(2);
+
+    for (const call of mutating) {
+      expect(call.startsWith(`compose -f ${BASE} -f ${OVERLAY} --profile bootstrap `)).toBe(true);
+    }
+  });
+
+  it("falls back to the base file when there is no project yet", () => {
+    const { result, mutating } = bootstrap([], []);
+
+    expect(result.status).toBe(0);
+    expect(mutating).toHaveLength(2);
+
+    for (const call of mutating) {
+      expect(call.startsWith("compose --profile bootstrap ")).toBe(true);
+    }
+  });
+
+  /**
+   * Guessing is what stopped the database, so every case the script cannot
+   * resolve is a refusal that touches nothing and names the way out.
+   */
+  it.each([
+    ["containers created from different files", [`${BASE},${OVERLAY}`, BASE]],
+    ["a file that no longer exists", [`${BASE},/nonexistent/compose.dev.yaml`]],
+    ["containers that carry no label", [""]],
+  ])("refuses, and runs nothing, given %s", (_, labels) => {
+    const { result, mutating } = bootstrap(["c1", "c2"], labels);
+
+    expect(result.status).not.toBe(0);
+    expect(mutating).toHaveLength(0);
+    expect(result.stderr).toContain("./up.sh");
   });
 });
