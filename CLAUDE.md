@@ -1,4 +1,4 @@
-# Ligature — Claude Instructions
+# SKSMCorp — Claude Instructions
 
 This file is intentionally thin. It points to the two documents that govern
 work in this repository and records only what Claude must not get wrong.

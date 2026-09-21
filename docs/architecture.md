@@ -1,10 +1,10 @@
-# Ligature Architecture
+# SKSMCorp Architecture
 
 **Status:** Architectural contract
 
-Ligature is the current codebase/project name. **RegOS** may be used when referring to the broader Regulatory Operating System product concept — in discussion only, never in code. Every project, assembly and namespace is `Ligature.*`.
+SKSMCorp is the current codebase/project name. **RegOS** may be used when referring to the broader Regulatory Operating System product concept — in discussion only, never in code. Every project, assembly and namespace is `SKSMCorp.*`.
 
-This document defines the architectural direction and boundaries for the Ligature codebase. Build, test, migration and validation procedure lives in `AGENTS.md` §3 and is not repeated here.
+This document defines the architectural direction and boundaries for the SKSMCorp codebase. Build, test, migration and validation procedure lives in `AGENTS.md` §3 and is not repeated here.
 
 ---
 
@@ -25,11 +25,11 @@ What exists today:
 ```text
 src/
 ├── Platform/
-│   ├── Ligature.Platform.Domain        aggregates, value objects, enums    (Users/, Provenance/)
-│   ├── Ligature.Platform.Application   commands, handlers, behaviors, abstractions
-│   └── Ligature.Platform.Persistence   EF Core, repositories, services, migrations, provisioning
+│   ├── SKSMCorp.Platform.Domain        aggregates, value objects, enums    (Users/, Provenance/)
+│   ├── SKSMCorp.Platform.Application   commands, handlers, behaviors, abstractions
+│   └── SKSMCorp.Platform.Persistence   EF Core, repositories, services, migrations, provisioning
 └── Shared/
-    └── Ligature.SharedKernel           Entity, AggregateRoot, ValueObject, StronglyTypedId,
+    └── SKSMCorp.SharedKernel           Entity, AggregateRoot, ValueObject, StronglyTypedId,
                                         ICommand/IQuery/ICommandHandler/ICommandBehavior, exceptions
 
 tests/Platform/                         one test project per layer, mirroring src/Platform/
@@ -49,10 +49,10 @@ Identity and access live in the `Users/` folders of each layer. That is the User
 | Logging             | Platform projects                                |
 | Document Management | Platform projects unless independently justified |
 | Workflow            | Platform projects unless independently justified |
-| Regulatory          | Separate `Ligature.Regulatory.*` project tree    |
-| Clinical            | Separate `Ligature.Clinical.*` project tree      |
+| Regulatory          | Separate `SKSMCorp.Regulatory.*` project tree    |
+| Clinical            | Separate `SKSMCorp.Clinical.*` project tree      |
 
-Platform capabilities are folders inside the `Ligature.Platform.*` layer projects: add `Ligature.Platform.Domain/Audit/`, not `Ligature.Audit`.
+Platform capabilities are folders inside the `SKSMCorp.Platform.*` layer projects: add `SKSMCorp.Platform.Domain/Audit/`, not `SKSMCorp.Audit`.
 
 A folder becomes its own project only for a demonstrated reason — independent schema, independent deployment, dependency isolation, or significant size. Surface the reason before doing it. Do not create empty projects to satisfy a theoretical architecture.
 
@@ -61,23 +61,23 @@ New business domains follow the same layering:
 ```text
 src/
 └── Regulatory/
-    ├── Ligature.Regulatory.Domain
-    ├── Ligature.Regulatory.Application
-    └── Ligature.Regulatory.Persistence
+    ├── SKSMCorp.Regulatory.Domain
+    ├── SKSMCorp.Regulatory.Application
+    └── SKSMCorp.Regulatory.Persistence
 ```
 
 ## The web client
 
-The browser client lives at `web/ligature-web/`. It consumes the host's HTTP contract and is **not** a second implementation of any module. Its structure, layering and rules are governed by **`docs/frontend-architecture.md`**, which mirrors this section's module boundaries on the client: platform modules first, business modules later, with the same dependency direction (§10).
+The browser client lives at `web/sksmcorp-web/`. It consumes the host's HTTP contract and is **not** a second implementation of any module. Its structure, layering and rules are governed by **`docs/frontend-architecture.md`**, which mirrors this section's module boundaries on the client: platform modules first, business modules later, with the same dependency direction (§10).
 
 ---
 
 # 3. Modular Monolith
 
-Ligature is a **modular monolith initially**: one deployable application composed of well-defined modules.
+SKSMCorp is a **modular monolith initially**: one deployable application composed of well-defined modules.
 
 ```text
-Ligature Application
+SKSMCorp Application
 │
 ├── Platform
 │   ├── User Management
@@ -97,23 +97,23 @@ Do not introduce microservices unless explicitly requested. The objective is str
 
 # 4. Packaging and the Host Application
 
-The current class-library/DLL boundaries are the three Platform layer projects — `Ligature.Platform.Domain`, `Ligature.Platform.Application` and `Ligature.Platform.Persistence` — with `Ligature.SharedKernel` beneath them. Conceptual capabilities (User Management today; Audit, Notifications and Logging later) live *within* those platform libraries according to the project structure in §2. **A capability does not get its own DLL**: the DLLs are the layers, not the capabilities.
+The current class-library/DLL boundaries are the three Platform layer projects — `SKSMCorp.Platform.Domain`, `SKSMCorp.Platform.Application` and `SKSMCorp.Platform.Persistence` — with `SKSMCorp.SharedKernel` beneath them. Conceptual capabilities (User Management today; Audit, Notifications and Logging later) live *within* those platform libraries according to the project structure in §2. **A capability does not get its own DLL**: the DLLs are the layers, not the capabilities.
 
 A **host application** will reference those DLLs and compose them into the client-facing, deployable application. It is the composition root: it registers the libraries, supplies configuration such as the connection string, establishes the calling user, and exposes the application to clients. The existing libraries already expose composition entry points used at that boundary (for example `AddPlatformApplication()` and `AddPlatformPersistence(...)`); these are implementation details of the current code, not themselves an architectural contract.
 
 ```text
-Ligature Host Application
+SKSMCorp Host Application
 │
-├── Ligature.Platform.Domain.dll
-├── Ligature.Platform.Application.dll
-├── Ligature.Platform.Persistence.dll
+├── SKSMCorp.Platform.Domain.dll
+├── SKSMCorp.Platform.Application.dll
+├── SKSMCorp.Platform.Persistence.dll
 │
-├── Ligature.Regulatory.Domain.dll        (future)
-├── Ligature.Regulatory.Application.dll   (future)
-└── Ligature.Regulatory.Persistence.dll   (future)
+├── SKSMCorp.Regulatory.Domain.dll        (future)
+├── SKSMCorp.Regulatory.Application.dll   (future)
+└── SKSMCorp.Regulatory.Persistence.dll   (future)
 ```
 
-**The host application is `src/Host/Ligature.Host`.** It exposes activation, sign-in and sign-out over HTTP and implements §17. It is deliberately thin: HTTP binding, carrier issuance and verification, and composition. Everything that decides anything sits behind `ICommandDispatcher`.
+**The host application is `src/Host/SKSMCorp.Host`.** It exposes activation, sign-in and sign-out over HTTP and implements §17. It is deliberately thin: HTTP binding, carrier issuance and verification, and composition. Everything that decides anything sits behind `ICommandDispatcher`.
 
 It is still true that the class libraries are built, tested and exercised **without** it — `AGENTS.md` §3 describes how — and that remains the rule. Do not grow the host as a side effect of another story, and do not move logic into it because HTTP made that convenient.
 
@@ -128,7 +128,7 @@ The initial deployment is a single host application — one process — loading 
 ## Rules
 
 - **Platform libraries must not depend on the host application.** Dependencies point from the host to the libraries, never back. Anything a library needs from its host — configuration, the connection string, the current caller — arrives through a registration entry point or an abstraction the library itself defines. The current code already works this way; the specific entry points are implementation details, not a frozen host API.
-- **Future business modules follow the same pattern**: `Ligature.Regulatory.Domain.dll`, `Ligature.Regulatory.Application.dll`, `Ligature.Regulatory.Persistence.dll` — and likewise Clinical — referenced by the same host.
+- **Future business modules follow the same pattern**: `SKSMCorp.Regulatory.Domain.dll`, `SKSMCorp.Regulatory.Application.dll`, `SKSMCorp.Regulatory.Persistence.dll` — and likewise Clinical — referenced by the same host.
 - **Extraction into separate services or processes remains possible** — that is what the boundaries preserve — but it is **not the current architecture or goal**. See §13.
 
 ---
@@ -186,9 +186,9 @@ Business modules express intent ("notify the reviewer that a submission requires
 > **It cannot reach production, by two independent locks:**
 >
 > 1. **It exists only in Debug builds.** The type and its registration are compiled under `#if DEBUG`. The production image is published in Release, so its assemblies do not contain the sink at all. The development container runs `dotnet watch run`, a Debug build.
-> 2. **It needs an explicit setting**, `LIGATURE_MAIL_DEV_SINK_DIRECTORY`. `ASPNETCORE_ENVIRONMENT` is deliberately not the gate, for the reason §18 gives: it is ambient and settable from outside the deployment.
+> 2. **It needs an explicit setting**, `SKSMCORP_MAIL_DEV_SINK_DIRECTORY`. `ASPNETCORE_ENVIRONMENT` is deliberately not the gate, for the reason §18 gives: it is ambient and settable from outside the deployment.
 >
-> **Misconfiguration refuses start-up**, naming the setting and never a value: the sink combined with any Gmail setting (two transports), the sink without `LIGATURE_PUBLIC_BASE_URL` (the link is built from it), and **the sink setting in a Release build** — so a production deployment that somehow carried it stops rather than silently ignoring it.
+> **Misconfiguration refuses start-up**, naming the setting and never a value: the sink combined with any Gmail setting (two transports), the sink without `SKSMCORP_PUBLIC_BASE_URL` (the link is built from it), and **the sink setting in a Release build** — so a production deployment that somehow carried it stops rather than silently ignoring it.
 >
 > **What it writes.** One file per message — recipient, subject and the full body, activation link included — created owner-read/write only, in a directory that must already exist. The row is recorded as `Sent` with `transport_message_id = dev-sink:<file name>`, so the record states where the message went. One Information log line names the file, never its contents.
 >
@@ -378,7 +378,7 @@ The caller is established by middleware **before** any pipeline runs, so a query
 
 ### Handler registration
 
-Handlers are registered explicitly, one by one, in `Ligature.Platform.Application/DependencyInjection.cs`, with the requirement ID as a comment. Do not introduce assembly scanning. "Which commands are wired in" must be answerable by reading that method.
+Handlers are registered explicitly, one by one, in `SKSMCorp.Platform.Application/DependencyInjection.cs`, with the requirement ID as a comment. Do not introduce assembly scanning. "Which commands are wired in" must be answerable by reading that method.
 
 ### Transaction boundary
 
@@ -467,9 +467,9 @@ A new command that must not interleave with deactivation takes the same lock. Is
 
 ### Persistence
 
-- One `LigatureDbContext`; one `IEntityTypeConfiguration<T>` per aggregate/entity in `Persistence/Configurations`.
+- One `SKSMCorpDbContext`; one `IEntityTypeConfiguration<T>` per aggregate/entity in `Persistence/Configurations`.
 - Seed data (system roles, permissions, initial security policy, bootstrap administrator) is defined once in `SecurityBaseline` / `PlatformProvisioner` and asserted against the live database by `CatalogueDriftTests`. Change the seed in one place and the drift test tells you if the database disagrees.
-- `Ligature.Platform.Persistence` exposes internals to its test project via `InternalsVisibleTo`.
+- `SKSMCorp.Platform.Persistence` exposes internals to its test project via `InternalsVisibleTo`.
 
 ### Tests
 
@@ -522,7 +522,7 @@ Implementation work is traceable to `docs/requirements.md`. See `AGENTS.md` §16
 
 # 16. Architectural Principle
 
-Ligature is:
+SKSMCorp is:
 
 > **One application composed of multiple well-defined modules, with strong boundaries and minimal coupling.**
 
@@ -534,7 +534,7 @@ Avoid: premature microservices, unnecessary abstractions, cross-module database 
 
 # 17. Access Token and Caller Establishment
 
-**Status:** Architectural decision, **implemented** by `src/Host/Ligature.Host` and `CallerEstablisher`. Resolves the `AGENTS.md` §17 escalation recorded in `docs/requirements.md` under *"Access token issuance is unspecified"*.
+**Status:** Architectural decision, **implemented** by `src/Host/SKSMCorp.Host` and `CallerEstablisher`. Resolves the `AGENTS.md` §17 escalation recorded in `docs/requirements.md` under *"Access token issuance is unspecified"*.
 
 **Amended** by the cookie transport decision (web client design, 2026-09-14). See *Amendment: cookie transport* at the end of this section. The statements it changes are marked *Amended* where they stand, not rewritten.
 
@@ -594,7 +594,7 @@ Rotation costs nothing structurally: because sessions are server-side, retiring 
 Authorization: Bearer <carrier>
 ```
 
-> **Amended (cookie transport).** This was the only transport. It is still supported, but it is no longer the only one: browsers present the same carrier in the `__Host-ligature` cookie, and a non-blank `Authorization` header takes precedence with no fallback. See *Amendment: cookie transport*.
+> **Amended (cookie transport).** This was the only transport. It is still supported, but it is no longer the only one: browsers present the same carrier in the `__Host-sksmcorp` cookie, and a non-blank `Authorization` header takes precedence with no fallback. See *Amendment: cookie transport*.
 
 ## Ownership boundary
 
@@ -682,7 +682,7 @@ Reopening any of these is an architectural change, not an implementation detail.
 
 ## Amendment: cookie transport
 
-**Status:** Owner decision, taken with the web client design (v2, decisions O1–O3, approved 2026-09-14). **Implemented** by `src/Host/Ligature.Host` on `feature/host-cookie-transport`: `CarrierCookie`, credential selection in `CallerMiddleware`, `CrossSiteMiddleware`, and the sign-in and sign-out endpoints.
+**Status:** Owner decision, taken with the web client design (v2, decisions O1–O3, approved 2026-09-14). **Implemented** by `src/Host/SKSMCorp.Host` on `feature/host-cookie-transport`: `CarrierCookie`, credential selection in `CallerMiddleware`, `CrossSiteMiddleware`, and the sign-in and sign-out endpoints.
 
 Nothing earlier in this section has been deleted. Every statement this amendment changes stays where it was, marked *Amended*, so the record shows what was decided first and what changed.
 
@@ -696,7 +696,7 @@ The cookie is a second transport for the **same carrier**. Its format, the signi
 
 ```text
 Authorization: Bearer <carrier>        non-browser callers — unchanged
-Cookie: __Host-ligature=<carrier>      browsers
+Cookie: __Host-sksmcorp=<carrier>      browsers
 ```
 
 - **Bearer remains supported.** Nothing that worked with the header stops working.
@@ -758,7 +758,7 @@ A browser that is signed in must therefore **end its current session first**. Ta
 
 # 18. API Documentation
 
-**Status:** Architectural decision, **implemented** by `src/Host/Ligature.Host`. No requirement ID: this is infrastructure, not a catalogue entry (`AGENTS.md` §16).
+**Status:** Architectural decision, **implemented** by `src/Host/SKSMCorp.Host`. No requirement ID: this is infrastructure, not a catalogue entry (`AGENTS.md` §16).
 
 The host publishes an **OpenAPI document** and a **Scalar reference UI**, and publishes neither unless an operator asks for it.
 
@@ -778,9 +778,9 @@ Microsoft's documentation presents Swagger UI and Scalar as equal options and re
 
 ## The gate is explicit configuration, not the environment name
 
-`LIGATURE_API_DOCUMENTATION` must be `true`. **Absent means off**, and a value that is neither `true` nor `false` **stops the process** rather than being read as off.
+`SKSMCORP_API_DOCUMENTATION` must be `true`. **Absent means off**, and a value that is neither `true` nor `false` **stops the process** rather than being read as off.
 
-Microsoft's sample and the .NET templates gate the equivalent routes on `IHostEnvironment.IsDevelopment()`. **Ligature does not**, for the same reason §4's host registers no developer exception page in any environment: `ASPNETCORE_ENVIRONMENT` is ambient, inherited, and settable from outside the deployment, so a gate that reads it publishes on somebody else's mistake. Enumerating the surface of an authentication host is worth an affirmative act.
+Microsoft's sample and the .NET templates gate the equivalent routes on `IHostEnvironment.IsDevelopment()`. **SKSMCorp does not**, for the same reason §4's host registers no developer exception page in any environment: `ASPNETCORE_ENVIRONMENT` is ambient, inherited, and settable from outside the deployment, so a gate that reads it publishes on somebody else's mistake. Enumerating the surface of an authentication host is worth an affirmative act.
 
 The safe state is therefore the one reached by doing nothing, and the failure mode of a typo is a host that will not start rather than a host that quietly published.
 
@@ -803,8 +803,8 @@ This section deliberately does **not** decide, and code must not assume:
 # 19. Audit Schema Ownership and the Database Role Model
 
 **Status:** Architectural decision, **implemented** by `docker/roles.sql`,
-`src/Platform/Ligature.Platform.Persistence/Audit/` and
-`src/Tools/Ligature.AuditSchema`. Implements Audit Command/Query Catalog
+`src/Platform/SKSMCorp.Platform.Persistence/Audit/` and
+`src/Tools/SKSMCorp.AuditSchema`. Implements Audit Command/Query Catalog
 AUD-S01. No requirement ID: this is infrastructure, not a catalogue entry
 (`AGENTS.md` §16).
 
@@ -831,7 +831,7 @@ the roles the running system actually uses.
 | --- | --- | --- |
 | `app_role` | The host application | `SELECT`, `INSERT` on the trail. No `UPDATE`, no `DELETE` |
 | `migration_role` | EF migrations | Owns the ordinary schema. **Nothing at all** on `audit_record` or `audit_entity_ref` |
-| `provisioning_role` | `Ligature.Provisioning` | Seeds retention v1 and **reads** the catalogue, the trail and the deployment ledger so it can verify a tenant before handing it over. Appends `TenantProvisioned` (`INSERT` only, script `004`); cannot write the catalogue |
+| `provisioning_role` | `SKSMCorp.Provisioning` | Seeds retention v1 and **reads** the catalogue, the trail and the deployment ledger so it can verify a tenant before handing it over. Appends `TenantProvisioned` (`INSERT` only, script `004`); cannot write the catalogue |
 | `audit_owner` | Nobody | Owns the `audit` schema and every object in it. `NOLOGIN`, no members, no password |
 | `audit_anonymiser` | The future erasure worker | Column-level `UPDATE` on the AR20 set only. `NOLOGIN` until that worker exists |
 
@@ -846,7 +846,7 @@ implicit: it can disable triggers and drop what it owns regardless of any
 `migration_role`, so EF-created audit tables would be owned — and therefore
 destroyable — by the migration credential.
 
-`Ligature.AuditSchema` applies the Audit DDL instead, under a privileged
+`SKSMCorp.AuditSchema` applies the Audit DDL instead, under a privileged
 connection that issues `SET ROLE audit_owner` **before** creating anything, so
 objects are born owned by a role nothing can authenticate as. Ownership is
 never transferred: a transfer implies an interval during which something else
@@ -890,7 +890,7 @@ deliberately not accepted as evidence.
 
 They answer different questions, so neither trusts the other.
 
-**`Ligature.AuditSchema` verifies construction** — *did it build what it
+**`SKSMCorp.AuditSchema` verifies construction** — *did it build what it
 claims?* After applying its scripts it checks ownership of the schema and every
 object, that `audit_owner` cannot log in and has no members, that every
 protection trigger is `ENABLE ALWAYS`, that the expected indexes and
@@ -924,7 +924,7 @@ floor, `AuditReleaseBaseline.MinimumRetentionMonths`, is a placeholder pending
 `AUD-O11` and is marked as one.
 
 **The catalogue belongs to the DEPLOYMENT phase, not to provisioning.** It is
-applied by `Ligature.AuditSchema` as `audit_owner`, immediately after the
+applied by `SKSMCorp.AuditSchema` as `audit_owner`, immediately after the
 schema scripts and before the host starts:
 
 ```text

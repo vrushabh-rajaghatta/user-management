@@ -16,21 +16,21 @@
 # come from .env, which ./up.sh generates; there are no defaults.
 
 x-app-connection: &app-conn
-  "Host=db;Port=5432;Database=ligature;Username=app_role;Password=${LIGATURE_APP_PASSWORD:?not set — run ./up.sh, which generates one into .env}"
+  "Host=db;Port=5432;Database=sksmcorp;Username=app_role;Password=${SKSMCORP_APP_PASSWORD:?not set — run ./up.sh, which generates one into .env}"
 
 x-migration-connection: &migration-conn
-  "Host=db;Port=5432;Database=ligature;Username=migration_role;Password=${LIGATURE_MIGRATION_PASSWORD:?not set — run ./up.sh, which generates one into .env}"
+  "Host=db;Port=5432;Database=sksmcorp;Username=migration_role;Password=${SKSMCORP_MIGRATION_PASSWORD:?not set — run ./up.sh, which generates one into .env}"
 
 x-provisioning-connection: &provisioning-conn
-  "Host=db;Port=5432;Database=ligature;Username=provisioning_role;Password=${LIGATURE_PROVISIONING_PASSWORD:?not set — run ./up.sh, which generates one into .env}"
+  "Host=db;Port=5432;Database=sksmcorp;Username=provisioning_role;Password=${SKSMCORP_PROVISIONING_PASSWORD:?not set — run ./up.sh, which generates one into .env}"
 
 # Cluster authority. Two steps need it — creating the general roles, and
 # creating a schema owned by a role nothing can authenticate as — and no
 # long-running component uses it.
 x-privileged-connection: &privileged-conn
-  "Host=db;Port=5432;Database=ligature;Username=postgres;Password=postgres"
+  "Host=db;Port=5432;Database=sksmcorp;Username=postgres;Password=postgres"
 
-name: ligature
+name: sksmcorp
 
 services:
 
@@ -41,7 +41,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: ligature
+      POSTGRES_DB: sksmcorp
     ports:
       # 55432, not 5432. A developer running PostgreSQL natively already owns
       # 5432, and AGENTS.md section 3 points the test suite at it. Publishing
@@ -59,7 +59,7 @@ services:
       # Nothing downstream may start on a container that is merely RUNNING.
       # Postgres accepts connections only after initdb has finished, and the
       # roles step would otherwise race it.
-      test: ["CMD-SHELL", "pg_isready -U postgres -d ligature"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sksmcorp"]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -88,12 +88,12 @@ services:
       - psql
       - --host=db
       - --username=postgres
-      - --dbname=ligature
+      - --dbname=sksmcorp
       - --set=ON_ERROR_STOP=1
-      - --set=database=ligature
-      - --set=app_password=${LIGATURE_APP_PASSWORD:?not set — run ./up.sh}
-      - --set=migration_password=${LIGATURE_MIGRATION_PASSWORD:?not set — run ./up.sh}
-      - --set=provisioning_password=${LIGATURE_PROVISIONING_PASSWORD:?not set — run ./up.sh}
+      - --set=database=sksmcorp
+      - --set=app_password=${SKSMCORP_APP_PASSWORD:?not set — run ./up.sh}
+      - --set=migration_password=${SKSMCORP_MIGRATION_PASSWORD:?not set — run ./up.sh}
+      - --set=provisioning_password=${SKSMCORP_PROVISIONING_PASSWORD:?not set — run ./up.sh}
       - --file=/roles.sql
     restart: "no"
 
@@ -105,7 +105,7 @@ services:
       dockerfile: docker/Dockerfile
       target: migrator
     environment:
-      LIGATURE_CONNECTION: *migration-conn
+      SKSMCORP_CONNECTION: *migration-conn
     depends_on:
       roles:
         condition: service_completed_successfully
@@ -127,7 +127,7 @@ services:
       dockerfile: docker/Dockerfile
       target: audit-schema
     environment:
-      LIGATURE_PRIVILEGED_CONNECTION: *privileged-conn
+      SKSMCORP_PRIVILEGED_CONNECTION: *privileged-conn
     depends_on:
       migrator:
         condition: service_completed_successfully
@@ -156,7 +156,7 @@ services:
       dockerfile: docker/Dockerfile
       target: catalogue-sync
     environment:
-      LIGATURE_CONNECTION: *migration-conn
+      SKSMCORP_CONNECTION: *migration-conn
     depends_on:
       audit-schema:
         condition: service_completed_successfully
@@ -170,17 +170,17 @@ services:
       dockerfile: docker/Dockerfile
       target: host
     environment:
-      LIGATURE_CONNECTION: *app-conn
+      SKSMCORP_CONNECTION: *app-conn
 
       # There is NO default and no committed key (docs/architecture.md §17).
       # `:?` makes a missing key a clear Compose error rather than a container
       # that starts and then refuses. ./up.sh generates one on first run.
-      LIGATURE_SIGNING_KEY_CURRENT: v1
-      LIGATURE_SIGNING_KEY_V1: ${LIGATURE_SIGNING_KEY_V1:?not set — run ./up.sh, which generates one into .env}
+      SKSMCORP_SIGNING_KEY_CURRENT: v1
+      SKSMCORP_SIGNING_KEY_V1: ${SKSMCORP_SIGNING_KEY_V1:?not set — run ./up.sh, which generates one into .env}
 
       # This is a development environment, so the API reference is on
       # (docs/architecture.md §18). It is off by default everywhere else.
-      LIGATURE_API_DOCUMENTATION: "true"
+      SKSMCORP_API_DOCUMENTATION: "true"
 
       # Mail. Deliberately `:-` and not `:?`: unlike the signing key, ./up.sh
       # CANNOT generate these — a Google service account is issued by Google —
@@ -196,11 +196,11 @@ services:
       # private_key field from the service account's JSON, and the Workspace
       # administrator must have authorised that client id for the gmail.send
       # scope and nothing else.
-      LIGATURE_PUBLIC_BASE_URL: ${LIGATURE_PUBLIC_BASE_URL:-}
-      LIGATURE_MAIL_SENDER_ADDRESS: ${LIGATURE_MAIL_SENDER_ADDRESS:-}
-      LIGATURE_MAIL_SENDER_NAME: ${LIGATURE_MAIL_SENDER_NAME:-}
-      LIGATURE_MAIL_SERVICE_ACCOUNT: ${LIGATURE_MAIL_SERVICE_ACCOUNT:-}
-      LIGATURE_MAIL_SERVICE_ACCOUNT_KEY: ${LIGATURE_MAIL_SERVICE_ACCOUNT_KEY:-}
+      SKSMCORP_PUBLIC_BASE_URL: ${SKSMCORP_PUBLIC_BASE_URL:-}
+      SKSMCORP_MAIL_SENDER_ADDRESS: ${SKSMCORP_MAIL_SENDER_ADDRESS:-}
+      SKSMCORP_MAIL_SENDER_NAME: ${SKSMCORP_MAIL_SENDER_NAME:-}
+      SKSMCORP_MAIL_SERVICE_ACCOUNT: ${SKSMCORP_MAIL_SERVICE_ACCOUNT:-}
+      SKSMCORP_MAIL_SERVICE_ACCOUNT_KEY: ${SKSMCORP_MAIL_SERVICE_ACCOUNT_KEY:-}
     ports:
       - "8080:8080"
     depends_on:
@@ -217,7 +217,7 @@ services:
       target: provisioner
     profiles: ["bootstrap"]
     environment:
-      LIGATURE_CONNECTION: *provisioning-conn
+      SKSMCORP_CONNECTION: *provisioning-conn
     volumes:
       # The activation token lands here, owner-only. Gitignored, and meant to be
       # delivered and then deleted — it cannot be recovered if lost.

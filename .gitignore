@@ -45,7 +45,7 @@ appsettings.Local.json
 .env.*
 secrets.json
 
-## Web client (web/ligature-web)
+## Web client (web/sksmcorp-web)
 # Dependencies
 node_modules/
 

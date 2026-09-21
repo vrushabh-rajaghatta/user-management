@@ -1,8 +1,8 @@
-# Ligature Requirement Catalogue
+# SKSMCorp Requirement Catalogue
 
 **Status:** In progress — being back-filled from committed code
 
-This document is the authoritative index of Ligature requirements.
+This document is the authoritative index of SKSMCorp requirements.
 
 Every requirement/story must have a stable identifier, used consistently across story discussions, implementation branches, commit messages, tests, pull requests, and architecture decisions where applicable.
 
@@ -197,7 +197,7 @@ The owner accepts this explicitly. It is a consequence of the provisioning model
 
 #### Notes
 
-- Existing databases converge through the existing tool, `dotnet run --project src/Tools/Ligature.CatalogueSync`, or the `catalogue-sync` Compose service. `CatalogueDriftTests` is the postcondition, and it fails against any database that has not yet been synchronised with this release.
+- Existing databases converge through the existing tool, `dotnet run --project src/Tools/SKSMCorp.CatalogueSync`, or the `catalogue-sync` Compose service. `CatalogueDriftTests` is the postcondition, and it fails against any database that has not yet been synchronised with this release.
 - No role-composition test existed before this amendment: the drift tests compare the database with the seed, so a deleted seed line would have gone unnoticed. S1 closes that.
 
 ---
@@ -2530,13 +2530,13 @@ request → host resolves the client address (B8)
 
 ### The client address (B8, B9)
 
-- **Configuration:** `LIGATURE_TRUSTED_PROXIES`, a comma-separated list of IP addresses and CIDR ranges. **Absent or empty means no proxy is trusted.** A malformed entry stops the host at startup, as a malformed signing key does.
+- **Configuration:** `SKSMCORP_TRUSTED_PROXIES`, a comma-separated list of IP addresses and CIDR ranges. **Absent or empty means no proxy is trusted.** A malformed entry stops the host at startup, as a malformed signing key does.
 - **Nothing is trusted implicitly — loopback included.** ASP.NET's forwarded-headers defaults trust loopback; those defaults are cleared.
 - **Only `X-Forwarded-For` is read.** `X-Forwarded-Proto` and `X-Forwarded-Host` are ignored: the cross-site check depends on the request's own Host, and this story does not change it.
 - **The walk:** starting from the immediate peer, while the current hop is a trusted proxy, the next address to the left in `X-Forwarded-For` becomes the candidate. The first address that is not a trusted proxy is the client. If the immediate peer is not trusted, the header is ignored entirely. An entry that is not an IP address ends the walk, and the address is the last one established by a trusted hop — never the malformed value.
 - **The resolved address flows into the existing evidence fields**, unchanged in shape: `SignInSucceeded` and `SignInFailed` (`ipAddress`), `PasswordResetRequested` (`RequestIp`), and `user_session.IpAddress`. Behind a configured proxy they record the real caller rather than the proxy. **No audit schema, catalogue or payload shape changes.**
 - **`ActivateAccountCommand` and `ResetPasswordCommand` gain the client address**, for rate limiting only. It is recorded nowhere: `TokenRejected` and the success records are unchanged.
-- **Dev (B9):** `compose.dev.yaml` pins the web container's address on the dev network and sets `LIGATURE_TRUSTED_PROXIES` to exactly that address; Vite's `/api` proxy sends `X-Forwarded-For`. Outside the container nothing is configured, so the header Vite sends is ignored — the safe default.
+- **Dev (B9):** `compose.dev.yaml` pins the web container's address on the dev network and sets `SKSMCORP_TRUSTED_PROXIES` to exactly that address; Vite's `/api` proxy sends `X-Forwarded-For`. Outside the container nothing is configured, so the header Vite sends is ignored — the safe default.
 
 ### Storage (B10)
 
@@ -2581,7 +2581,7 @@ request → host resolves the client address (B8)
 - **RL-22** **Untrusted `X-Forwarded-For` is ignored:** with no trusted proxies configured — including a request from loopback — the connection address is used and the header changes nothing, neither the bucket nor the recorded `ipAddress`.
 - **RL-23** **A trusted proxy's `X-Forwarded-For` is used:** with the peer configured as trusted, the resolved client address keys the IP bucket and is what `SignInFailed`, `SignInSucceeded`, `PasswordResetRequested` and `user_session.IpAddress` record.
 - **RL-24** **The walk:** a chain of two trusted proxies resolves the first untrusted address; a spoofed leftmost entry behind one trusted proxy is not reached; a malformed entry is never used as the address.
-- **RL-25** **Configuration:** a malformed `LIGATURE_TRUSTED_PROXIES` entry stops the host at startup; absent or empty trusts nothing; IP addresses and CIDR ranges are both accepted.
+- **RL-25** **Configuration:** a malformed `SKSMCORP_TRUSTED_PROXIES` entry stops the host at startup; absent or empty trusts nothing; IP addresses and CIDR ranges are both accepted.
 
 **Browser, in the dev stack (RL-26),** each state change approved by the owner:
 
@@ -2597,7 +2597,7 @@ request → host resolves the client address (B8)
 - **The declarations** are explicit interface members on the four command records, so they do not appear in the records' equality or `ToString`. `RateLimitDeclarationTests` holds `IAnonymousCommand` and `IRateLimitedCommand` together in both directions.
 - **The client address is resolved by the Host's own `ClientAddressMiddleware`, outermost in the pipeline,** and written to `Connection.RemoteIpAddress`, which the endpoints already pass into the commands. ASP.NET's `ForwardedHeadersMiddleware` was not used: with empty trusted lists it believes every header, and with no connection address it believes the first entry unchecked — both the opposite of B8.
 - **`ASPNETCORE_FORWARDEDHEADERS_ENABLED=true` stops the host.** That framework switch installs a forwarded-headers filter that believes any peer, which would undo B8 beside this host's own list. Not in the frozen text; added as a guard, with a test.
-- **A shorthand IPv4 address in `LIGATURE_TRUSTED_PROXIES`** (`10.5`, `1`) is refused as malformed rather than parsed into an address nobody meant.
+- **A shorthand IPv4 address in `SKSMCORP_TRUSTED_PROXIES`** (`10.5`, `1`) is refused as malformed rather than parsed into an address nobody meant.
 - **The OpenAPI document** now lists `429` for the four endpoints, and their descriptions say they are rate limited.
 - **Dev:** `compose.dev.yaml` fixes the network at `172.31.211.0/24`, hands out dynamic addresses from the lower half only, pins the web container at `172.31.211.200`, and trusts exactly that address. Vite's proxy sets `xfwd`, which also adds `X-Forwarded-Proto`, `-Port` and `-Host`; the host reads none of them. **An existing dev stack must be recreated once** (`docker compose -f compose.yaml -f compose.dev.yaml down`, then `./up.sh`); volumes, and the database, are kept.
 
@@ -3158,7 +3158,7 @@ Nothing is submitted, so no user is created.
   - The blur check skips a value that JavaScript's `trim()` leaves empty. That only suppresses a request and never blocks Create, so the difference between JavaScript's and .NET's whitespace cannot refuse anything the server accepts.
 - **Tests:**
   - Before the rule existed, the HTTP test's spaced create succeeded. It hands any `201` to the harness's cleanup, so no red run can leave a spaced username in the shared database for the new constraint to refuse at migration.
-  - The CLI half of the UW-3 invariant lives in `Ligature.Provisioning.Tests`, which is a separate project.
+  - The CLI half of the UW-3 invariant lives in `SKSMCorp.Provisioning.Tests`, which is a separate project.
 
 ### Not included
 
@@ -4373,7 +4373,7 @@ for one identity and now seed an extra identity instead —
 
 ## Provisioning entry point — RESOLVED
 
-**State:** resolved. `src/Tools/Ligature.Provisioning` runs PRV-C1 and PRV-C3
+**State:** resolved. `src/Tools/SKSMCorp.Provisioning` runs PRV-C1 and PRV-C3
 against a migrated database; `AGENTS.md` §3 documents it. Seeds only, refuses
 when migrations are pending, idempotent.
 
@@ -4399,7 +4399,7 @@ enforcement-layer entry below.
 ## Access token issuance — §17 escalation, RESOLVED
 
 **State:** resolved and implemented. `docs/architecture.md` §17 freezes the
-contract; `src/Host/Ligature.Host` issues and verifies the carrier and
+contract; `src/Host/SKSMCorp.Host` issues and verifies the carrier and
 `CallerEstablisher` owns session validity and caller establishment.
 
 Kept here rather than deleted because the *reasoning* is the audit trail: the
@@ -5043,7 +5043,7 @@ correction does not discover it the hard way.
 
 ## PRV-C2 — a provisioned tenant never receives new permissions — RESOLVED
 
-**State:** resolved. `Ligature.CatalogueSync` runs as `migration_role` between
+**State:** resolved. `SKSMCorp.CatalogueSync` runs as `migration_role` between
 the audit schema and the host, and reconciles the release's permission, role and
 grant catalogue with the database on every deployment. The requirement is
 specified in full under **Requirements → PRV-C2 — Catalogue synchronisation**
@@ -5233,7 +5233,7 @@ measurement must use the two-request worst case, not the cached-token case.
 
 ## Build works on macOS only by accident
 
-**State:** the project file is `Ligature.Sharedkernel.csproj` (lower-case `k`) while `Ligature.Platform.Domain.csproj` and `Ligature.Platform.Application.csproj` reference `Ligature.SharedKernel.csproj`. Case-insensitive filesystems resolve it; Linux will not.
+**State:** the project file is `SKSMCorp.Sharedkernel.csproj` (lower-case `k`) while `SKSMCorp.Platform.Domain.csproj` and `SKSMCorp.Platform.Application.csproj` reference `SKSMCorp.SharedKernel.csproj`. Case-insensitive filesystems resolve it; Linux will not.
 **Intended fix:** rename the file to match the references. Trivial, but touches the solution file; do it as its own commit.
 
 ---

@@ -1,0 +1,32 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/Platform/">
+    <Project Path="src/Platform/SKSMCorp.Platform.Application/SKSMCorp.Platform.Application.csproj" />
+    <Project Path="src/Platform/SKSMCorp.Platform.Domain/SKSMCorp.Platform.Domain.csproj" />
+    <Project Path="src/Platform/SKSMCorp.Platform.Persistence/SKSMCorp.Platform.Persistence.csproj" />
+  </Folder>
+  <Folder Name="/src/Host/">
+    <Project Path="src/Host/SKSMCorp.Host/SKSMCorp.Host.csproj" />
+  </Folder>
+  <Folder Name="/src/Tools/">
+    <Project Path="src/Tools/SKSMCorp.AuditSchema/SKSMCorp.AuditSchema.csproj" />
+    <Project Path="src/Tools/SKSMCorp.CatalogueSync/SKSMCorp.CatalogueSync.csproj" />
+    <Project Path="src/Tools/SKSMCorp.Provisioning/SKSMCorp.Provisioning.csproj" />
+  </Folder>
+  <Folder Name="/src/Shared/" />
+  <Folder Name="/src/Shared/SKSMCorp.SharedKernel/">
+    <Project Path="src/Shared/SKSMCorp.SharedKernel/SKSMCorp.SharedKernel.csproj" />
+  </Folder>
+  <Folder Name="/tests/" />
+  <Folder Name="/tests/Host/">
+    <Project Path="tests/Host/SKSMCorp.Host.Tests/SKSMCorp.Host.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Tools/">
+    <Project Path="tests/Tools/SKSMCorp.Provisioning.Tests/SKSMCorp.Provisioning.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Platform/">
+    <Project Path="tests/Platform/SKSMCorp.Platform.Application.Tests/SKSMCorp.Platform.Application.Tests.csproj" />
+    <Project Path="tests/Platform/SKSMCorp.Platform.Domain.Tests/SKSMCorp.Platform.Domain.Tests.csproj" />
+    <Project Path="tests/Platform/SKSMCorp.Platform.Persistence.Tests/SKSMCorp.Platform.Persistence.Tests.csproj" />
+  </Folder>
+</Solution>

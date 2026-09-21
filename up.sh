@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# One command, from a clean clone, to a usable Ligature in the browser.
+# One command, from a clean clone, to a usable SKSMCorp in the browser.
 #
 #   ./up.sh              bring the developer environment up and prove it is up
 #   ./up.sh --check      check the prerequisites only, and change nothing
@@ -29,10 +29,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 ENV_FILE=".env"
-KEY_NAME="LIGATURE_SIGNING_KEY_V1"
+KEY_NAME="SKSMCORP_SIGNING_KEY_V1"
 
 # Overridable so the prerequisite check itself can be tested.
-CERTS_DIR="${LIGATURE_CERTS_DIR:-web/ligature-web/.certs}"
+CERTS_DIR="${SKSMCORP_CERTS_DIR:-web/sksmcorp-web/.certs}"
 
 CERT_FILE="${CERTS_DIR}/localhost.pem"
 KEY_FILE="${CERTS_DIR}/localhost-key.pem"
@@ -51,9 +51,9 @@ READY_TIMEOUT=180
 # leave the database expecting the old one until `roles` ran again.
 SECRETS=(
     "$KEY_NAME"
-    "LIGATURE_APP_PASSWORD"
-    "LIGATURE_MIGRATION_PASSWORD"
-    "LIGATURE_PROVISIONING_PASSWORD"
+    "SKSMCORP_APP_PASSWORD"
+    "SKSMCORP_MIGRATION_PASSWORD"
+    "SKSMCORP_PROVISIONING_PASSWORD"
 )
 
 generate() {
@@ -92,7 +92,7 @@ The development certificate is missing:
       brew install mkcert nss
       mkcert -install
       mkdir -p ${CERTS_DIR}
-      cd web/ligature-web && mkcert -cert-file .certs/localhost.pem \\
+      cd web/sksmcorp-web && mkcert -cert-file .certs/localhost.pem \\
           -key-file .certs/localhost-key.pem localhost
 EOF
 )")
@@ -223,9 +223,9 @@ if [ ! -f "$ENV_FILE" ]; then
 # failure §17 names, and regenerating a role password leaves the database
 # expecting the previous one until the roles step runs again.
 
-LIGATURE_CONNECTION="Host=localhost;Port=5432;Database=ligature;Username=app_role;Password=CHANGE_ME"
-LIGATURE_SIGNING_KEY_CURRENT="v1"
-LIGATURE_API_DOCUMENTATION="true"
+SKSMCORP_CONNECTION="Host=localhost;Port=5432;Database=sksmcorp;Username=app_role;Password=CHANGE_ME"
+SKSMCORP_SIGNING_KEY_CURRENT="v1"
+SKSMCORP_API_DOCUMENTATION="true"
 EOF
 
     chmod 600 "$ENV_FILE"
@@ -279,12 +279,12 @@ if [ "$failed" -ne 0 ]; then
 fi
 
 echo
-echo "    Ligature       ${WEB_ORIGIN}"
+echo "    SKSMCorp       ${WEB_ORIGIN}"
 echo "    API            ${API_ORIGIN}"
 echo "    API reference  ${API_ORIGIN}/scalar"
 echo "    PostgreSQL     localhost:55432  (your own 5432 is untouched)"
 echo
-echo "    Editing src/ or web/ligature-web/src/ reloads automatically."
+echo "    Editing src/ or web/sksmcorp-web/src/ reloads automatically."
 echo
 echo "    npm run test:host needs port 5173 to itself. Stop the web container"
 echo "    first:  docker compose -f compose.yaml -f compose.dev.yaml stop web"

@@ -7,7 +7,7 @@
 --
 -- These three roles belong to the deployment, not to any one capability.
 -- The Audit-specific roles — audit_owner and audit_anonymiser — are NOT
--- created here: Ligature.AuditSchema owns them, because they are part of
+-- created here: SKSMCorp.AuditSchema owns them, because they are part of
 -- the tamper boundary rather than of the database foundation. It verifies
 -- these three exist and refuses with their names if they do not.
 --
@@ -17,7 +17,7 @@
 -- and no committed development password, for the reason
 -- docs/architecture.md section 17 gives about the signing key.
 --
---   psql -v database=ligature \
+--   psql -v database=sksmcorp \
 --        -v app_password=... -v migration_password=... \
 --        -v provisioning_password=... -f roles.sql
 --

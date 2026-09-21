@@ -1,10 +1,10 @@
-# Ligature Web Client — Architecture Contract
+# SKSMCorp Web Client — Architecture Contract
 
 **Status:** Approved. Part I of the web client design (v2), approved by the owner on 14 September 2026 with decisions O1–O9 closed. Referenced from `docs/architecture.md` §2.
 
-**Applies to:** `web/ligature-web/`.
+**Applies to:** `web/sksmcorp-web/`.
 
-This document is the architecture contract for the web client. Its rules are meant to stay true as Ligature grows well past User Management. It deliberately contains no plan: what each story builds belongs in that story's pull request, not here.
+This document is the architecture contract for the web client. Its rules are meant to stay true as SKSMCorp grows well past User Management. It deliberately contains no plan: what each story builds belongs in that story's pull request, not here.
 
 Every rule is written so that a reviewer can check a change against it. **Where lint can enforce a rule, lint enforces it**, and each lint-enforced rule is proven by a fixture that breaks it on purpose (§16).
 
@@ -32,7 +32,7 @@ Business modules may use platform modules. Platform modules may not use business
 ## 2. Layers and dependencies
 
 ```text
-web/ligature-web/src/
+web/sksmcorp-web/src/
 ├── app/                composition root: router, providers. Imports everything, owns nothing.
 ├── shared/             application infrastructure (§3)
 │   ├── api/            transport: client, ApiError, response parsing
@@ -101,7 +101,7 @@ Lint can't tell whether code has business meaning, so this rule is checked in re
 | Tier | Contents |
 | --- | --- |
 | **`components/ui`** — vendored primitives | Button, Input, Select, Dialog, Badge, Table, Tooltip, Tabs, DropdownMenu, Sheet, Skeleton, Sonner. Installed with the shadcn CLI and **never hand-edited**, so updates stay a re-install. |
-| **`shared/components`** — application components | Page, PageHeader, DataTable, EmptyState, ErrorState, ConfirmAction, FormField, StatusBadge, DateDisplay. Each one sets Ligature's standard for a recurring pattern. |
+| **`shared/components`** — application components | Page, PageHeader, DataTable, EmptyState, ErrorState, ConfirmAction, FormField, StatusBadge, DateDisplay. Each one sets SKSMCorp's standard for a recurring pattern. |
 | **`modules/*/components`** — feature components | CreateUserForm, UsersTable. These carry business meaning. |
 
 Each tier is composed into the one below it.
@@ -663,7 +663,7 @@ The page body never scrolls sideways. Wide content scrolls inside its own contai
 
 > **Rule.** Every new UI component and screen must meet **WCAG 2.2 AA**. Accessibility is part of each component's contract, not a final QA pass.
 
-The shadcn and Base UI primitives handle much of the mechanical work. Ligature remains responsible for labels, focus management, keyboard operation, error messages, semantic structure, contrast, dialogs, announcing status changes, and reduced motion.
+The shadcn and Base UI primitives handle much of the mechanical work. SKSMCorp remains responsible for labels, focus management, keyboard operation, error messages, semantic structure, contrast, dialogs, announcing status changes, and reduced motion.
 
 | Requirement | Where it's guaranteed |
 | --- | --- |
