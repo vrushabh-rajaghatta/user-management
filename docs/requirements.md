@@ -4189,6 +4189,138 @@ assignmentReason
 
 ---
 
+## AUT-Q7 WhoCanDo — the reverse lookup, and point-in-time authorisation
+
+**Status:** Contract frozen 2026-09-21 by owner decision (RW1–RW12). **Read-only.** No assignment, role, grant or catalogue entry changes, and no audit record is written.
+
+### Requirement
+
+A caller holding **both `role.read` and `user.read`** asks the reverse of the authorisation question: not *"may this actor do this?"* but *"who could do this, and why?"*, at an instant.
+
+```text
+AUT-Q7 WhoCanDo    all users, one permission, at one instant
+```
+
+The catalogue's example is the inspection question this exists to answer: *"Who could approve submissions for Product X in March?"*
+
+### The central rule
+
+> **AUT-Q7 evaluates authorisation through the shared authorisation resolver.** `asOf` is the evaluation instant for **every authorisation fact the model represents temporally**. The query **must not substitute current state for historical state merely because the current state is easier to obtain**. Where the model holds no historical representation of a fact, that limitation is **explicit** rather than silently presented as historical truth. User and identity status have no historical representation and are therefore **not** retroactively reconstructed by AUT-Q7. Full point-in-time reconstruction remains **REV-Q6's** responsibility.
+
+### Which facts the model represents temporally
+
+This table is the contract's foundation, and it was settled from the schema rather than assumed (RW3, RW4, RW9).
+
+| Authorisation fact | Stored as | Historical? | AUT-Q7 resolves it |
+| --- | --- | --- | --- |
+| Assignment effective period | `user_role.effective_from` / `effective_to` | **Yes** | at `asOf` — already does |
+| Assignment revocation | `user_role.revoked_at` (an instant) | **Yes** | at `asOf` — **changed** |
+| Role-permission grant | `role_permission.granted_at` / `revoked_at` | **Yes** | at `asOf` — **changed** |
+| Permission catalogue state | `permission.is_active` — a boolean, with only `created_at` and **no deactivation instant** | **No** | current state, stated (RW9) |
+| User / identity status | `app_user.status`, `user_identity.status`, each tied to `deactivated_at` by a CHECK that makes the column **null whenever the row is Active** | **No** | current state, stated (RW4) |
+
+**Why status is not a history.** The CHECK `("status" = 'Inactive') = ("deactivated_at" IS NOT NULL)` means reactivation (USR-C5) erases the timestamp. A user deactivated in February and reactivated in April carries **no trace of February** today. The column records the *current* deactivation, not a sequence, so *"was she active in March?"* is not answerable from these tables at any fidelity — and AUT-Q7 does not pretend otherwise.
+
+### Two temporal defects this story fixes in the shared predicate
+
+`AuthorizationService.Candidates` is the shared evaluation. Two of its conditions ignore the instant they are asked about:
+
+```csharp
+&& assignment.RevokedAt == null      // not "was it revoked by then?"
+&& grant.RevokedAt == null           // and GrantedAt is not checked AT ALL
+```
+
+The grant condition is the sharper of the two: `Candidates` references `GrantedAt` **zero times**, so a grant made *after* `asOf` would count towards authority at `asOf`. AUT-Q3 already defines the correct predicate (RA5), and AUT-Q7 adopts it verbatim.
+
+**Both changes are behaviour-preserving for every existing caller**, and this is checked rather than asserted: all **12** construction sites of `AuthorizationRequest` pass the current instant. At `now`, `revoked_at <= now` always holds (a revocation is stamped when it happens) and `granted_at <= now` always holds, so the narrowed and widened forms agree exactly. This is the same argument, and the same class of defect, as the `RoleAssignmentStates.At` fix that AUT-Q4 forced — in the SQL predicate rather than the domain derivation.
+
+### The decisions
+
+| # | Decision |
+| --- | --- |
+| **RW1** | **Build AUT-Q7 now**, as the first consumer requiring point-in-time authorisation evaluation — **not** as an implementation of REV-Q6. Deferring it would leave the shared evaluation unresolved while later queries already depend on its shape. |
+| **RW2** | **Generalise the shared resolver; do not write a second authorisation reader.** Three views over one evaluation: `IsAllowedAsync` (one user, one permission), `EnumerateAsync` (one user, all permissions), `WhoCanDoAsync` (**all users, one permission**). **Actor eligibility becomes part of the shared evaluation** rather than a per-caller precondition — otherwise AUT-Q7 inevitably grows its own actor-status implementation, which is the drift the extracted predicate exists to prevent. |
+| **RW3** | **Temporal consistency, not fabricated history.** The central rule above. Time domains are never silently mixed: a fact the model dates is resolved at `asOf`, and a fact it does not date is a current-state gate that the contract names. |
+| **RW4** | **User and identity status are current-state gates, and are never retroactively reconstructed.** They remain part of who is authorised, stated explicitly as current state, and the limitation is recorded for REV-Q6 rather than solved with an invented status history. |
+| **RW5** | **One row per user, with the authorising roles as a collection.** The catalogue asks for *users*, and `EnumerateAsync` already distincts them. A user who holds the permission through three roles is **one** row naming three roles — the answer to *"who can do this, and why?"* rather than a row per path. **Deliberately the opposite of RH5**, where AUT-Q4 keyed on the assignment because the dates and reason belonged to it. |
+| **RW6** | **`role.read` AND `user.read`**, on the RH9 precedent, and **no third permission**. The model already distinguishes role administration from user visibility, and two codes express the boundary. The multi-permission classification built for RH13 exists for exactly this. |
+| **RW7** | **`ScopeType` and `ScopeId` are kept and refused**, as RH3 did: both stay in the contract because the catalogue names them, and a non-Global scope is refused until the platform supports one. |
+| **RW8** | **An unknown permission code is `404`** — *"The permission does not exist."* — following AUT-Q3 and AUT-Q4. A permission nobody holds is a different answer from a permission that does not exist, and for an inspection query that distinction is the point. |
+| **RW9** | **Retired is not unknown.** A retired permission **exists**: it answers `200`, reports `isActive: false`, and returns **no holders**, because the shared predicate requires an active permission and AUT-Q7 does not resurrect one using today's flag. Historical reconstruction of a retired permission is **REV-Q6's**, once a historical catalogue model exists. |
+| **RW10** | **API-only.** No Permissions page, as RG9 already decided for AUT-Q6. No existing screen's semantics require this; a later access-review surface consumes it. |
+| **RW11** | **USR-Q3 is not pulled into this gate.** It shares the evaluation and nothing else: different subject, permission boundary, response and purpose. *"Do not duplicate the logic"* means reuse the evaluation, not implement three query contracts in one story. |
+| **RW12** | **Not audited**, keeping RA-A11. A sensitive result does not by itself make a read an audit event; authorisation controls the disclosure, and introducing audit here would need its own contract. |
+
+### The route and its shape
+
+**My choice, not the catalogue's** — the query catalogue defines queries, not HTTP.
+
+| Query | Route |
+| --- | --- |
+| **AUT-Q7** | `GET /api/permissions/{permissionCode}/holders?asOf=&scopeType=&scopeId=` |
+
+A sub-resource of AUT-Q6's `/api/permissions`, as `/members` is of a role. The response:
+
+```text
+{ asOf, permission: { permissionId, code, name, isActive }, holders: [ … ] }
+```
+
+Each holder exactly:
+
+```text
+userId, displayName, email, status, roles: [ { roleId, name } ]
+```
+
+- **The permission is echoed, including `isActive`.** It is what makes RW9 legible: an empty list beside `isActive: false` says *"retired, so nobody"*, where an empty list beside `isActive: true` says *"nobody holds it"*. Without it the two are indistinguishable, and for an inspection query that would be a defect.
+- **`asOf` is echoed**, as AUT-Q4 echoes it: it is the instant the whole answer was judged at.
+- **No holder count.** AUT-Q4 needed one because its rows were assignments and could exceed the holders; here a row **is** a holder, so the array length is the count and a second number could only ever disagree with it.
+- **`roles` names why**, and carries the role's **name as stored now**. The authorising role's historical name belongs to the audit record's `ActorSnapshot`, which exists precisely so renaming a role (AUT-C4) does not rewrite authority already recorded.
+- **Ordered by `displayName`** under ICU `unicode`, then `userId`, as AUT-Q4, the user list and the roles list are ordered. `roles` within a holder are ordered by name under the same collation.
+- **Parameters are parsed strictly**: `asOf` must be one ISO-8601 instant or `400`; `scopeType` other than `Global` is `400`; any `scopeId` is `400` (a Global assignment has no scope id). `permissionCode` is matched **exactly**, as AUT-Q6's `resource` filter is.
+- **A carrier is required** (`401`), and **both `role.read` and `user.read`** (`400`), with **one sentence naming neither code**, as RH9 established.
+- **A permission nobody holds answers `200` and an empty list; an unknown code answers `404`** with its sentence, produced by the route from the query result. `ProblemMiddleware`'s allowlist is untouched.
+- **Not audited** (RW12).
+
+### Acceptance Criteria
+
+**The evaluation (RW2)**
+
+- **RW-A1** Each holder is answered with exactly the five members above, ordered by display name, with `asOf` and the permission echoed.
+- **RW-A2** **The three temporal facts resolve at `asOf`**, each proven separately: an assignment outside its period at `asOf` does not authorise; an assignment **revoked after `asOf`** *does*; a grant **revoked after `asOf`** *does*; and a grant **made after `asOf`** does **not**.
+- **RW-A3** **The two current-state gates behave as current state**, and are asserted as such rather than left ambiguous: a user or identity inactive **now** is absent whatever `asOf` says, and a permission retired **now** yields no holders.
+- **RW-A4** **One row per user.** A user holding the permission through three roles appears once, with three roles named; two users holding it through one role appear as two rows.
+- **RW-A5** **The three views agree.** For the same user, permission and instant, `WhoCanDo` contains a user **iff** `IsAllowedAsync` allows them and **iff** `EnumerateAsync` lists the code — a regression test over the shared evaluation, which is what stops the third view drifting.
+- **RW-A6** **`role.IsActive` is still absent from the predicate.** A holder of a deactivated role still appears, because AUT-C5 changes eligibility and never access. Generalisation must not quietly reintroduce the filter.
+- **RW-A7** **UR10 still holds per actor:** a non-human actor never appears for a `RequiresHumanActor` permission, the third edge of the two-edge check.
+- **RW-A8** **Existing callers are unchanged.** `IsAllowedAsync` and `EnumerateAsync` return exactly what they returned before the predicate was widened, for every case their suites already cover.
+
+**The route (RW6, RW7, RW8, RW9, RW12)**
+
+- **RW-A9** **Both permissions, and it is AND:** `role.read` without `user.read` is refused, `user.read` without `role.read` is refused, both succeed, no carrier is `401`, and **the refusal sentence is identical in both directions and names neither code**.
+- **RW-A10** **An unknown permission code is `404`** with *"The permission does not exist."*; **a retired permission is `200`** with `isActive: false` and no holders; **a live permission nobody holds is `200`** with `isActive: true` and no holders. All three are distinguishable by the caller.
+- **RW-A11** A malformed `asOf` is `400`; a `scopeType` other than `Global` is `400`; any `scopeId` is `400`.
+- **RW-A12** **No audit record is written**, whatever the outcome.
+
+### Implementation notes
+
+- **`Candidates` gains two optional narrowings and loses one mandatory one.** `userId` becomes nullable — the same "null means do not narrow" convention `scopeType` and `permissionCode` already use — and **actor eligibility moves into the query** (RW2), joining `app_user` and `user_identity` rather than being resolved per caller beforehand. `EligibleActorTypeAsync` currently supplies `actorType` to the UR10 check from outside; once the actor is a row in the query, UR10 reads `app_user.actor_type` directly.
+- **The two temporal corrections are made in the shared predicate**, not in AUT-Q7, so `IsAllowedAsync` and `EnumerateAsync` inherit them. They are behaviour-preserving at `now` (all 12 callers), and RW-A8 pins that.
+- **The grant predicate is AUT-Q3's, verbatim:** `GrantedAt <= asOf && (RevokedAt == null || asOf < RevokedAt)` (RA5). One definition of "live at an instant", used by both.
+- **The permission is looked up first**, so `404` and "nobody holds it" stay distinguishable, exactly as AUT-Q3 and AUT-Q4 do it.
+- **Grouping is in memory**, over rows already narrowed to one permission: the set is bounded by the tenant's holders of a single permission, and no paging is introduced (RW10 keeps this API-only).
+- **`QueryAuthorization.Required("role.read", "user.read")`**, the second use of the multi-permission classification built for RH13. The handler enforces every declared code.
+
+### Not included
+
+- **REV-Q6 GetPointInTimeAccess** and any historical model for the permission catalogue or for user/identity status (RW3, RW4, RW9).
+- **USR-Q3 GetUserAccessSummary** (RW11), which reuses the evaluation in its own story.
+- **REV-Q1** and anything under `accessreview.read`.
+- **Any screen** (RW10), and any change to AUT-Q6's response.
+- **Any non-global scope behaviour** (RW7), and any scope inheritance — a Global assignment still does not imply narrower scopes.
+- **Any change to `role.IsActive`'s absence** from the predicate (RW-A6), to UR10, or to the audit boundary (RW12).
+
+---
+
 # Known Gaps and Deliberate Deferrals
 
 Things the code knowingly does not do yet. An agent that encounters one of these should **not** "fix" it inside an unrelated story and should **not** report it as a defect — cite this section instead. Remove an entry when the deferral is closed.
