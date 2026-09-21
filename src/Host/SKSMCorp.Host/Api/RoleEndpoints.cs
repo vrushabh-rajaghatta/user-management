@@ -536,12 +536,70 @@ public static class RoleEndpoints
         });
     }
 
-    private static Task<IResult> HoldersAsync(
+    private static async Task<IResult> HoldersAsync(
         string permissionCode,
         HttpRequest request,
         IQueryDispatcher dispatcher,
         CancellationToken cancellationToken)
-        => throw new NotImplementedException("AUT-Q7 is not implemented yet.");
+    {
+        var instants = request.Query["asOf"];
+        DateTimeOffset? asOf = null;
+
+        if (instants.Count == 1
+            && DateTimeOffset.TryParse(
+                instants[0],
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                out var parsed))
+        {
+            asOf = parsed;
+        }
+        else if (instants.Count != 0)
+        {
+            return Results.BadRequest(new { Error = "asOf must be one ISO-8601 instant." });
+        }
+
+        // RW7: both scope parameters reach the query, which owns the rule.
+        // The route parses them and refuses nothing of its own, so there is
+        // one place that decides what a scope may be.
+        var scopeTypes = request.Query["scopeType"];
+        var scopes = request.Query["scopeId"];
+
+        var scopeType = scopeTypes.Count == 1 ? scopeTypes[0] : null;
+        Guid? scopeId = null;
+
+        if (scopes.Count != 0)
+            scopeId = Guid.TryParse(scopes[0], out var scope) ? scope : Guid.Empty;
+
+        var result = await dispatcher.SendAsync<WhoCanDoQuery, WhoCanDoResult>(
+            new WhoCanDoQuery(permissionCode, asOf, scopeType, scopeId),
+            cancellationToken);
+
+        // RW8, as AUT-Q3 and AUT-Q4 do it. The body is what tells this apart
+        // from a route that does not exist.
+        if (!result.PermissionExists)
+            return Results.NotFound(new { Error = "The permission does not exist." });
+
+        return Results.Ok(new
+        {
+            result.AsOf,
+            Permission = new
+            {
+                result.Permission!.PermissionId,
+                result.Permission.Code,
+                result.Permission.Name,
+                result.Permission.IsActive,
+            },
+            Holders = result.Holders!.Select(x => new
+            {
+                UserId = x.UserId.Value,
+                x.DisplayName,
+                x.Email,
+                Status = x.Status.ToString(),
+                Roles = x.Roles.Select(role => new { RoleId = role.RoleId.Value, role.Name }),
+            }),
+        });
+    }
 
     private static async Task<IResult> CatalogueAsync(
         HttpRequest request,

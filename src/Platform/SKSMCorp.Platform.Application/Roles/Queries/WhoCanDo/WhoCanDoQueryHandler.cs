@@ -1,5 +1,6 @@
 using SKSMCorp.Platform.Application.Abstractions;
 using SKSMCorp.SharedKernel.Abstractions;
+using SKSMCorp.SharedKernel.Exceptions;
 
 namespace SKSMCorp.Platform.Application.Roles.Queries.WhoCanDo;
 
@@ -15,6 +16,8 @@ namespace SKSMCorp.Platform.Application.Roles.Queries.WhoCanDo;
 public sealed class WhoCanDoQueryHandler
     : IQueryHandler<WhoCanDoQuery, WhoCanDoResult>
 {
+    private const string GlobalScope = "Global";
+
     private readonly IExecutionContext _executionContext;
     private readonly IAuthorizationService _authorizationService;
     private readonly IPermissionCatalogueEntryReader _permissions;
@@ -37,8 +40,69 @@ public sealed class WhoCanDoQueryHandler
         _clock = clock;
     }
 
-    public Task<WhoCanDoResult> Handle(
+    public async Task<WhoCanDoResult> Handle(
         WhoCanDoQuery query,
         CancellationToken cancellationToken)
-        => throw new NotImplementedException("AUT-Q7 is not implemented yet.");
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        // ---- 1. Authenticate.
+        if (!_executionContext.IsAuthenticated)
+            throw new AuthenticationFailedException("An authenticated user is required.");
+
+        var now = _clock.UtcNow;
+
+        // ---- 2. Authorise EVERY declared permission (RW6). AND, not OR, and
+        // driven by the declaration so that a code enforced here which the
+        // query does not declare is impossible by construction.
+        foreach (var permissionCode in WhoCanDoQuery.Authorization.PermissionCodes)
+        {
+            var authorization = await _authorizationService.IsAllowedAsync(
+                new AuthorizationRequest(
+                    _executionContext.UserId,
+                    permissionCode,
+                    now,
+                    "Global",
+                    null),
+                cancellationToken);
+
+            if (!authorization.IsAllowed)
+            {
+                throw new BusinessRuleViolationException(
+                    "The current actor does not have permission to view permission holders.");
+            }
+        }
+
+        // ---- 3. Refuse a scope that cannot exist (RW7). Both parameters stay
+        // in the contract because the catalogue names them; neither carries a
+        // usable value while V1 is global-only, and accepting one silently
+        // would be a claim to have filtered.
+        if (query.ScopeType is not null && query.ScopeType != GlobalScope)
+            throw new BusinessRuleViolationException("Only the global scope exists.");
+
+        if (query.ScopeId is not null)
+            throw new BusinessRuleViolationException("Only the global scope exists.");
+
+        var asOf = query.AsOf ?? now;
+
+        // ---- 4. The catalogue first, so that "no such permission" and
+        // "nobody holds it" stay different answers (RW8).
+        var permission = await _permissions.FindAsync(query.PermissionCode, cancellationToken);
+
+        if (permission is null)
+            return new WhoCanDoResult(asOf, null, null);
+
+        // ---- 5. The evaluation, which is the resolver's and not this
+        // handler's (RW2). It answers null only for a code the catalogue does
+        // not have, which step 4 has already excluded; if it ever did, saying
+        // "does not exist" is the honest answer rather than an empty list.
+        var holders = await _authorizationService.WhoCanDoAsync(
+            new WhoCanDoRequest(query.PermissionCode, asOf, GlobalScope, null),
+            cancellationToken);
+
+        if (holders is null)
+            return new WhoCanDoResult(asOf, null, null);
+
+        return new WhoCanDoResult(asOf, permission, holders);
+    }
 }

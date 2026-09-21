@@ -266,7 +266,17 @@ public sealed class WhoCanDoTests : IClassFixture<ActivationDatabase>
 
         Assert.Equal(3, holder.Roles.Count);
         Assert.Equal(3, holder.Roles.Select(x => x.RoleId).Distinct().Count());
-        Assert.Equal([first, second, third], holder.Roles.Select(x => x.RoleId).OrderBy(x => x.Value));
+
+        // The SET is the three roles that carry it — seeded order is not the
+        // contract, so it is not asserted.
+        Assert.Equal(
+            new[] { first, second, third }.Select(x => x.Value).OrderBy(x => x),
+            holder.Roles.Select(x => x.RoleId.Value).OrderBy(x => x));
+
+        // The ORDER is by role name, which is what the contract does promise.
+        var names = holder.Roles.Select(x => x.Name).ToList();
+
+        Assert.Equal(names.OrderBy(x => x, StringComparer.Ordinal), names);
 
         Assert.Single(holders.Single(x => x.UserId == one).Roles);
     }

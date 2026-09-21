@@ -22,8 +22,17 @@ public sealed class PermissionCatalogueEntryReader : IPermissionCatalogueEntryRe
         _dbContext = dbContext;
     }
 
-    public Task<RequestedPermission?> FindAsync(
+    public async Task<RequestedPermission?> FindAsync(
         string permissionCode,
         CancellationToken cancellationToken)
-        => throw new NotImplementedException("AUT-Q7 is not implemented yet.");
+    {
+        // NO IsActive FILTER, deliberately (RW9): retired is not unknown. The
+        // entry comes back with its flag, and the caller reports it — which is
+        // what lets a reader tell "retired, so nobody" from "nobody holds it".
+        return await _dbContext.Set<Permission>()
+            .AsNoTracking()
+            .Where(x => x.Code == permissionCode)
+            .Select(x => new RequestedPermission(x.Id.Value, x.Code, x.Name, x.IsActive))
+            .FirstOrDefaultAsync(cancellationToken);
+    }
 }
