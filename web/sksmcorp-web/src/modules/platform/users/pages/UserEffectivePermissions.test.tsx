@@ -142,7 +142,11 @@ describe("what the section shows", () => {
 
     const row = within(await screen.findByRole("row", { name: /document\.approve/ }));
 
+    // THE ID, NOT JUST THE TYPE. Asserting only "Project" passes against a
+    // cell that prints the type and drops the id, which is a different scope
+    // from the one the server sent.
     expect(row.getByText(/Project/)).toBeInTheDocument();
+    expect(row.getByText(/p-1/)).toBeInTheDocument();
   });
 });
 

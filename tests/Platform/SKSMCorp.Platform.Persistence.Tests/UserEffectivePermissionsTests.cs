@@ -204,6 +204,46 @@ public sealed class UserEffectivePermissionsTests : IClassFixture<ActivationData
         Assert.Equal(UserStatus.Active, withoutIdentity.Status);
     }
 
+    /// <summary>
+    /// UA-A1 and UA-A6, the ordering rule stated precisely: BY CODE, with
+    /// scope only breaking ties.
+    ///
+    /// THIS NEEDS TWO SCOPES TO SAY ANYTHING, and V1 has one — GrantRole
+    /// writes only Global — so the assignment below is fabricated directly, as
+    /// AUT-Q4's RH14 test and AUT-Q7's duplicate-grant test both are. With a
+    /// single scope, "ordered by code" and "ordered by scope then code" are the
+    /// same sequence, and the rule is unfalsifiable.
+    /// </summary>
+    [Fact]
+    public async Task The_set_is_ordered_by_code_and_not_by_scope()
+    {
+        var user = await SeedUserAsync();
+
+        var early = await SeedPermissionAsync(suffix: "aaa");
+        var late = await SeedPermissionAsync(suffix: "zzz");
+
+        var scoped = await SeedRoleAsync();
+        var global = await SeedRoleAsync();
+
+        await GrantAsync(scoped, early);
+        await GrantAsync(global, late);
+
+        // The EARLIER code sits in the LATER scope, so the two orderings
+        // disagree and only one of them is the contract's.
+        await AssignAsync(user, scoped, from: Past, to: null, scopeId: Guid.NewGuid());
+        await AssignAsync(user, global, from: Past, to: null);
+
+        var permissions = (await QueryAsync(user)).Permissions;
+
+        Assert.Equal([early, late], permissions.Select(x => x.Code));
+        Assert.Equal("Project", permissions.First().ScopeType);
+        Assert.Equal("Global", permissions.Last().ScopeType);
+
+        // UA-A6: the scope id travels with the permission that has one.
+        Assert.NotNull(permissions.First().ScopeId);
+        Assert.Null(permissions.Last().ScopeId);
+    }
+
     // ============================================================== UA-A11
 
     /// <summary>
@@ -536,16 +576,22 @@ public sealed class UserEffectivePermissionsTests : IClassFixture<ActivationData
     }
 
     private async Task AssignAsync(
-        UserId user, RoleId role, DateTimeOffset from, DateTimeOffset? to, DateTimeOffset? revokedAt = null)
+        UserId user,
+        RoleId role,
+        DateTimeOffset from,
+        DateTimeOffset? to,
+        DateTimeOffset? revokedAt = null,
+        Guid? scopeId = null)
     {
         var system = User.SystemUserId.Value;
+        var scope = scopeId is null ? ("'Global'", "NULL") : ("'Project'", $"'{scopeId}'");
 
         await ExecuteAsync(
             $"""
              INSERT INTO user_role (id, user_id, actor_type, role_id, scope_type, scope_id,
                                     effective_from, effective_to, assigned_at, assigned_by, assignment_reason,
                                     revoked_at, revoked_by, revocation_reason)
-             VALUES ('{Guid.NewGuid()}', '{user.Value}', 'Human', '{role.Value}', 'Global', NULL,
+             VALUES ('{Guid.NewGuid()}', '{user.Value}', 'Human', '{role.Value}', {scope.Item1}, {scope.Item2},
                      @from, @to, @from, '{system}', 'Seeded for the access summary.',
                      {(revokedAt is null ? "NULL" : "@revokedAt")},
                      {(revokedAt is null ? "NULL" : $"'{system}'")},
