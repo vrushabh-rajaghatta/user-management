@@ -194,7 +194,12 @@ describe("what the section shows", () => {
     const section = within(screen.getByRole("region", { name: "Holders" }));
 
     expect(await section.findByText(/\b2\b/)).toBeInTheDocument();
-    expect(section.queryByText(/\b99\b/)).toBeNull();
+
+    // PAGE-WIDE, not section-scoped. The roles list's count is computed at ITS
+    // instant; showing it anywhere on this page is the two-numbers-from-two-
+    // instants problem, and a section-scoped assertion let it survive just
+    // outside the section.
+    expect(screen.queryByText(/\b99\b/)).toBeNull();
   });
 });
 
@@ -253,6 +258,11 @@ describe("the section offers nothing", () => {
   it("offers no action on a holder, even to a role.manage holder", async () => {
     backend();
     await render([ROLE_READ, USER_READ, ROLE_MANAGE]);
+
+    // WAIT FOR THE ROWS FIRST. Asserted against the loading skeleton this
+    // passes whatever the rows contain — which is exactly how a revoke button
+    // survived the campaign.
+    await screen.findByRole("table", { name: "Holders" });
 
     const section = within(screen.getByRole("region", { name: "Holders" }));
 

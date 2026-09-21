@@ -65,7 +65,12 @@ public sealed class RoleMembersReadTests : IClassFixture<ActivationDatabase>
         Assert.Equal(Past.AddYears(5), member.EffectiveTo);
         Assert.NotEqual(default, member.AssignedAt);
         Assert.Equal(User.SystemUserId, member.AssignedBy.UserId);
-        Assert.False(string.IsNullOrWhiteSpace(member.AssignedBy.DisplayName));
+
+        // THE GRANTER, NAMED — and named as the granter, not as the holder. A
+        // non-blank assertion here let a mutant join the wrong side of the
+        // assignment and survive: both names are non-blank.
+        Assert.Equal(User.SystemDisplayName, member.AssignedBy.DisplayName);
+        Assert.NotEqual(member.DisplayName, member.AssignedBy.DisplayName);
         Assert.Equal("Onboarding, regulatory affairs associate.", member.AssignmentReason);
     }
 
