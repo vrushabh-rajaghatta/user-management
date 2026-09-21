@@ -181,6 +181,26 @@ public static class RoleEndpoints
             .Produces(StatusCodes.Status404NotFound)
             .WithMetadata(new RequiresCarrier());
 
+        // AUT-Q4.
+        routes.MapGet("/api/roles/{roleId:guid}/members", MembersAsync)
+            .WithTags("Roles")
+            .WithSummary("Who holds a role, at an instant.")
+            .WithDescription(
+                "Requires a carrier and BOTH the 'role.read' and 'user.read' "
+                + "permissions. Returns { asOf, activeHolderCount, members }, "
+                + "each member exactly { assignmentId, userId, displayName, "
+                + "email, status, effectiveFrom, effectiveTo, assignedAt, "
+                + "assignedBy, assignmentReason }, ordered by display name: the "
+                + "assignments active at 'asOf', which defaults to now. A role "
+                + "nobody holds is 200 and an empty list; a role that does not "
+                + "exist is 404. Only the global scope exists, so a 'scopeId' is "
+                + "refused.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status404NotFound)
+            .WithMetadata(new RequiresCarrier());
+
         // AUT-Q6.
         routes.MapGet("/api/permissions", CatalogueAsync)
             .WithTags("Roles")
@@ -424,6 +444,13 @@ public static class RoleEndpoints
             }),
         });
     }
+
+    private static Task<IResult> MembersAsync(
+        Guid roleId,
+        HttpRequest request,
+        IQueryDispatcher dispatcher,
+        CancellationToken cancellationToken)
+        => throw new NotImplementedException("AUT-Q4 is not implemented yet.");
 
     private static async Task<IResult> CatalogueAsync(
         HttpRequest request,

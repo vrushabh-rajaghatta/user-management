@@ -16,19 +16,19 @@ namespace Ligature.Platform.Application.Abstractions;
 /// </summary>
 public sealed record QueryAuthorization
 {
-    private readonly string? _permissionCode;
+    private readonly IReadOnlyList<string> _permissionCodes;
 
-    // Private, so the ONLY ways to obtain a classification are the two
-    // factories below. Any non-null instance is therefore one of the two legal
-    // states by construction; there is no third state to reach.
-    private QueryAuthorization(bool isRequired, string? permissionCode)
+    // Private, so the ONLY ways to obtain a classification are the factories
+    // below. Any non-null instance is therefore one of the two legal states by
+    // construction; there is no third state to reach.
+    private QueryAuthorization(bool isRequired, IReadOnlyList<string> permissionCodes)
     {
         IsRequired = isRequired;
-        _permissionCode = permissionCode;
+        _permissionCodes = permissionCodes;
     }
 
     /// <summary>The query is deliberately open. A declaration, not an absence.</summary>
-    public static QueryAuthorization NotRequired { get; } = new(false, null);
+    public static QueryAuthorization NotRequired { get; } = new(false, []);
 
     /// <summary>
     /// The query requires this permission. A blank code is not a declaration
@@ -39,18 +39,52 @@ public sealed record QueryAuthorization
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(permissionCode);
 
-        return new QueryAuthorization(true, permissionCode);
+        return new QueryAuthorization(true, [permissionCode]);
+    }
+
+    /// <summary>
+    /// The query requires EVERY one of these permissions (RH13). AND, never
+    /// OR: a caller holding some of them is refused exactly as one holding
+    /// none is.
+    ///
+    /// A set rather than a second undeclared check inside the handler, because
+    /// the declaration is the single source of truth §11 made it. A handler
+    /// that enforces a permission its query does not declare is the silent
+    /// failure the whole contract exists to prevent.
+    /// </summary>
+    public static QueryAuthorization Required(params string[] permissionCodes)
+    {
+        ArgumentNullException.ThrowIfNull(permissionCodes);
+
+        return new QueryAuthorization(true, [.. permissionCodes]);
     }
 
     public bool IsRequired { get; }
 
-    /// <summary>Throws when the classification is NotRequired.</summary>
+    /// <summary>
+    /// Every code the query requires, in declaration order. Empty for
+    /// NotRequired; one element for the single-permission case, which is most
+    /// of them.
+    /// </summary>
+    public IReadOnlyList<string> PermissionCodes => _permissionCodes;
+
+    /// <summary>
+    /// The one code, for the single-permission case. Throws when the
+    /// classification is NotRequired, and throws for a multi-permission
+    /// classification rather than silently answering with the first of
+    /// several — a caller that reads one code would enforce one code.
+    /// </summary>
     public string PermissionCode
-        => IsRequired
-            ? _permissionCode!
-            : throw new InvalidOperationException(
+        => (IsRequired, _permissionCodes.Count) switch
+        {
+            (true, 1) => _permissionCodes[0],
+            (true, _) => throw new InvalidOperationException(
+                $"This query declares {_permissionCodes.Count} permissions, so it has no single "
+                + "permission code. Read PermissionCodes and enforce every one."),
+            _ => throw new InvalidOperationException(
                 "This query declares NotRequired, so it has no permission code. "
-                + "Check IsRequired before reading one.");
+                + "Check IsRequired before reading one."),
+        };
 
     /// <summary>
     /// Written by hand because the compiler's version prints every public
@@ -60,7 +94,9 @@ public sealed record QueryAuthorization
     /// </summary>
     private bool PrintMembers(System.Text.StringBuilder builder)
     {
-        builder.Append(IsRequired ? $"Required = {_permissionCode}" : "NotRequired");
+        builder.Append(IsRequired
+            ? $"Required = {string.Join(", ", _permissionCodes)}"
+            : "NotRequired");
 
         return true;
     }

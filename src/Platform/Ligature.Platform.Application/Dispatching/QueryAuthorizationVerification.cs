@@ -53,8 +53,12 @@ public static class QueryAuthorizationVerification
         if (authorization is null)
             return $"{queryType.FullName} declares a null authorization classification.";
 
-        if (authorization.IsRequired && string.IsNullOrWhiteSpace(authorization.PermissionCode))
+        if (authorization.IsRequired
+            && authorization.PermissionCodes.Count > 0
+            && string.IsNullOrWhiteSpace(authorization.PermissionCodes[0]))
+        {
             return $"{queryType.FullName} requires a permission but names none.";
+        }
 
         return null;
     }
